@@ -1,0 +1,27 @@
+# Environments
+venv/
+.env
+.venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.pytest_cache/
+
+# Data Outputs
+raw_reports/
+draft_reports/
+
+# IDE configurations
+.idea/
+.vscode/
+
+# OS generated files
+.DS_Store
+.AppleDouble
+.LSOverride

@@ -14,6 +14,7 @@
 ## 🛠 开发与部署环境 (Setup)
 
 为保证项目作为核心节点的高可用性和依赖干净，请强制使用虚拟环境。
+推荐 Python `3.10+`（`3.9` 可运行，但会在自检中提示告警）。
 
 1. **环境初始化**
 ```bash
@@ -29,8 +30,29 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. **配置系统变量**
-必须配置 `ARES_VAULT_PATH` 以接入 Ares Obsidian 知识库 (建议写入你的 `~/.zshrc` 或 `.env`):
+3. **运行环境自检（推荐先执行）**
+```bash
+python scripts/env_doctor.py
+```
+如果你没有激活虚拟环境，也可直接使用：
+```bash
+./venv/bin/python scripts/env_doctor.py
+```
+
+4. **配置系统变量**
+必须配置 `ARES_VAULT_PATH` 以接入 Ares Obsidian 知识库。支持两种方式：
+```bash
+# 方式A：写入当前 shell 环境（临时）
+export ARES_VAULT_PATH="/path/to/your/Vault"
+```
+```bash
+# 方式B：项目根目录创建 .env（推荐长期使用）
+cp .env.example .env
+# 然后编辑 .env 中的 ARES_VAULT_PATH
+```
+如果两者都配置，脚本优先使用当前 shell 已存在的环境变量，不会被 `.env` 覆盖。
+
+旧方式示例（依然可用）：
 ```bash
 export ARES_VAULT_PATH="/path/to/your/Vault"
 ```
@@ -38,7 +60,8 @@ export ARES_VAULT_PATH="/path/to/your/Vault"
 ## 🚀 运行示例 (Usage)
 
 ### 1. 赛前映射（Crawler）
-获取中国足彩期号并从海外数据库寻找比赛映射 ID：
+获取中国足彩期号并从海外数据库寻找比赛映射 ID。
+*(内置高级网络爬取：利用逆向工程提取了 Understat 的私有隐密接口，无需 Selenium/代理池即可无痕获取数据且避免 API-Football 等授权费)*。
 ```bash
 python src/data/osint_crawler.py --issue 24040
 ```
@@ -53,6 +76,7 @@ python src/data/osint_postmatch.py --issue 24040 --match-id 22064
 **档案管道说明：**
 * **Cold Data (冷数据)**：原始 json 保存至项目级 `raw_reports/`，用于随时无损复原。
 * **Hot Data (热数据)**：提取洗练后带 Frontmatter 的 Markdown 报告（含战术分析与预期进球警告），自动输出至 `$ARES_VAULT_PATH/3_Resources/3.x_Match_Reports/`。若路径未正确挂载，系统将降级保存至项目的 `draft_reports/` 下避免数据丢失。
+* **批量模式命名规则**：每场单独输出为 `{issue}_{match_id}_postmatch.md`，避免 14 场互相覆盖。
 
 ## 📁 工程约定架构 (Directory Structure)
 
@@ -67,6 +91,8 @@ ares-osint-telemetry/
 │       ├── osint_crawler.py        # [映射] 足彩期号映射搜刮抓取器
 │       ├── osint_postmatch.py      # [核心] 赛后物理抽取脚本
 │       └── team_alias_map.json     # [字典] Ares中英文队名映射集
+├── scripts/
+│   └── env_doctor.py               # 环境自检脚本（版本/依赖/路径/入口检查）
 ├── docs/                   # Ares体系文档与工作交接库
 ├── raw_reports/            # [自动生成] 冷数据暂存区及映射单 (Ignored)
 └── draft_reports/          # [自动生成] 兜底热数据区 (Ignored)

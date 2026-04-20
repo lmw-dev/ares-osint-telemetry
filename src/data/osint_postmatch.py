@@ -14,6 +14,8 @@ logging.basicConfig(
 logger = logging.getLogger("AresTelemetry.PostMatch")
 
 class MatchTelemetryPipeline:
+    _dotenv_loaded = False
+
     def __init__(self, issue: str, match_id: str):
         self.issue = issue
         self.match_id = match_id
@@ -22,7 +24,8 @@ class MatchTelemetryPipeline:
         self.base_dir = Path(__file__).resolve().parent.parent.parent
         self.raw_reports_dir = self.base_dir / "raw_reports"
         self.raw_reports_dir.mkdir(parents=True, exist_ok=True)
-        
+
+        self._load_project_env_file()
         self.vault_path = os.getenv("ARES_VAULT_PATH")
         if not self.vault_path:
             logger.warning("未检测到环境变量 ARES_VAULT_PATH，热数据报告默认输出到 draft_reports 目录。")
@@ -38,6 +41,40 @@ class MatchTelemetryPipeline:
         except Exception as e:
             logger.error(f"加载 team_alias_map.json 失败 (可能文件不存在): {e}")
             return {}
+
+    def _load_project_env_file(self) -> None:
+        """
+        加载项目根目录 .env 到进程环境变量（仅在当前进程生效）。
+        若变量已存在，不覆盖外部环境注入值。
+        """
+        if MatchTelemetryPipeline._dotenv_loaded:
+            return
+
+        env_path = self.base_dir / ".env"
+        if not env_path.exists():
+            MatchTelemetryPipeline._dotenv_loaded = True
+            return
+
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip()
+
+                    if not key:
+                        continue
+                    if value and value[0] == value[-1] and value[0] in ("'", '"'):
+                        value = value[1:-1]
+                    os.environ.setdefault(key, value)
+            logger.info(f"检测到并加载 .env 配置: {env_path}")
+        except Exception as e:
+            logger.warning(f"加载 .env 失败，将继续使用系统环境变量: {e}")
+        finally:
+            MatchTelemetryPipeline._dotenv_loaded = True
 
     def fetch_raw_data(self) -> Dict[str, Any]:
         """
@@ -197,11 +234,11 @@ class MatchTelemetryPipeline:
         if self.vault_path:
             out_dir = Path(self.vault_path) / "3_Resources" / "3.x_Match_Reports"
             out_dir.mkdir(parents=True, exist_ok=True)
-            out_file = out_dir / f"{self.issue}_postmatch.md"
+            out_file = out_dir / f"{self.issue}_{self.match_id}_postmatch.md"
         else:
             out_dir = self.base_dir / "draft_reports"
             out_dir.mkdir(parents=True, exist_ok=True)
-            out_file = out_dir / f"{self.issue}_postmatch.md"
+            out_file = out_dir / f"{self.issue}_{self.match_id}_postmatch.md"
 
         yaml_content = yaml.dump(hot_data, sort_keys=False, allow_unicode=True)
         markdown_content = f"---\n{yaml_content}---\n\n"
@@ -254,7 +291,7 @@ class MatchTelemetryPipeline:
             
         return str(out_file)
 
-    def run(self):
+    def run(self) -> str:
         raw_data = self.fetch_raw_data()
         hot_data = self.extract_hot_features(raw_data)
         variance_flag = self.calculate_variance(hot_data)
@@ -263,14 +300,50 @@ class MatchTelemetryPipeline:
             "variance_flag": variance_flag
         }
         
-        self.generate_markdown(hot_data)
-        logger.info("Pipeline 执行完毕。")
+        out_file = self.generate_markdown(hot_data)
+        logger.info(f"[{self.match_id}] Pipeline 节点执行完毕。")
+        return out_file
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ares OSINT Telemetry - PostMatch Extraction")
     parser.add_argument("--issue", type=str, required=True, help="期号，如 26062")
-    parser.add_argument("--match-id", type=str, required=True, help="目标比赛的唯一ID")
+    parser.add_argument("--match-id", type=str, required=False, help="目标比赛的唯一ID (如果不填，则全自动执行14场复盘)")
     args = parser.parse_args()
     
-    pipeline = MatchTelemetryPipeline(issue=args.issue, match_id=args.match_id)
-    pipeline.run()
+    if args.match_id:
+        pipeline = MatchTelemetryPipeline(issue=args.issue, match_id=args.match_id)
+        pipeline.run()
+    else:
+        # Batch Mode
+        logger.info(f"未提供特定 match_id，启动全自动批量复盘引擎 (Issue: {args.issue})...")
+        base_dir = Path(__file__).resolve().parent.parent.parent
+        manifest_path = base_dir / "raw_reports" / f"{args.issue}_dispatch_manifest.json"
+        
+        if not manifest_path.exists():
+            logger.error(f"找不到战术派发单 {manifest_path}，请先执行赛前爬虫 (osint_crawler.py)！")
+        else:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            
+            success = 0
+            skipped = 0
+            generated_reports = []
+            for match in manifest.get("matches", []):
+                uid = match.get("understat_id")
+                if uid:
+                    logger.info(f"==> 正在批量复盘: {match['chinese']} (ID: {uid})")
+                    pipeline = MatchTelemetryPipeline(issue=args.issue, match_id=str(uid))
+                    try:
+                        out_file = pipeline.run()
+                        generated_reports.append(out_file)
+                        success += 1
+                    except Exception as e:
+                        logger.error(f"批量复盘 {match['chinese']} 时发生严重错误: {e}")
+                else:
+                    skipped += 1
+                    
+            logger.info(f"批量复盘完毕！共成功生成 {success} 份深度战报，跳过了 {skipped} 场无需复盘的超纲赛事。")
+            if generated_reports:
+                logger.info("本次输出文件清单：")
+                for report in generated_reports:
+                    logger.info(f"  - {report}")

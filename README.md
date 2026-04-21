@@ -90,8 +90,9 @@ python src/data/osint_postmatch.py --issue 24040 --match-id 22064 --official-sco
 ```
 
 **档案管道说明：**
-* **Cold Data (冷数据)**：保存结构化冷数据，同时落盘源站原始响应（赛前 `500_raw.html/json`、赛后 `understat_raw.html/json` 或 `fbref_raw.html`）。
-* **Hot Data (热数据)**：提取洗练后带 Frontmatter 的 Markdown 报告（含战术分析与预期进球警告），自动输出至 `$ARES_VAULT_PATH/3_Resources/3.x_Match_Reports/`。若路径未正确挂载，系统将降级保存至项目的 `draft_reports/` 下避免数据丢失。
+* **Cold Data (冷数据)**：保存结构化冷数据，同时落盘源站原始响应（赛前 `500_raw.html/json`、赛后 `understat_raw.html/json` 或 `fbref_raw.html`）到 `$ARES_VAULT_PATH/04_RAG_Raw_Data/Cold_Data_Lake/`。
+* **Hot Data (热数据)**：提取洗练后带 Frontmatter 的 Markdown 报告（含战术分析与预期进球警告），输出至 `$ARES_VAULT_PATH/03_Match_Audits/Postmatch_Telemetry/`。
+* **Team Archives (球队底座)**：每场赛后会同步更新 `$ARES_VAULT_PATH/02_Team_Archives/`（每队 `latest_postmatch.json` + `postmatch_history.jsonl`）。
 * **批量模式命名规则**：每场单独输出为 `{issue}_{match_id}_postmatch.md`，避免 14 场互相覆盖。
 * **数据源审计字段**：YAML 中新增 `data_source` 与 `data_source_ref`，可追溯本场来自 Understat 还是 FBref。
 

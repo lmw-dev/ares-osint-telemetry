@@ -16,6 +16,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger("AresTelemetry.PostMatch")
 
+
+def load_dotenv_into_env(base_dir: Path) -> None:
+    env_path = base_dir / ".env"
+    if not env_path.exists():
+        return
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    continue
+                if value and value[0] == value[-1] and value[0] in ("'", '"'):
+                    value = value[1:-1]
+                os.environ.setdefault(key, value)
+    except Exception:
+        # main入口预加载失败时不阻断，由类内逻辑再次兜底
+        pass
+
+
 class MatchTelemetryPipeline:
     _dotenv_loaded = False
 
@@ -37,13 +61,28 @@ class MatchTelemetryPipeline:
         
         # 路径配置
         self.base_dir = Path(__file__).resolve().parent.parent.parent
-        self.raw_reports_dir = self.base_dir / "raw_reports"
-        self.raw_reports_dir.mkdir(parents=True, exist_ok=True)
 
         self._load_project_env_file()
         self.vault_path = os.getenv("ARES_VAULT_PATH")
-        if not self.vault_path:
-            logger.warning("未检测到环境变量 ARES_VAULT_PATH，热数据报告默认输出到 draft_reports 目录。")
+        if self.vault_path:
+            normalized_vault_path = self._normalize_vault_path(self.vault_path)
+            if normalized_vault_path != self.vault_path:
+                logger.info(f"检测到转义路径，已规范化 ARES_VAULT_PATH: {normalized_vault_path}")
+            self.vault_path = normalized_vault_path
+        if self.vault_path:
+            vault_root = Path(self.vault_path)
+            self.cold_data_dir = vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake"
+            self.hot_reports_dir = vault_root / "03_Match_Audits" / "Postmatch_Telemetry"
+            self.team_archives_dir = vault_root / "02_Team_Archives"
+        else:
+            logger.warning("未检测到环境变量 ARES_VAULT_PATH，将降级写入项目目录。")
+            self.cold_data_dir = self.base_dir / "raw_reports"
+            self.hot_reports_dir = self.base_dir / "draft_reports"
+            self.team_archives_dir = self.base_dir / "02_Team_Archives"
+
+        self.cold_data_dir.mkdir(parents=True, exist_ok=True)
+        self.hot_reports_dir.mkdir(parents=True, exist_ok=True)
+        self.team_archives_dir.mkdir(parents=True, exist_ok=True)
         
         # 加载队名映射
         self.alias_map = self._load_team_alias_map()
@@ -132,6 +171,12 @@ class MatchTelemetryPipeline:
         return None, None
 
     @staticmethod
+    def _normalize_vault_path(path_text: str) -> str:
+        # Support shell-escaped .env paths, e.g. "/Users/.../Mobile\\ Documents/com\\~apple\\~CloudDocs"
+        normalized = str(path_text).replace("\\ ", " ").replace("\\~", "~")
+        return str(Path(normalized).expanduser())
+
+    @staticmethod
     def _normalize_score(score: Optional[str]) -> Optional[str]:
         if not score:
             return None
@@ -142,12 +187,12 @@ class MatchTelemetryPipeline:
         return f"{int(m.group(1))}-{int(m.group(2))}"
 
     def _dump_raw_artifact(self, suffix: str, content: str) -> str:
-        path = self.raw_reports_dir / f"{self.issue}_{self.match_id}_{suffix}"
+        path = self.cold_data_dir / f"{self.issue}_{self.match_id}_{suffix}"
         path.write_text(content, encoding="utf-8")
         return str(path)
 
     def _dump_raw_json_artifact(self, suffix: str, payload: Dict[str, Any]) -> str:
-        path = self.raw_reports_dir / f"{self.issue}_{self.match_id}_{suffix}"
+        path = self.cold_data_dir / f"{self.issue}_{self.match_id}_{suffix}"
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         return str(path)
@@ -182,7 +227,7 @@ class MatchTelemetryPipeline:
             raise RuntimeError(" | ".join(errors) if errors else "未获取到有效数据")
         
         # 落盘结构化冷数据
-        raw_file_path = self.raw_reports_dir / f"{self.issue}_{self.match_id}.json"
+        raw_file_path = self.cold_data_dir / f"{self.issue}_{self.match_id}.json"
         try:
             with open(raw_file_path, "w", encoding='utf-8') as f:
                 json.dump(raw_data, f, ensure_ascii=False, indent=2)
@@ -381,6 +426,70 @@ class MatchTelemetryPipeline:
         }
         return hot_data
 
+    def update_team_archives(self, hot_data: Dict[str, Any]) -> None:
+        team_a, team_b = hot_data["match_name"].split(" vs ", 1)
+        score = hot_data["result"]["score"]
+        h_score, a_score = [int(x) for x in score.split("-")]
+        metrics = hot_data["physical_metrics"]
+
+        team_payloads = [
+            (
+                team_a,
+                {
+                    "issue": hot_data["issue"],
+                    "match_id": hot_data["match_id"],
+                    "team": team_a,
+                    "opponent": team_b,
+                    "is_home": True,
+                    "score_for": h_score,
+                    "score_against": a_score,
+                    "xg_for": metrics["home_xG"],
+                    "xg_against": metrics["away_xG"],
+                    "shots_on_target_for": metrics["shots_on_target_home"],
+                    "shots_on_target_against": metrics["shots_on_target_away"],
+                    "passes_attacking_third_for": metrics["passes_attacking_third_home"],
+                    "passes_attacking_third_against": metrics["passes_attacking_third_away"],
+                    "data_source": hot_data.get("data_source", ""),
+                    "data_source_ref": hot_data.get("data_source_ref", ""),
+                    "variance_flag": hot_data["system_evaluation"]["variance_flag"],
+                },
+            ),
+            (
+                team_b,
+                {
+                    "issue": hot_data["issue"],
+                    "match_id": hot_data["match_id"],
+                    "team": team_b,
+                    "opponent": team_a,
+                    "is_home": False,
+                    "score_for": a_score,
+                    "score_against": h_score,
+                    "xg_for": metrics["away_xG"],
+                    "xg_against": metrics["home_xG"],
+                    "shots_on_target_for": metrics["shots_on_target_away"],
+                    "shots_on_target_against": metrics["shots_on_target_home"],
+                    "passes_attacking_third_for": metrics["passes_attacking_third_away"],
+                    "passes_attacking_third_against": metrics["passes_attacking_third_home"],
+                    "data_source": hot_data.get("data_source", ""),
+                    "data_source_ref": hot_data.get("data_source_ref", ""),
+                    "variance_flag": hot_data["system_evaluation"]["variance_flag"],
+                },
+            ),
+        ]
+
+        for team_name, payload in team_payloads:
+            safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", team_name).strip("_") or "team"
+            team_dir = self.team_archives_dir / safe_name
+            team_dir.mkdir(parents=True, exist_ok=True)
+
+            latest_path = team_dir / "latest_postmatch.json"
+            history_path = team_dir / "postmatch_history.jsonl"
+
+            with open(latest_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            with open(history_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
     def validate_official_score(self, hot_data: Dict[str, Any]) -> bool:
         actual_score = hot_data["result"]["score"]
         if not self.official_score:
@@ -420,14 +529,7 @@ class MatchTelemetryPipeline:
         """
         阶段四：落盘生成 Obsidian Markdown 笔记 (带深度战术解读)
         """
-        if self.vault_path:
-            out_dir = Path(self.vault_path) / "3_Resources" / "3.x_Match_Reports"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_file = out_dir / f"{self.issue}_{self.match_id}_postmatch.md"
-        else:
-            out_dir = self.base_dir / "draft_reports"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_file = out_dir / f"{self.issue}_{self.match_id}_postmatch.md"
+        out_file = self.hot_reports_dir / f"{self.issue}_{self.match_id}_postmatch.md"
 
         yaml_content = yaml.dump(hot_data, sort_keys=False, allow_unicode=True)
         markdown_content = f"---\n{yaml_content}---\n\n"
@@ -489,6 +591,8 @@ class MatchTelemetryPipeline:
         hot_data["system_evaluation"] = {
             "variance_flag": variance_flag
         }
+
+        self.update_team_archives(hot_data)
         
         out_file = self.generate_markdown(hot_data)
         logger.info(f"[{self.match_id}] Pipeline 节点执行完毕。")
@@ -518,6 +622,8 @@ if __name__ == "__main__":
         help="官方比分，格式如 2-1。若提供则会执行污染校验，不一致时中止落盘。",
     )
     args = parser.parse_args()
+    base_dir = Path(__file__).resolve().parent.parent.parent
+    load_dotenv_into_env(base_dir)
     
     if args.match_id:
         pipeline = MatchTelemetryPipeline(
@@ -531,8 +637,18 @@ if __name__ == "__main__":
     else:
         # Batch Mode
         logger.info(f"未提供特定 match_id，启动全自动批量复盘引擎 (Issue: {args.issue})...")
-        base_dir = Path(__file__).resolve().parent.parent.parent
-        manifest_path = base_dir / "raw_reports" / f"{args.issue}_dispatch_manifest.json"
+        vault_path = os.getenv("ARES_VAULT_PATH")
+        if vault_path:
+            vault_path = MatchTelemetryPipeline._normalize_vault_path(vault_path)
+        manifest_path = None
+        if vault_path:
+            primary_manifest = Path(vault_path) / "04_RAG_Raw_Data" / "Cold_Data_Lake" / f"{args.issue}_dispatch_manifest.json"
+            if primary_manifest.exists():
+                manifest_path = primary_manifest
+
+        if manifest_path is None:
+            legacy_manifest = base_dir / "raw_reports" / f"{args.issue}_dispatch_manifest.json"
+            manifest_path = legacy_manifest
         
         if not manifest_path.exists():
             logger.error(f"找不到战术派发单 {manifest_path}，请先执行赛前爬虫 (osint_crawler.py)！")

@@ -16,6 +16,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger("AresTelemetry.PostMatch")
 
+INTEL_BASE_DEFAULTS: Dict[str, Any] = {
+    "manager_doctrine": "Unknown",
+    "market_sentiment": "Neutral",
+    "key_node_dependency": [],
+    "recent_news_summary": "",
+}
+
+PHYSICAL_REALITY_DEFAULTS: Dict[str, Any] = {
+    "avg_xG_last_5": 1.0,
+    "conversion_efficiency": 0.05,
+    "defensive_leakage": 0.5,
+    "variance_history": [],
+    "actual_tactical_entropy": 0.40,
+}
+
+REALITY_GAP_DEFAULTS: Dict[str, Any] = {
+    "bias_type": "Aligned",
+    "S_dynamic_modifier": 0.0,
+}
+
 
 def load_dotenv_into_env(base_dir: Path) -> None:
     env_path = base_dir / ".env"
@@ -50,12 +70,14 @@ class MatchTelemetryPipeline:
         source: str = "auto",
         fbref_url: Optional[str] = None,
         official_score: Optional[str] = None,
+        league: Optional[str] = None,
     ):
         self.issue = issue
         self.match_id = match_id
         self.source = source
         self.fbref_url = fbref_url or (match_id if "fbref.com" in str(match_id).lower() else None)
         self.official_score = self._normalize_score(official_score) if official_score else None
+        self.league = league
         if official_score and not self.official_score:
             raise ValueError(f"official_score 格式非法: {official_score}（应为 2-1）")
         
@@ -375,6 +397,155 @@ class MatchTelemetryPipeline:
     def _normalize_team_name(self, raw_name: str) -> str:
         return self.alias_map.get(raw_name, raw_name)
 
+    @staticmethod
+    def _sanitize_segment(value: str, field_name: str) -> str:
+        cleaned = str(value).strip()
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1F]+', "_", cleaned).strip(" .")
+        if not cleaned:
+            raise ValueError(f"{field_name} 不能为空或仅包含非法字符")
+        if cleaned in {".", ".."}:
+            raise ValueError(f"{field_name} 非法：不能为 . 或 ..")
+        return cleaned
+
+    @staticmethod
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return float(default)
+
+    @staticmethod
+    def _split_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
+        if content.startswith("---\n"):
+            closing_marker_index = content.find("\n---\n", 4)
+            if closing_marker_index != -1:
+                yaml_text = content[4:closing_marker_index]
+                body = content[closing_marker_index + len("\n---\n"):]
+                parsed = yaml.safe_load(yaml_text) or {}
+                if isinstance(parsed, dict):
+                    return parsed, body
+                raise ValueError("frontmatter 结构非法：必须是 YAML 对象")
+        return {}, content
+
+    @staticmethod
+    def _build_markdown(frontmatter: Dict[str, Any], body: str) -> str:
+        yaml_text = yaml.safe_dump(frontmatter, allow_unicode=True, sort_keys=False)
+        return f"---\n{yaml_text}---\n{body}"
+
+    @staticmethod
+    def _write_text_safely(target_path: Path, content: str) -> None:
+        temp_path = target_path.with_suffix(target_path.suffix + ".tmp")
+        temp_path.write_text(content, encoding="utf-8")
+        temp_path.replace(target_path)
+
+    def _resolve_team_archive_md_path(self, team_name: str) -> Path:
+        safe_team = self._sanitize_segment(team_name, "team")
+        if self.league:
+            safe_league = self._sanitize_segment(self.league, "league")
+            return self.team_archives_dir / safe_league / f"{safe_team}.md"
+
+        candidates = list(self.team_archives_dir.glob(f"*/{safe_team}.md"))
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            raise ValueError(
+                f"检测到多个同名球队档案 {safe_team}.md，请通过 --league 指定联赛以避免歧义。"
+            )
+        raise FileNotFoundError(
+            f"未找到球队档案: {safe_team}.md。请先执行 team_forge.py 初始化，"
+            f"或在命令中传入 --league 以定位 {self.team_archives_dir}/{{league}}/{safe_team}.md"
+        )
+
+    def _update_physical_reality(
+        self,
+        physical_reality: Dict[str, Any],
+        *,
+        xg_for: float,
+        goals_for: int,
+        variance_flag: bool,
+    ) -> Dict[str, Any]:
+        merged = {**PHYSICAL_REALITY_DEFAULTS, **(physical_reality or {})}
+
+        existing_history = merged.get("xg_history_last_5", [])
+        xg_history: List[float] = []
+        if isinstance(existing_history, list):
+            for v in existing_history:
+                try:
+                    xg_history.append(float(v))
+                except Exception:
+                    continue
+
+        if not xg_history:
+            xg_history = [self._to_float(merged.get("avg_xG_last_5"), 1.0)]
+        xg_history.append(float(xg_for))
+        xg_history = xg_history[-5:]
+
+        merged["xg_history_last_5"] = [round(v, 4) for v in xg_history]
+        merged["avg_xG_last_5"] = round(sum(xg_history) / len(xg_history), 4)
+
+        xg_for_safe = max(float(xg_for), 1e-6)
+        merged["conversion_efficiency"] = round(max(int(goals_for), 0) / xg_for_safe, 4)
+
+        variance_history = merged.get("variance_history", [])
+        if not isinstance(variance_history, list):
+            variance_history = []
+        if variance_flag:
+            variance_history.append(True)
+        merged["variance_history"] = variance_history[-5:]
+        return merged
+
+    def calculate_reality_gap(
+        self,
+        intel_base: Dict[str, Any],
+        physical_reality: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        market_sentiment = str(intel_base.get("market_sentiment", "")).strip().lower()
+        avg_xg_last_5 = self._to_float(physical_reality.get("avg_xG_last_5"), 1.0)
+        conversion_efficiency = self._to_float(physical_reality.get("conversion_efficiency"), 0.05)
+        actual_tactical_entropy = self._to_float(physical_reality.get("actual_tactical_entropy"), 0.40)
+
+        if market_sentiment in {"optimistic", "overheated"} and avg_xg_last_5 < 1.0 and conversion_efficiency < 0.05:
+            return {"bias_type": "Fame_Trap", "S_dynamic_modifier": 0.15}
+        if market_sentiment == "pessimistic" and avg_xg_last_5 > 1.8 and actual_tactical_entropy < 0.40:
+            return {"bias_type": "Underestimated", "S_dynamic_modifier": -0.10}
+        return dict(REALITY_GAP_DEFAULTS)
+
+    def _update_team_archive_markdown(self, team_name: str, payload: Dict[str, Any]) -> None:
+        archive_path = self._resolve_team_archive_md_path(team_name)
+        content = archive_path.read_text(encoding="utf-8")
+        frontmatter, body = self._split_frontmatter(content)
+
+        intel_base = frontmatter.get("intel_base")
+        if not isinstance(intel_base, dict):
+            intel_base = {}
+        intel_base = {**INTEL_BASE_DEFAULTS, **intel_base}
+
+        physical_reality = frontmatter.get("physical_reality")
+        if not isinstance(physical_reality, dict):
+            physical_reality = {}
+
+        physical_reality = self._update_physical_reality(
+            physical_reality,
+            xg_for=float(payload["xg_for"]),
+            goals_for=int(payload["score_for"]),
+            variance_flag=bool(payload["variance_flag"]),
+        )
+        reality_gap = self.calculate_reality_gap(intel_base, physical_reality)
+
+        frontmatter["intel_base"] = intel_base
+        frontmatter["physical_reality"] = physical_reality
+        frontmatter["reality_gap"] = reality_gap
+
+        updated_markdown = self._build_markdown(frontmatter, body)
+        self._write_text_safely(archive_path, updated_markdown)
+        logger.info(
+            "球队档案已更新 reality_gap -> %s [%s / %.2f]",
+            archive_path,
+            reality_gap["bias_type"],
+            reality_gap["S_dynamic_modifier"],
+        )
+
     def extract_hot_features(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         阶段二：热精炼 (Hot Data Extraction)
@@ -489,6 +660,7 @@ class MatchTelemetryPipeline:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             with open(history_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            self._update_team_archive_markdown(team_name, payload)
 
     def validate_official_score(self, hot_data: Dict[str, Any]) -> bool:
         actual_score = hot_data["result"]["score"]
@@ -602,6 +774,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ares OSINT Telemetry - PostMatch Extraction")
     parser.add_argument("--issue", type=str, required=True, help="期号，如 26062")
     parser.add_argument("--match-id", type=str, required=False, help="目标比赛的唯一ID (如果不填，则全自动执行14场复盘)")
+    parser.add_argument("--league", type=str, required=False, help="联赛名，用于精准定位 Team_Archives/{league}/{team}.md")
     parser.add_argument(
         "--source",
         type=str,
@@ -632,6 +805,7 @@ if __name__ == "__main__":
             source=args.source,
             fbref_url=args.fbref_url,
             official_score=args.official_score,
+            league=args.league,
         )
         pipeline.run()
     else:
@@ -671,6 +845,12 @@ if __name__ == "__main__":
                         source=args.source,
                         fbref_url=fbref_url,
                         official_score=official_score,
+                        league=(
+                            match.get("league")
+                            or match.get("competition")
+                            or manifest.get("league")
+                            or args.league
+                        ),
                     )
                     try:
                         out_file = pipeline.run()

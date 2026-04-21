@@ -20,6 +20,7 @@ class AresOsintCrawler:
         self.base_dir = Path(__file__).resolve().parent.parent.parent
         self.raw_reports_dir = self.base_dir / "raw_reports"
         self.raw_reports_dir.mkdir(parents=True, exist_ok=True)
+        self.last_500_cold_refs = []
         
         # Load aliases
         alias_path = self.base_dir / "src" / "data" / "team_alias_map.json"
@@ -44,41 +45,72 @@ class AresOsintCrawler:
         except requests.exceptions.RequestException as e:
             logger.error(f"访问 500.com 失败: {e}")
             return []
-            
+
+        fetch_time = datetime.utcnow().isoformat() + "Z"
+        html_raw_path = self.raw_reports_dir / f"{self.issue}_500_raw.html"
+        json_raw_path = self.raw_reports_dir / f"{self.issue}_500_raw.json"
+        try:
+            html_raw_path.write_text(resp.text, encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"500 原始 HTML 冷存储失败: {e}")
+
+        tr_blocks = re.findall(r"<tr[^>]*data-vs=\"[^\"]+\"[^>]*>", resp.text)
+        raw_rows = []
         matches = []
-        for tr in re.findall(r"<tr[^>]*data-vs=\"[^\"]+\"[^>]*>", resp.text):
-            vs_m = re.search(r"data-vs=\"([^\"]+)\"", tr)
-            if not vs_m:
+        for idx, tr in enumerate(tr_blocks, start=1):
+            data_attrs = {k: v for k, v in re.findall(r"\b(data-[a-zA-Z0-9_-]+)=\"([^\"]*)\"", tr)}
+            raw_rows.append({"index": idx, "data_attrs": data_attrs, "raw_tr": tr})
+
+            vs = data_attrs.get("data-vs")
+            if not vs:
                 continue
-            vs = vs_m.group(1)
-            
-            bjpl = re.search(r"data-bjpl=\"([^\"]+)\"", tr)
-            asian = re.search(r"data-asian=\"([^\"]+)\"", tr)
-            kl = re.search(r"data-kl=\"([^\"]+)\"", tr)
-            pjgl = re.search(r"data-pjgl=\"([^\"]+)\"", tr)
-            
+
+            bjpl = data_attrs.get("data-bjpl")
+            asian = data_attrs.get("data-asian")
+            kl = data_attrs.get("data-kl")
+            pjgl = data_attrs.get("data-pjgl")
+
             if "vs" in vs:
                 h, a = vs.split("vs")
                 
                 market_snapshot = {}
                 try:
                     if bjpl:
-                        p = bjpl.group(1).split(",")
+                        p = bjpl.split(",")
                         market_snapshot["europe"] = {"win": float(p[0]), "draw": float(p[1]), "loss": float(p[2])}
                     if asian:
-                        p = asian.group(1).split(",")
+                        p = asian.split(",")
                         market_snapshot["asian_handicap"] = {"home": float(p[0]), "line": p[1], "away": float(p[2])}
                     if kl:
-                        p = kl.group(1).split(",")
+                        p = kl.split(",")
                         market_snapshot["kelly_index"] = {"win": float(p[0]), "draw": float(p[1]), "loss": float(p[2])}
                     if pjgl:
-                        p = pjgl.group(1).split(",")
+                        p = pjgl.split(",")
                         market_snapshot["probabilities"] = {"win": float(p[0]), "draw": float(p[1]), "loss": float(p[2])}
                 except Exception:
                     pass
                 
                 matches.append({"home_zh": h.strip(), "away_zh": a.strip(), "market_snapshot": market_snapshot})
-                
+
+        try:
+            with open(json_raw_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "issue": self.issue,
+                        "source": "500.com",
+                        "source_ref": url,
+                        "fetched_at": fetch_time,
+                        "row_count": len(raw_rows),
+                        "rows": raw_rows,
+                    },
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            self.last_500_cold_refs = [str(html_raw_path), str(json_raw_path)]
+        except Exception as e:
+            logger.warning(f"500 原始 JSON 冷存储失败: {e}")
+
         if not matches:
             logger.error("未从该期号中解析出任何有效比赛，请核实该期号存在且为 14场胜负彩。")
         else:
@@ -183,6 +215,7 @@ class AresOsintCrawler:
             output_manifest = {
                 "issue": self.issue,
                 "mapping_status": "OK",
+                "cold_data_refs": self.last_500_cold_refs,
                 "matches": []
             }
             needs_db = True
@@ -197,6 +230,8 @@ class AresOsintCrawler:
             if needs_db:
                 logger.info("[B端与C端融合] 检测到存在缺失 ID 的历史遗留场次，启动自修复重新映射机制...")
                 
+        output_manifest["cold_data_refs"] = self.last_500_cold_refs
+
         if needs_db:
             db = []
             for year in self._get_target_understat_years():

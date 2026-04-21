@@ -73,10 +73,27 @@ python src/data/osint_crawler.py --issue 24040
 python src/data/osint_postmatch.py --issue 24040 --match-id 22064
 ```
 
+默认即为 `--source auto`，会优先走 Understat，失败时自动回退 FBref。
+
+如需强制使用 FBref（适合非五大联赛补采）：
+```bash
+python src/data/osint_postmatch.py \
+  --issue 24040 \
+  --match-id "fbref-match-ref" \
+  --source fbref \
+  --fbref-url "https://fbref.com/en/matches/<match-id>/<slug>"
+```
+
+如需做官方比分污染校验（不一致即中止热报告落盘）：
+```bash
+python src/data/osint_postmatch.py --issue 24040 --match-id 22064 --official-score 2-1
+```
+
 **档案管道说明：**
-* **Cold Data (冷数据)**：原始 json 保存至项目级 `raw_reports/`，用于随时无损复原。
+* **Cold Data (冷数据)**：保存结构化冷数据，同时落盘源站原始响应（赛前 `500_raw.html/json`、赛后 `understat_raw.html/json` 或 `fbref_raw.html`）。
 * **Hot Data (热数据)**：提取洗练后带 Frontmatter 的 Markdown 报告（含战术分析与预期进球警告），自动输出至 `$ARES_VAULT_PATH/3_Resources/3.x_Match_Reports/`。若路径未正确挂载，系统将降级保存至项目的 `draft_reports/` 下避免数据丢失。
 * **批量模式命名规则**：每场单独输出为 `{issue}_{match_id}_postmatch.md`，避免 14 场互相覆盖。
+* **数据源审计字段**：YAML 中新增 `data_source` 与 `data_source_ref`，可追溯本场来自 Understat 还是 FBref。
 
 ## 📁 工程约定架构 (Directory Structure)
 

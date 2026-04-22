@@ -61,6 +61,33 @@ cp .env.example .env
 ```
 如果两者都配置，脚本优先使用当前 shell 已存在的环境变量，不会被 `.env` 覆盖。
 
+推荐在 `.env` 同步配置 LLM（用于 `osint_postmatch.py` 的可选 Reality Gap 回填）：
+```bash
+# 必填：Ares Vault 根目录
+ARES_VAULT_PATH="/path/to/your/Vault"
+
+# 可选：是否启用 LLM 回填（默认 0）
+ARES_USE_LLM_BACKFILL=0
+
+# 可选：openai | gemini（默认 openai）
+ARES_LLM_PROVIDER=openai
+
+# 可选：统一 Key（优先级最高）
+ARES_LLM_API_KEY=
+
+# Provider 专用 Key（当 ARES_LLM_API_KEY 为空时生效）
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+
+# 可选：自定义网关地址（不填则自动使用官方）
+# OpenAI 默认: https://api.openai.com/v1
+# Gemini 默认: https://generativelanguage.googleapis.com/v1beta
+ARES_LLM_BASE_URL=
+
+# 可选：模型名（不填则按 provider 走默认）
+ARES_LLM_MODEL=
+```
+
 旧方式示例（依然可用）：
 ```bash
 export ARES_VAULT_PATH="/path/to/your/Vault"

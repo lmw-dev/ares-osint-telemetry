@@ -37,6 +37,7 @@ REALITY_GAP_DEFAULTS: Dict[str, Any] = {
 }
 
 ALLOWED_BIAS_TYPES = {"Fame_Trap", "Underestimated", "Aligned"}
+SUPPORTED_LLM_PROVIDERS = {"openai", "gemini"}
 
 
 def load_dotenv_into_env(base_dir: Path) -> None:
@@ -162,15 +163,39 @@ class MatchTelemetryPipeline:
             "yes",
             "on",
         }
-        self.llm_api_key = os.getenv("ARES_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
-        self.llm_base_url = str(os.getenv("ARES_LLM_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
-        self.llm_model = str(os.getenv("ARES_LLM_MODEL", "gpt-4o-mini")).strip()
+        provider = str(os.getenv("ARES_LLM_PROVIDER", "openai")).strip().lower()
+        if provider not in SUPPORTED_LLM_PROVIDERS:
+            logger.warning("未知 ARES_LLM_PROVIDER=%s，已回退为 openai。", provider)
+            provider = "openai"
+        self.llm_provider = provider
+
+        common_api_key = str(os.getenv("ARES_LLM_API_KEY", "")).strip()
+        if self.llm_provider == "gemini":
+            provider_api_key = str(os.getenv("GEMINI_API_KEY", "")).strip() or str(os.getenv("GOOGLE_API_KEY", "")).strip()
+            default_base_url = "https://generativelanguage.googleapis.com/v1beta"
+            default_model = "gemini-1.5-flash"
+        else:
+            provider_api_key = str(os.getenv("OPENAI_API_KEY", "")).strip()
+            default_base_url = "https://api.openai.com/v1"
+            default_model = "gpt-4o-mini"
+
+        self.llm_api_key = common_api_key or provider_api_key
+        base_url_raw = (
+            str(os.getenv("ARES_LLM_BASE_URL", "")).strip()
+            or str(os.getenv("ARES_LLM_BAE_URL", "")).strip()
+        )
+        self.llm_base_url = (base_url_raw or default_base_url).rstrip("/")
+        self.llm_model = str(os.getenv("ARES_LLM_MODEL", default_model)).strip()
         self.llm_timeout_sec = int(os.getenv("ARES_LLM_TIMEOUT_SEC", "20"))
         self.llm_min_confidence = float(os.getenv("ARES_LLM_MIN_CONFIDENCE", "0.6"))
         self.llm_max_entropy_delta = float(os.getenv("ARES_LLM_MAX_ENTROPY_DELTA", "0.05"))
 
         if self.llm_enabled and not self.llm_api_key:
-            logger.warning("ARES_USE_LLM_BACKFILL=1 但未检测到 ARES_LLM_API_KEY/OPENAI_API_KEY，将回退规则判定。")
+            if self.llm_provider == "gemini":
+                key_hint = "ARES_LLM_API_KEY/GEMINI_API_KEY"
+            else:
+                key_hint = "ARES_LLM_API_KEY/OPENAI_API_KEY"
+            logger.warning("ARES_USE_LLM_BACKFILL=1 但未检测到 %s，将回退规则判定。", key_hint)
 
     def _llm_available(self) -> bool:
         return bool(self.llm_enabled and self.llm_api_key and self.llm_model)
@@ -506,11 +531,6 @@ class MatchTelemetryPipeline:
         if not self._llm_available():
             return None
 
-        endpoint = f"{self.llm_base_url}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.llm_api_key}",
-            "Content-Type": "application/json",
-        }
         system_prompt = (
             "You are an elite football risk model judge. "
             "Output STRICT JSON only. "
@@ -535,6 +555,17 @@ class MatchTelemetryPipeline:
                 "reasoning_brief": "short string",
             },
         }
+
+        if self.llm_provider == "gemini":
+            return self._call_reality_gap_llm_gemini(system_prompt=system_prompt, user_payload=user_payload)
+        return self._call_reality_gap_llm_openai(system_prompt=system_prompt, user_payload=user_payload)
+
+    def _call_reality_gap_llm_openai(self, *, system_prompt: str, user_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        endpoint = f"{self.llm_base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.llm_api_key}",
+            "Content-Type": "application/json",
+        }
         request_payload = {
             "model": self.llm_model,
             "temperature": 0.1,
@@ -544,7 +575,6 @@ class MatchTelemetryPipeline:
             ],
             "response_format": {"type": "json_object"},
         }
-
         try:
             resp = requests.post(
                 endpoint,
@@ -554,17 +584,50 @@ class MatchTelemetryPipeline:
             )
             resp.raise_for_status()
             data = resp.json()
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            parsed = self._extract_json_object(content)
+            if parsed is None:
+                logger.warning("LLM(OpenAI) 输出无法解析为 JSON，将回退规则判定。")
+            return parsed
+        except Exception as e:
+            logger.warning("LLM(OpenAI) Reality-Gap 调用失败，将回退规则判定: %s", e)
+            return None
+
+    def _call_reality_gap_llm_gemini(self, *, system_prompt: str, user_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        endpoint = f"{self.llm_base_url}/models/{self.llm_model}:generateContent"
+        headers = {"Content-Type": "application/json"}
+        request_payload = {
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "contents": [
+                {"role": "user", "parts": [{"text": json.dumps(user_payload, ensure_ascii=False)}]},
+            ],
+            "generationConfig": {
+                "temperature": 0.1,
+                "responseMimeType": "application/json",
+            },
+        }
+        try:
+            resp = requests.post(
+                endpoint,
+                headers=headers,
+                params={"key": self.llm_api_key},
+                json=request_payload,
+                timeout=self.llm_timeout_sec,
+            )
+            resp.raise_for_status()
+            data = resp.json()
             content = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
+                data.get("candidates", [{}])[0]
+                .get("content", {})
+                .get("parts", [{}])[0]
+                .get("text", "")
             )
             parsed = self._extract_json_object(content)
             if parsed is None:
-                logger.warning("LLM 输出无法解析为 JSON，将回退规则判定。")
+                logger.warning("LLM(Gemini) 输出无法解析为 JSON，将回退规则判定。")
             return parsed
         except Exception as e:
-            logger.warning(f"LLM Reality-Gap 调用失败，将回退规则判定: {e}")
+            logger.warning("LLM(Gemini) Reality-Gap 调用失败，将回退规则判定: %s", e)
             return None
 
     def _apply_reality_gap_with_optional_llm(
@@ -583,6 +646,8 @@ class MatchTelemetryPipeline:
             "mode": "rule_only",
             "rule_gap": rule_gap,
             "llm_enabled": self.llm_enabled,
+            "llm_provider": self.llm_provider,
+            "llm_model": self.llm_model,
         }
         reality_gap = dict(rule_gap)
 

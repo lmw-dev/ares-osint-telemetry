@@ -4,6 +4,7 @@ import logging
 import argparse
 import time
 import re
+import unicodedata
 import requests
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -134,17 +135,17 @@ class AresOsintCrawler:
             str(os.getenv("ARES_FOOTBALL_DATA_API_KEY", "")).strip()
             or str(os.getenv("FOOTBALL_DATA_API_KEY", "")).strip()
         )
-        self.football_data_base_url = str(
-            os.getenv("ARES_FOOTBALL_DATA_BASE_URL", "https://api.football-data.org/v4")
+        football_data_base_url_raw = str(os.getenv("ARES_FOOTBALL_DATA_BASE_URL", "")).strip()
+        self.football_data_base_url = (
+            football_data_base_url_raw or "https://api.football-data.org/v4"
         ).rstrip("/")
 
         self.the_odds_api_key = (
             str(os.getenv("ARES_THE_ODDS_API_KEY", "")).strip()
             or str(os.getenv("THE_ODDS_API_KEY", "")).strip()
         )
-        self.the_odds_base_url = str(
-            os.getenv("ARES_THE_ODDS_BASE_URL", "https://api.the-odds-api.com/v4")
-        ).rstrip("/")
+        the_odds_base_url_raw = str(os.getenv("ARES_THE_ODDS_BASE_URL", "")).strip()
+        self.the_odds_base_url = (the_odds_base_url_raw or "https://api.the-odds-api.com/v4").rstrip("/")
         self.enable_external_odds_enrich = str(
             os.getenv("ARES_ENABLE_EXTERNAL_ODDS_ENRICH", "0")
         ).strip().lower() in {"1", "true", "yes", "on"}
@@ -249,7 +250,17 @@ class AresOsintCrawler:
         if not name:
             return ""
 
-        normalized = re.sub(r"[\s\.\-']", "", name.strip().lower())
+        ascii_name = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode("ascii")
+        normalized = re.sub(r"[^a-z0-9]+", "", ascii_name.strip().lower())
+        if normalized.startswith("fc") and len(normalized) > 5:
+            normalized = normalized[2:]
+        if normalized.endswith("club") and len(normalized) > 8:
+            normalized = normalized[:-4]
+        for suffix in ("afc", "fc", "cf", "ac", "sc"):
+            if normalized.endswith(suffix) and len(normalized) > len(suffix) + 3:
+                normalized = normalized[:-len(suffix)]
+                break
+        normalized = re.sub(r"\d+$", "", normalized)
         alias = {
             "fcheidenheim": "heidenheim",
             "heidenheim": "heidenheim",
@@ -279,8 +290,11 @@ class AresOsintCrawler:
             "coventry": "coventry",
             "watford": "watford",
             "internazionale": "inter",
+            "internazionalemilano": "inter",
             "intermilan": "inter",
             "inter": "inter",
+            "como1907": "como",
+            "como": "como",
             "athleticclub": "athleticclub",
             "athleticbilbao": "athleticclub",
             "realmadridcf": "realmadrid",

@@ -88,6 +88,20 @@ ARES_LLM_BASE_URL=
 ARES_LLM_MODEL=
 ```
 
+可选：为赛前映射启用免费外部数据源补采（`osint_crawler.py`）：
+```bash
+# football-data 回退映射（未配置则跳过）
+ARES_FOOTBALL_DATA_API_KEY=
+# 可选，默认官方 v4
+ARES_FOOTBALL_DATA_BASE_URL=
+
+# The Odds API 补采赔率（默认关闭）
+ARES_ENABLE_EXTERNAL_ODDS_ENRICH=0
+ARES_THE_ODDS_API_KEY=
+# 可选，默认官方 v4
+ARES_THE_ODDS_BASE_URL=
+```
+
 旧方式示例（依然可用）：
 ```bash
 export ARES_VAULT_PATH="/path/to/your/Vault"
@@ -102,6 +116,13 @@ export ARES_VAULT_PATH="/path/to/your/Vault"
 python src/data/osint_crawler.py --issue 24040
 ```
 **产出物**：14 场赛事的结构化中英文对照清单，自动落盘为 `raw_reports/[issue]_dispatch_manifest.json`。
+
+默认映射回退链路：
+- `Understat`（主源）
+- `FBref`（次级联赛回退）
+- `football-data.org`（API 回退，需配置 Key）
+
+如启用 `ARES_ENABLE_EXTERNAL_ODDS_ENRICH=1` 且配置 `ARES_THE_ODDS_API_KEY`，派发单中会新增 `external_odds_history` 字段。
 
 ### 2. 赛后遥测（Postmatch）
 执行赛后物理事实数据遥测（以西汉姆联为例）：

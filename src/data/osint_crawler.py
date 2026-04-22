@@ -631,12 +631,31 @@ class AresOsintCrawler:
             best.get("competition_code"),
         )
 
-    def _fetch_the_odds_sport_events(self, sport_key: str) -> List[Dict[str, Any]]:
-        if sport_key in self._odds_events_cache:
-            return self._odds_events_cache[sport_key]
+    @staticmethod
+    def _to_iso_z(dt: datetime) -> str:
+        return dt.replace(microsecond=0).isoformat() + "Z"
+
+    @staticmethod
+    def _build_odds_cache_key(
+        sport_key: str,
+        commence_time_from: Optional[str],
+        commence_time_to: Optional[str],
+    ) -> str:
+        return f"{sport_key}|{commence_time_from or ''}|{commence_time_to or ''}"
+
+    def _fetch_the_odds_sport_events(
+        self,
+        sport_key: str,
+        *,
+        commence_time_from: Optional[str] = None,
+        commence_time_to: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        cache_key = self._build_odds_cache_key(sport_key, commence_time_from, commence_time_to)
+        if cache_key in self._odds_events_cache:
+            return self._odds_events_cache[cache_key]
 
         if not self.the_odds_api_key:
-            self._odds_events_cache[sport_key] = []
+            self._odds_events_cache[cache_key] = []
             return []
 
         url = f"{self.the_odds_base_url}/sports/{sport_key}/odds"
@@ -647,18 +666,22 @@ class AresOsintCrawler:
             "oddsFormat": "decimal",
             "dateFormat": "iso",
         }
+        if commence_time_from:
+            params["commenceTimeFrom"] = commence_time_from
+        if commence_time_to:
+            params["commenceTimeTo"] = commence_time_to
         headers = {"User-Agent": "Ares-OSINT-Telemetry/1.0"}
 
         try:
             resp = requests.get(url, params=params, headers=headers, timeout=20)
             if resp.status_code != 200:
                 logger.warning("The Odds API 拉取失败 %s HTTP %s", sport_key, resp.status_code)
-                self._odds_events_cache[sport_key] = []
+                self._odds_events_cache[cache_key] = []
                 return []
             events = resp.json()
         except Exception as e:
             logger.warning("The Odds API 拉取异常 %s: %s", sport_key, e)
-            self._odds_events_cache[sport_key] = []
+            self._odds_events_cache[cache_key] = []
             return []
 
         cold_name = self._sanitize_segment(sport_key, "sport")
@@ -683,8 +706,8 @@ class AresOsintCrawler:
         except Exception as e:
             logger.warning("The Odds API 原始 JSON 冷存储失败 %s: %s", sport_key, e)
 
-        self._odds_events_cache[sport_key] = events if isinstance(events, list) else []
-        return self._odds_events_cache[sport_key]
+        self._odds_events_cache[cache_key] = events if isinstance(events, list) else []
+        return self._odds_events_cache[cache_key]
 
     def _pick_the_odds_event_by_time(
         self,
@@ -706,7 +729,9 @@ class AresOsintCrawler:
                 continue
             event_home = self._normalize_team_name(str(event.get("home_team", "")))
             event_away = self._normalize_team_name(str(event.get("away_team", "")))
-            if event_home != home_norm or event_away != away_norm:
+            home_away_match = (event_home == home_norm and event_away == away_norm)
+            away_home_match = (event_home == away_norm and event_away == home_norm)
+            if not home_away_match and not away_home_match:
                 continue
             gap = abs((event_dt - anchor_dt).total_seconds())
             if best_event is None or gap < best_gap:
@@ -747,6 +772,7 @@ class AresOsintCrawler:
         away_en: str,
         league: Optional[str],
         anchor_dt: datetime,
+        target_match_time: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         if not self.enable_external_odds_enrich or not self.the_odds_api_key:
             return None
@@ -755,26 +781,71 @@ class AresOsintCrawler:
         sport_key = LEAGUE_TO_ODDS_SPORT_KEY.get(league)
         if not sport_key:
             return None
-        events = self._fetch_the_odds_sport_events(sport_key)
+
+        # The issue id is not used for odds lookup.
+        # We always search by mapped match time + team pair.
+        target_dt = self._parse_datetime(target_match_time) if target_match_time else None
+        now_dt = datetime.utcnow()
+        if target_dt and target_dt < now_dt - timedelta(hours=2):
+            return {
+                "provider": "the-odds-api.com",
+                "status": "skipped_historical_on_free_plan",
+                "sport_key": sport_key,
+                "target_match_time": target_match_time,
+                "reason": "historical_odds_requires_paid_plan",
+                "fetched_at": datetime.utcnow().isoformat() + "Z",
+            }
+
+        commence_from = None
+        commence_to = None
+        reference_dt = anchor_dt
+        if target_dt:
+            reference_dt = target_dt
+            commence_from = self._to_iso_z(target_dt - timedelta(hours=36))
+            commence_to = self._to_iso_z(target_dt + timedelta(hours=36))
+
+        events = self._fetch_the_odds_sport_events(
+            sport_key,
+            commence_time_from=commence_from,
+            commence_time_to=commence_to,
+        )
         event, gap_days = self._pick_the_odds_event_by_time(
             events,
             home_en=home_en,
             away_en=away_en,
-            anchor_dt=anchor_dt,
+            anchor_dt=reference_dt,
         )
         if not event:
-            return None
+            return {
+                "provider": "the-odds-api.com",
+                "status": "no_match_in_feed",
+                "sport_key": sport_key,
+                "target_match_time": target_match_time,
+                "commence_time_from": commence_from,
+                "commence_time_to": commence_to,
+                "fetched_at": datetime.utcnow().isoformat() + "Z",
+            }
         h2h_snapshot = self._extract_the_odds_h2h_snapshot(event)
         if not h2h_snapshot:
-            return None
+            return {
+                "provider": "the-odds-api.com",
+                "status": "event_found_but_no_h2h_market",
+                "sport_key": sport_key,
+                "event_id": event.get("id"),
+                "commence_time": event.get("commence_time"),
+                "target_match_time": target_match_time,
+                "fetched_at": datetime.utcnow().isoformat() + "Z",
+            }
         return {
             "provider": "the-odds-api.com",
+            "status": "ok",
             "sport_key": sport_key,
             "event_id": event.get("id"),
             "commence_time": event.get("commence_time"),
             "gap_days": gap_days,
             "home_team": event.get("home_team"),
             "away_team": event.get("away_team"),
+            "target_match_time": target_match_time,
             "h2h_snapshot": h2h_snapshot,
             "fetched_at": datetime.utcnow().isoformat() + "Z",
         }
@@ -1003,11 +1074,20 @@ class AresOsintCrawler:
             elif found_football_data_match_id:
                 mapping_source = "football-data"
 
+            mapped_match_time = None
+            if mapping_source == "understat":
+                mapped_match_time = found_date
+            elif mapping_source == "fbref":
+                mapped_match_time = found_fbref_date
+            elif mapping_source == "football-data":
+                mapped_match_time = found_football_data_date
+
             external_odds_snapshot = self._enrich_external_odds_snapshot(
                 home_en=home_en,
                 away_en=away_en,
                 league=found_league,
                 anchor_dt=anchor_dt,
+                target_match_time=mapped_match_time,
             )
 
             if existing_match:

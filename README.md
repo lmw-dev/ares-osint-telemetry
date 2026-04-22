@@ -123,6 +123,8 @@ python src/data/osint_crawler.py --issue 24040
 - `football-data.org`（API 回退，需配置 Key）
 
 如启用 `ARES_ENABLE_EXTERNAL_ODDS_ENRICH=1` 且配置 `ARES_THE_ODDS_API_KEY`，派发单中会新增 `external_odds_history` 字段。
+赔率检索键不使用中国足彩 `issue`，而是使用已映射的赛程时间（`understat/football-data/fbref`）+ 主客队名。
+若目标比赛为历史场次，免费版会记录 `skipped_historical_on_free_plan` 审计状态（不报错不中断）。
 
 ### 2. 赛后遥测（Postmatch）
 执行赛后物理事实数据遥测（以西汉姆联为例）：

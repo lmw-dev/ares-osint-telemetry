@@ -144,6 +144,70 @@ class AresOsintCrawler:
         current_year = datetime.utcnow().year
         return [str(current_year), str(current_year - 1), str(current_year - 2)]
 
+    @staticmethod
+    def _parse_datetime(value: str):
+        if not value:
+            return None
+        txt = str(value).strip()
+        if not txt:
+            return None
+
+        txt = txt.replace("T", " ")
+        if txt.endswith("Z"):
+            txt = txt[:-1]
+
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(txt, fmt)
+            except Exception:
+                continue
+        return None
+
+    def _extract_anchor_time(self, existing_match: dict, default_dt: datetime) -> datetime:
+        if not existing_match:
+            return default_dt
+
+        history = existing_match.get("market_odds_history")
+        if not isinstance(history, list):
+            return default_dt
+
+        ts_list = []
+        for snap in history:
+            if not isinstance(snap, dict):
+                continue
+            dt = self._parse_datetime(snap.get("timestamp", ""))
+            if dt:
+                ts_list.append(dt)
+
+        if not ts_list:
+            return default_dt
+        # Use earliest odds snapshot to anchor this issue, avoid rerun-time drift.
+        return min(ts_list)
+
+    def _pick_understat_id_by_time(self, candidates: list, anchor_dt: datetime, max_gap_days: int = 45):
+        if not candidates:
+            return None, None, None
+
+        best = None
+        best_gap = None
+        for m in candidates:
+            m_dt = self._parse_datetime(m.get("date", ""))
+            if not m_dt:
+                continue
+            gap = abs((m_dt - anchor_dt).total_seconds())
+            if best is None or gap < best_gap:
+                best = m
+                best_gap = gap
+
+        if best is None:
+            return None, None, None
+
+        gap_days = round(best_gap / 86400.0, 3)
+        if gap_days > max_gap_days:
+            return None, None, gap_days
+
+        return best.get("id"), best.get("date"), gap_days
+
     def _fetch_understat_league(self, league: str, year: str) -> list:
         url = f"https://understat.com/getLeagueData/{league}/{year}"
         headers = {
@@ -168,7 +232,8 @@ class AresOsintCrawler:
                             "id": m["id"],
                             "home_en": m["h"]["title"],
                             "away_en": m["a"]["title"],
-                            "date": m["datetime"]
+                            "date": m["datetime"],
+                            "league": league,
                         })
                 return matches
             except requests.exceptions.RequestException as e:
@@ -221,14 +286,14 @@ class AresOsintCrawler:
             needs_db = True
             logger.info("[B端与C端融合] 开始双极映射扫描 (首次构建)...")
         else:
-            # Check if any existing matches are missing understat_ids
+            # Check if any existing matches are missing IDs or missing date audit fields.
             needs_db = False
             for m in output_manifest["matches"]:
-                if not m.get("understat_id"):
+                if not m.get("understat_id") or not m.get("understat_date"):
                     needs_db = True
                     break
             if needs_db:
-                logger.info("[B端与C端融合] 检测到存在缺失 ID 的历史遗留场次，启动自修复重新映射机制...")
+                logger.info("[B端与C端融合] 检测到存在缺失映射/缺失时间审计字段，启动自修复重新映射机制...")
                 
         output_manifest["cold_data_refs"] = self.last_500_cold_refs
 
@@ -242,14 +307,14 @@ class AresOsintCrawler:
                     self._normalize_team_name(m["home_en"]),
                     self._normalize_team_name(m["away_en"])
                 )
-                if key not in db_index:
-                    db_index[key] = m["id"]
+                db_index.setdefault(key, []).append(m)
         else:
             db = []
             db_index = {}
             
         success_count = 0
-        current_time = datetime.utcnow().isoformat() + "Z"
+        current_time_dt = datetime.utcnow()
+        current_time = current_time_dt.isoformat() + "Z"
         
         for i, match in enumerate(cn_matches):
             home_zh = match["home_zh"]
@@ -269,18 +334,26 @@ class AresOsintCrawler:
             
             # 只有在初次创建，或者历史记录中没有抓到ID的情况下，才进行 B端查找
             found_id = None
-            if existing_match and existing_match.get("understat_id"):
-                found_id = existing_match.get("understat_id")
-            elif db_index:
+            found_date = None
+            found_gap_days = None
+            if db_index:
                 lookup_key = (
                     self._normalize_team_name(home_en),
                     self._normalize_team_name(away_en)
                 )
-                found_id = db_index.get(lookup_key)
+                candidates = db_index.get(lookup_key, [])
+                anchor_dt = self._extract_anchor_time(existing_match, current_time_dt)
+                found_id, found_date, found_gap_days = self._pick_understat_id_by_time(candidates, anchor_dt)
+            elif existing_match and existing_match.get("understat_id"):
+                found_id = existing_match.get("understat_id")
+                found_date = existing_match.get("understat_date")
+                found_gap_days = existing_match.get("understat_gap_days")
                         
             if existing_match:
                 # Merge into existing map
                 existing_match["understat_id"] = found_id
+                existing_match["understat_date"] = found_date
+                existing_match["understat_gap_days"] = found_gap_days
                 existing_match["chinese"] = f"{home_zh} vs {away_zh}"
                 existing_match["english"] = f"{home_en} vs {away_en}"
                 if "market_odds_history" not in existing_match:
@@ -289,23 +362,37 @@ class AresOsintCrawler:
                 existing_match["market_odds_history"].append(market_snapshot)
                 
                 if found_id:
-                    logger.info(f"[{i+1}/14] 已映射（追踪更新）: {home_zh} vs {away_zh} (ID: {found_id})")
+                    logger.info(
+                        f"[{i+1}/14] 已映射（追踪更新）: {home_zh} vs {away_zh} "
+                        f"(ID: {found_id}, date: {found_date}, gap_days: {found_gap_days})"
+                    )
                     success_count += 1
                 else:
-                    logger.warning(f"[{i+1}/14] 依然无法映射: {home_zh} vs {away_zh} (超纲赛事)")
+                    logger.warning(
+                        f"[{i+1}/14] 依然无法映射: {home_zh} vs {away_zh} "
+                        "(超纲赛事或时间门禁未通过)"
+                    )
             else:
                 # Add fully new match
                 if found_id:
-                    logger.info(f"[{i+1}/14] 映射成功: {home_zh} vs {away_zh} -> {home_en} vs {away_en} (ID: {found_id})")
+                    logger.info(
+                        f"[{i+1}/14] 映射成功: {home_zh} vs {away_zh} -> {home_en} vs {away_en} "
+                        f"(ID: {found_id}, date: {found_date}, gap_days: {found_gap_days})"
+                    )
                     success_count += 1
                 else:
-                    logger.warning(f"[{i+1}/14] 映射失败或超纲: {home_zh} vs {away_zh} (未能匹配到 Understat ID)")
+                    logger.warning(
+                        f"[{i+1}/14] 映射失败或超纲: {home_zh} vs {away_zh} "
+                        "(未能匹配到 Understat ID 或时间门禁未通过)"
+                    )
                     
                 output_manifest["matches"].append({
                     "index": i + 1,
                     "chinese": f"{home_zh} vs {away_zh}",
                     "english": f"{home_en} vs {away_en}",
                     "understat_id": found_id,
+                    "understat_date": found_date,
+                    "understat_gap_days": found_gap_days,
                     "market_odds_history": [market_snapshot]
                 })
             

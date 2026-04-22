@@ -16,6 +16,7 @@ __pycache__/
 # Data Outputs
 raw_reports/
 draft_reports/
+3_Resources/3.x_Match_Reports/
 
 # IDE configurations
 .idea/

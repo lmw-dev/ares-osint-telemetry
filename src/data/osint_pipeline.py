@@ -96,11 +96,32 @@ def run_prematch_engine(
         cwd=engine_dir,
         env=os.environ.copy(),
         text=True,
+        capture_output=True,
     )
+    if result.stdout:
+        for line in result.stdout.splitlines():
+            logger.info("[20-engine] %s", line)
+    if result.stderr:
+        for line in result.stderr.splitlines():
+            logger.warning("[20-engine][stderr] %s", line)
+
+    summary = {"success": 0, "failed": 0}
+    for line in result.stdout.splitlines() if result.stdout else []:
+        if not line.startswith("AUDIT_ISSUE_SUMMARY "):
+            continue
+        try:
+            payload = json.loads(line.split(" ", 1)[1])
+            summary["success"] = int(payload.get("processed", 0))
+            summary["failed"] = int(payload.get("failed", 0))
+        except (IndexError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            logger.warning("解析 audit-issue summary 失败: %s", exc)
+
     if result.returncode != 0:
         logger.error("Prematch 推演失败，exit_code=%s", result.returncode)
-        return {"success": 0, "failed": 1}
-    return {"success": 1, "failed": 0}
+        if summary["success"] == 0 and summary["failed"] == 0:
+            return {"success": 0, "failed": 1}
+        return summary
+    return summary
 
 
 def resolve_manifest_path(base_dir: Path, issue: str) -> Path:

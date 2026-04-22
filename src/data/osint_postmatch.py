@@ -36,6 +36,8 @@ REALITY_GAP_DEFAULTS: Dict[str, Any] = {
     "S_dynamic_modifier": 0.0,
 }
 
+ALLOWED_BIAS_TYPES = {"Fame_Trap", "Underestimated", "Aligned"}
+
 
 def load_dotenv_into_env(base_dir: Path) -> None:
     env_path = base_dir / ".env"
@@ -108,6 +110,7 @@ class MatchTelemetryPipeline:
         
         # 加载队名映射
         self.alias_map = self._load_team_alias_map()
+        self._load_llm_runtime_config()
 
     def _load_team_alias_map(self) -> Dict[str, str]:
         map_path = Path(__file__).resolve().parent / "team_alias_map.json"
@@ -151,6 +154,26 @@ class MatchTelemetryPipeline:
             logger.warning(f"加载 .env 失败，将继续使用系统环境变量: {e}")
         finally:
             MatchTelemetryPipeline._dotenv_loaded = True
+
+    def _load_llm_runtime_config(self) -> None:
+        self.llm_enabled = str(os.getenv("ARES_USE_LLM_BACKFILL", "0")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        self.llm_api_key = os.getenv("ARES_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+        self.llm_base_url = str(os.getenv("ARES_LLM_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
+        self.llm_model = str(os.getenv("ARES_LLM_MODEL", "gpt-4o-mini")).strip()
+        self.llm_timeout_sec = int(os.getenv("ARES_LLM_TIMEOUT_SEC", "20"))
+        self.llm_min_confidence = float(os.getenv("ARES_LLM_MIN_CONFIDENCE", "0.6"))
+        self.llm_max_entropy_delta = float(os.getenv("ARES_LLM_MAX_ENTROPY_DELTA", "0.05"))
+
+        if self.llm_enabled and not self.llm_api_key:
+            logger.warning("ARES_USE_LLM_BACKFILL=1 但未检测到 ARES_LLM_API_KEY/OPENAI_API_KEY，将回退规则判定。")
+
+    def _llm_available(self) -> bool:
+        return bool(self.llm_enabled and self.llm_api_key and self.llm_model)
 
     @staticmethod
     def _looks_like_understat_id(match_id: str) -> bool:
@@ -439,6 +462,201 @@ class MatchTelemetryPipeline:
         temp_path.write_text(content, encoding="utf-8")
         temp_path.replace(target_path)
 
+    @staticmethod
+    def _clamp(value: float, min_value: float, max_value: float) -> float:
+        return max(min_value, min(max_value, value))
+
+    @staticmethod
+    def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+        if not text:
+            return None
+        txt = str(text).strip()
+        if not txt:
+            return None
+
+        try:
+            parsed = json.loads(txt)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        start = txt.find("{")
+        end = txt.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        snippet = txt[start : end + 1]
+        try:
+            parsed = json.loads(snippet)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return None
+        return None
+
+    def _call_reality_gap_llm(
+        self,
+        *,
+        team_name: str,
+        intel_base: Dict[str, Any],
+        physical_reality: Dict[str, Any],
+        match_payload: Dict[str, Any],
+        rule_gap: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        if not self._llm_available():
+            return None
+
+        endpoint = f"{self.llm_base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.llm_api_key}",
+            "Content-Type": "application/json",
+        }
+        system_prompt = (
+            "You are an elite football risk model judge. "
+            "Output STRICT JSON only. "
+            "Never include markdown. "
+            "Allowed bias_type: Fame_Trap, Underestimated, Aligned."
+        )
+        user_payload = {
+            "task": "Evaluate reality gap and whether tactical entropy should be backfilled.",
+            "team": team_name,
+            "issue": self.issue,
+            "match_id": self.match_id,
+            "intel_base": intel_base,
+            "physical_reality": physical_reality,
+            "latest_match_payload": match_payload,
+            "rule_baseline": rule_gap,
+            "output_schema": {
+                "bias_type": "Fame_Trap|Underestimated|Aligned",
+                "S_dynamic_modifier": "float",
+                "should_backfill_entropy": "bool",
+                "entropy_delta": "float",
+                "confidence": "0~1 float",
+                "reasoning_brief": "short string",
+            },
+        }
+        request_payload = {
+            "model": self.llm_model,
+            "temperature": 0.1,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+            ],
+            "response_format": {"type": "json_object"},
+        }
+
+        try:
+            resp = requests.post(
+                endpoint,
+                headers=headers,
+                json=request_payload,
+                timeout=self.llm_timeout_sec,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            content = (
+                data.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
+            parsed = self._extract_json_object(content)
+            if parsed is None:
+                logger.warning("LLM 输出无法解析为 JSON，将回退规则判定。")
+            return parsed
+        except Exception as e:
+            logger.warning(f"LLM Reality-Gap 调用失败，将回退规则判定: {e}")
+            return None
+
+    def _apply_reality_gap_with_optional_llm(
+        self,
+        *,
+        team_name: str,
+        intel_base: Dict[str, Any],
+        physical_reality: Dict[str, Any],
+        match_payload: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        rule_gap = self.calculate_reality_gap(intel_base, physical_reality)
+        audit: Dict[str, Any] = {
+            "team": team_name,
+            "issue": self.issue,
+            "match_id": self.match_id,
+            "mode": "rule_only",
+            "rule_gap": rule_gap,
+            "llm_enabled": self.llm_enabled,
+        }
+        reality_gap = dict(rule_gap)
+
+        if not self._llm_available():
+            return physical_reality, reality_gap, audit
+
+        llm_result = self._call_reality_gap_llm(
+            team_name=team_name,
+            intel_base=intel_base,
+            physical_reality=physical_reality,
+            match_payload=match_payload,
+            rule_gap=rule_gap,
+        )
+        if not llm_result:
+            return physical_reality, reality_gap, audit
+
+        audit["mode"] = "llm_assisted"
+        audit["llm_raw"] = llm_result
+
+        bias_type = str(llm_result.get("bias_type", "")).strip()
+        if bias_type not in ALLOWED_BIAS_TYPES:
+            bias_type = rule_gap["bias_type"]
+
+        s_dynamic_modifier = self._to_float(
+            llm_result.get("S_dynamic_modifier"),
+            rule_gap["S_dynamic_modifier"],
+        )
+        s_dynamic_modifier = round(self._clamp(s_dynamic_modifier, -0.3, 0.3), 4)
+
+        confidence = self._clamp(self._to_float(llm_result.get("confidence"), 0.0), 0.0, 1.0)
+        should_backfill_entropy = bool(llm_result.get("should_backfill_entropy", False))
+        entropy_delta = self._to_float(llm_result.get("entropy_delta"), 0.0)
+        entropy_delta = self._clamp(
+            entropy_delta,
+            -abs(self.llm_max_entropy_delta),
+            abs(self.llm_max_entropy_delta),
+        )
+
+        reality_gap = {
+            "bias_type": bias_type,
+            "S_dynamic_modifier": s_dynamic_modifier,
+        }
+        audit["final_gap"] = reality_gap
+
+        entropy_before = self._to_float(physical_reality.get("actual_tactical_entropy"), 0.40)
+        entropy_after = entropy_before
+        entropy_applied = False
+        if should_backfill_entropy and confidence >= self.llm_min_confidence and abs(entropy_delta) > 0:
+            entropy_after = round(self._clamp(entropy_before + entropy_delta, 0.10, 1.20), 4)
+            physical_reality["actual_tactical_entropy"] = entropy_after
+            entropy_applied = True
+
+        audit["entropy_backfill"] = {
+            "should_backfill_entropy": should_backfill_entropy,
+            "confidence": round(confidence, 4),
+            "min_confidence_required": self.llm_min_confidence,
+            "entropy_delta_requested": round(entropy_delta, 4),
+            "entropy_before": round(entropy_before, 4),
+            "entropy_after": round(entropy_after, 4),
+            "applied": entropy_applied,
+        }
+        audit["reasoning_brief"] = str(llm_result.get("reasoning_brief", "")).strip()
+
+        return physical_reality, reality_gap, audit
+
+    def _dump_reality_gap_audit(self, team_name: str, audit_payload: Dict[str, Any]) -> None:
+        safe_team = re.sub(r"[^A-Za-z0-9._-]+", "_", team_name).strip("_") or "team"
+        path = self.cold_data_dir / f"{self.issue}_{self.match_id}_{safe_team}_reality_gap_audit.json"
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(audit_payload, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"Reality-Gap 审计落盘失败: {e}")
+
     def _resolve_team_archive_md_path(self, team_name: str) -> Path:
         safe_team = self._sanitize_segment(team_name, "team")
         if self.league:
@@ -531,7 +749,12 @@ class MatchTelemetryPipeline:
             goals_for=int(payload["score_for"]),
             variance_flag=bool(payload["variance_flag"]),
         )
-        reality_gap = self.calculate_reality_gap(intel_base, physical_reality)
+        physical_reality, reality_gap, gap_audit = self._apply_reality_gap_with_optional_llm(
+            team_name=team_name,
+            intel_base=intel_base,
+            physical_reality=physical_reality,
+            match_payload=payload,
+        )
 
         frontmatter["intel_base"] = intel_base
         frontmatter["physical_reality"] = physical_reality
@@ -539,6 +762,7 @@ class MatchTelemetryPipeline:
 
         updated_markdown = self._build_markdown(frontmatter, body)
         self._write_text_safely(archive_path, updated_markdown)
+        self._dump_reality_gap_audit(team_name, gap_audit)
         logger.info(
             "球队档案已更新 reality_gap -> %s [%s / %.2f]",
             archive_path,

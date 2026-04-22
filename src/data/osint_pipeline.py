@@ -18,11 +18,12 @@ logging.basicConfig(
 logger = logging.getLogger("AresTelemetry.Pipeline")
 
 
-def _resolve_engine_dir() -> Path:
+def _resolve_engine_dir(explicit_engine_dir: Optional[str] = None) -> Path:
     """定位 20-engine 仓库根目录。"""
     current_repo = Path(__file__).resolve().parents[3]
     sibling = current_repo.parent / "20-ares-v4-engine"
-    return Path(os.getenv("ARES_ENGINE_DIR", sibling)).expanduser().resolve()
+    raw_path = explicit_engine_dir or os.getenv("ARES_ENGINE_DIR", str(sibling))
+    return Path(raw_path).expanduser().resolve()
 
 
 def preflight_checks(engine_dir: Path) -> list[str]:
@@ -170,6 +171,7 @@ if __name__ == "__main__":
         help="赛后数据源策略: auto(先 Understat 后 FBref) | understat | fbref",
     )
     parser.add_argument("--league", type=str, required=False, help="联赛名，赛后定位 Team_Archives 时可用")
+    parser.add_argument("--engine-dir", type=str, required=False, help="显式指定 20-engine 仓库路径")
     parser.add_argument("--skip-crawler", action="store_true", help="跳过 crawler，仅消费已有 dispatch_manifest")
     parser.add_argument("--skip-prematch", action="store_true", help="跳过 Prematch 推演，仅跑 crawler/路由/postmatch")
     parser.add_argument("--skip-postmatch", action="store_true", help="只跑 crawler 与目录路由，不跑赛后复盘")
@@ -178,7 +180,7 @@ if __name__ == "__main__":
 
     base_dir = Path(__file__).resolve().parent.parent.parent
     load_dotenv_into_env(base_dir)
-    engine_dir = _resolve_engine_dir()
+    engine_dir = _resolve_engine_dir(args.engine_dir)
 
     preflight_errors = preflight_checks(engine_dir)
     if preflight_errors:

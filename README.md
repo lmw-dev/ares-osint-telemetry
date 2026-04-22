@@ -115,7 +115,9 @@ export ARES_VAULT_PATH="/path/to/your/Vault"
 ```bash
 python src/data/osint_crawler.py --issue 24040
 ```
-**产出物**：14 场赛事的结构化中英文对照清单，自动落盘为 `raw_reports/[issue]_dispatch_manifest.json`。
+**产出物**：
+- 配置了 `ARES_VAULT_PATH`：落盘到 `$ARES_VAULT_PATH/04_RAG_Raw_Data/Cold_Data_Lake/[issue]_dispatch_manifest.json`
+- 未配置 `ARES_VAULT_PATH`：回退到 `raw_reports/[issue]_dispatch_manifest.json`
 
 默认映射回退链路：
 - `Understat`（主源）
@@ -125,6 +127,20 @@ python src/data/osint_crawler.py --issue 24040
 如启用 `ARES_ENABLE_EXTERNAL_ODDS_ENRICH=1` 且配置 `ARES_THE_ODDS_API_KEY`，派发单中会新增 `external_odds_history` 字段。
 赔率检索键不使用中国足彩 `issue`，而是使用已映射的赛程时间（`understat/football-data/fbref`）+ 主客队名。
 若目标比赛为历史场次，免费版会记录 `skipped_historical_on_free_plan` 审计状态（不报错不中断）。
+
+### 1.5 一键全流程（推荐）
+一条命令串起：`crawler -> 审计目录路由 -> postmatch 批量复盘 -> 索引更新`。
+```bash
+python src/data/osint_pipeline.py --issue 24040
+```
+常用参数：
+```bash
+# 只跑 crawler + 路由，不跑 postmatch
+python src/data/osint_pipeline.py --issue 24040 --skip-postmatch
+
+# 跳过 crawler，只消费已有 dispatch_manifest 继续 postmatch
+python src/data/osint_pipeline.py --issue 24040 --skip-crawler
+```
 
 ### 2. 赛后遥测（Postmatch）
 执行赛后物理事实数据遥测（以西汉姆联为例）：
@@ -152,6 +168,7 @@ python src/data/osint_postmatch.py --issue 24040 --match-id 22064 --official-sco
 * **Cold Data (冷数据)**：保存结构化冷数据，同时落盘源站原始响应（赛前 `500_raw.html/json`、赛后 `understat_raw.html/json` 或 `fbref_raw.html`）到 `$ARES_VAULT_PATH/04_RAG_Raw_Data/Cold_Data_Lake/`。
 * **Hot Data (热数据)**：提取洗练后带 Frontmatter 的 Markdown 报告（含战术分析与预期进球警告），输出至 `$ARES_VAULT_PATH/03_Match_Audits/Postmatch_Telemetry/`。
 * **Team Archives (球队底座)**：每场赛后会同步更新 `$ARES_VAULT_PATH/02_Team_Archives/`（每队 `latest_postmatch.json` + `postmatch_history.jsonl`）。
+* **Audit Router (审计路由)**：自动创建 `$ARES_VAULT_PATH/03_Match_Audits/{issue}/01~04` 结构、自动生成 prematch 骨架、自动归档与 `Postmatch_Telemetry` 重复的历史 postmatch 文件、自动更新 `00_Governance/INDEX`。
 * **批量模式命名规则**：每场单独输出为 `{issue}_{match_id}_postmatch.md`，避免 14 场互相覆盖。
 * **数据源审计字段**：YAML 中新增 `data_source` 与 `data_source_ref`，可追溯本场来自 Understat 还是 FBref。
 

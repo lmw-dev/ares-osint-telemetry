@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from bs4 import BeautifulSoup, Comment
+from audit_router import AuditRouter
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,8 +86,19 @@ class AresOsintCrawler:
         self.issue = issue
         self.base_dir = Path(__file__).resolve().parent.parent.parent
         self._load_project_env_file()
-        self.raw_reports_dir = self.base_dir / "raw_reports"
+        self.vault_path = os.getenv("ARES_VAULT_PATH")
+        if self.vault_path:
+            self.vault_path = self.vault_path.replace("\\ ", " ").replace("\\~", "~")
+            self.vault_path = str(Path(self.vault_path).expanduser())
+
+        if self.vault_path:
+            vault_root = Path(self.vault_path)
+            self.raw_reports_dir = vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake"
+        else:
+            self.raw_reports_dir = self.base_dir / "raw_reports"
         self.raw_reports_dir.mkdir(parents=True, exist_ok=True)
+
+        self.audit_router = AuditRouter(base_dir=self.base_dir, vault_path=self.vault_path)
         self.last_500_cold_refs = []
         self._football_data_cold_refs: List[str] = []
         self._odds_cold_refs: List[str] = []
@@ -1204,6 +1216,18 @@ class AresOsintCrawler:
             logger.info(f"Ares 战术派发单已落盘 -> {manifest_path}")
         except Exception as e:
             logger.error(f"保存落盘失败: {e}")
+
+        if self.audit_router.enabled:
+            try:
+                self.audit_router.ensure_issue_governance(
+                    issue=self.issue,
+                    manifest=output_manifest,
+                    create_prematch_stubs=True,
+                )
+            except Exception as e:
+                logger.warning(f"AuditRouter 自动整理失败（不影响主流程）: {e}")
+
+        return manifest_path
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ares OSINT Telemetry - PREMATCH Crawler Mapping")

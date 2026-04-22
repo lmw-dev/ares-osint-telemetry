@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional, Tuple
 import yaml
 import requests
 from bs4 import BeautifulSoup
+from audit_router import AuditRouter
 
 # 配置日志
 logging.basicConfig(
@@ -1086,6 +1087,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     base_dir = Path(__file__).resolve().parent.parent.parent
     load_dotenv_into_env(base_dir)
+    audit_router = AuditRouter(base_dir=base_dir)
     
     if args.match_id:
         pipeline = MatchTelemetryPipeline(
@@ -1097,6 +1099,15 @@ if __name__ == "__main__":
             league=args.league,
         )
         pipeline.run()
+        if audit_router.enabled:
+            try:
+                audit_router.ensure_issue_governance(
+                    issue=args.issue,
+                    manifest=None,
+                    create_prematch_stubs=False,
+                )
+            except Exception as e:
+                logger.warning(f"AuditRouter 自动整理失败（不影响主流程）: {e}")
     else:
         # Batch Mode
         logger.info(f"未提供特定 match_id，启动全自动批量复盘引擎 (Issue: {args.issue})...")
@@ -1155,3 +1166,13 @@ if __name__ == "__main__":
                 logger.info("本次输出文件清单：")
                 for report in generated_reports:
                     logger.info(f"  - {report}")
+
+            if audit_router.enabled:
+                try:
+                    audit_router.ensure_issue_governance(
+                        issue=args.issue,
+                        manifest=manifest,
+                        create_prematch_stubs=False,
+                    )
+                except Exception as e:
+                    logger.warning(f"AuditRouter 自动整理失败（不影响主流程）: {e}")

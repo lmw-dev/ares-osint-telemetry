@@ -9,6 +9,7 @@ import yaml
 import requests
 from bs4 import BeautifulSoup
 from audit_router import AuditRouter
+from team_archive_paths import candidate_team_filenames, league_archive_dir
 
 # 配置日志
 logging.basicConfig(
@@ -728,10 +729,7 @@ class MatchTelemetryPipeline:
 
     def _resolve_team_archive_md_path(self, team_name: str) -> Path:
         safe_team = self._sanitize_segment(team_name, "team")
-        candidate_names = []
-        for candidate in [safe_team, safe_team.replace(" ", "_"), safe_team.replace("_", " ")]:
-            if candidate and candidate not in candidate_names:
-                candidate_names.append(candidate)
+        candidate_names = candidate_team_filenames(safe_team)
 
         def _pick_preferred(paths: List[Path]) -> Optional[Path]:
             existing_by_name: Dict[str, Path] = {}
@@ -753,8 +751,9 @@ class MatchTelemetryPipeline:
 
         if self.league:
             safe_league = self._sanitize_segment(self.league, "league")
+            primary_dir = league_archive_dir(self.team_archives_dir, safe_league)
             preferred = _pick_preferred(
-                [self.team_archives_dir / safe_league / f"{candidate}.md" for candidate in candidate_names]
+                [primary_dir / f"{candidate}.md" for candidate in candidate_names]
             )
             if preferred is not None:
                 return preferred

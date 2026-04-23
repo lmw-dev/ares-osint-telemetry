@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, Any, Iterable, Optional, Tuple
 
 import yaml
+from team_archive_paths import candidate_team_filenames, league_archive_dir
 
 
 logging.basicConfig(
@@ -218,7 +219,7 @@ def parse_args() -> argparse.Namespace:
 def build_archive_path(vault_root: Path, team: str, league: str) -> Path:
     team_name = sanitize_segment(team, "team")
     league_name = sanitize_segment(league, "league")
-    candidates = [team_name, team_name.replace(" ", "_"), team_name.replace("_", " ")]
+    candidates = candidate_team_filenames(team_name)
     seen = set()
     archive_root = vault_root / "02_Team_Archives"
     recursive_hits = []
@@ -238,7 +239,7 @@ def build_archive_path(vault_root: Path, team: str, league: str) -> Path:
     if len(unique_recursive_hits) == 1:
         return unique_recursive_hits[0]
 
-    archive_dir = archive_root / league_name
+    archive_dir = league_archive_dir(archive_root, league_name)
     archive_dir.mkdir(parents=True, exist_ok=True)
     seen.clear()
     for candidate in candidates:

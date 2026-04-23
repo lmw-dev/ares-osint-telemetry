@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from audit_router import AuditRouter, load_dotenv_into_env
 from osint_crawler import AresOsintCrawler
 from osint_postmatch import MatchTelemetryPipeline
+from team_forge import ensure_team_archive, iter_issue_teams
 
 
 logging.basicConfig(
@@ -139,6 +140,31 @@ def load_manifest(path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
+def run_issue_team_forge(*, issue: str, base_dir: Path) -> Dict[str, int]:
+    vault_path = os.getenv("ARES_VAULT_PATH")
+    if not vault_path:
+        logger.warning("未配置 ARES_VAULT_PATH，跳过 Team Forge 批量补档。")
+        return {"created_or_updated": 0, "failed": 1}
+
+    vault_root = Path(normalize_vault_path(vault_path)).expanduser()
+    created_or_updated = 0
+    failed = 0
+    for team, league in iter_issue_teams(base_dir, vault_root, issue):
+        try:
+            ensure_team_archive(vault_root, team=team, league=league)
+            created_or_updated += 1
+        except Exception as exc:
+            logger.error("Team Forge 补档失败 issue=%s team=%s league=%s: %s", issue, team, league, exc)
+            failed += 1
+    logger.info(
+        "Team Forge issue 批量补档完成 issue=%s, created_or_updated=%s, failed=%s",
+        issue,
+        created_or_updated,
+        failed,
+    )
+    return {"created_or_updated": created_or_updated, "failed": failed}
+
+
 def run_batch_postmatch(
     *,
     issue: str,
@@ -196,18 +222,20 @@ if __name__ == "__main__":
     parser.add_argument("--skip-crawler", action="store_true", help="跳过 crawler，仅消费已有 dispatch_manifest")
     parser.add_argument("--skip-prematch", action="store_true", help="跳过 Prematch 推演，仅跑 crawler/路由/postmatch")
     parser.add_argument("--skip-postmatch", action="store_true", help="只跑 crawler 与目录路由，不跑赛后复盘")
+    parser.add_argument("--skip-team-forge", action="store_true", help="跳过 Team Archives 批量补档")
     parser.add_argument("--no-prematch-stubs", action="store_true", help="不生成 Prematch 骨架文档")
     args = parser.parse_args()
 
     base_dir = Path(__file__).resolve().parent.parent.parent
     load_dotenv_into_env(base_dir)
-    engine_dir = _resolve_engine_dir(args.engine_dir)
-
-    preflight_errors = preflight_checks(engine_dir)
-    if preflight_errors:
-        for err in preflight_errors:
-            logger.error("Preflight 失败: %s", err)
-        raise SystemExit(1)
+    engine_dir: Optional[Path] = None
+    if not args.skip_prematch:
+        engine_dir = _resolve_engine_dir(args.engine_dir)
+        preflight_errors = preflight_checks(engine_dir)
+        if preflight_errors:
+            for err in preflight_errors:
+                logger.error("Preflight 失败: %s", err)
+            raise SystemExit(1)
 
     router = AuditRouter(base_dir=base_dir)
     manifest_path: Optional[Path] = None
@@ -223,6 +251,12 @@ if __name__ == "__main__":
         raise SystemExit(1)
 
     manifest = load_manifest(manifest_path)
+
+    if not args.skip_team_forge:
+        try:
+            run_issue_team_forge(issue=args.issue, base_dir=base_dir)
+        except Exception as e:
+            logger.warning("Team Forge 批量补档失败（不影响主流程）: %s", e)
 
     if router.enabled:
         try:

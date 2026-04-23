@@ -2,8 +2,9 @@ import argparse
 import logging
 import os
 import re
+import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Iterable, Optional, Tuple
 
 import yaml
 
@@ -43,6 +44,38 @@ DEFAULT_BODY = (
 )
 
 _INVALID_SEGMENT_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1F]+')
+_PAIR_SPLIT_TOKENS = (" vs ", " VS ", "vs", "VS")
+
+TEAM_LEAGUE_HINTS: Dict[str, str] = {
+    "burnley": "EPL",
+    "manchestercity": "EPL",
+    "bournemouth": "EPL",
+    "leeds": "EPL",
+    "bayerleverkusen": "Bundesliga",
+    "bayernmunich": "Bundesliga",
+    "vfbstuttgart": "Bundesliga",
+    "freiburg": "Bundesliga",
+    "atalanta": "Serie_A",
+    "lazio": "Serie_A",
+    "elche": "La_liga",
+    "atleticomadrid": "La_liga",
+    "realsociedad": "La_liga",
+    "getafe": "La_liga",
+    "barcelona": "La_liga",
+    "celtavigo": "La_liga",
+    "levante": "La_liga",
+    "sevilla": "La_liga",
+    "rayovallecano": "La_liga",
+    "espanyol": "La_liga",
+    "realoviedo": "La_liga",
+    "villarreal": "La_liga",
+    "parissaintgermain": "Ligue_1",
+    "nantes": "Ligue_1",
+    "goaheadeagles": "Eredivisie",
+    "azalkmaar": "Eredivisie",
+    "psv": "Eredivisie",
+    "zwolle": "Eredivisie",
+}
 
 
 def load_dotenv_into_env(base_dir: Path) -> None:
@@ -83,21 +116,81 @@ def sanitize_segment(value: str, field_name: str) -> str:
     return cleaned
 
 
-def read_existing_body(target_path: Path) -> str:
-    if not target_path.exists():
-        return DEFAULT_BODY
+def normalize_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value).strip().lower())
 
-    content = target_path.read_text(encoding="utf-8")
-    if not content.strip():
-        return DEFAULT_BODY
 
+def split_pair_text(value: str) -> Tuple[str, str]:
+    txt = str(value or "").strip()
+    for token in _PAIR_SPLIT_TOKENS:
+        if token in txt:
+            home, away = txt.split(token, 1)
+            return home.strip(), away.strip()
+    return txt, ""
+
+
+def load_team_alias_map(base_dir: Path) -> Dict[str, str]:
+    alias_path = base_dir / "src" / "data" / "team_alias_map.json"
+    try:
+        return json.loads(alias_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def resolve_team_name(raw_team: str, alias_map: Dict[str, str]) -> str:
+    team = str(raw_team or "").strip()
+    return str(alias_map.get(team, team)).strip()
+
+
+def infer_league(*teams: str, explicit_league: Optional[str] = None) -> Optional[str]:
+    if explicit_league:
+        return explicit_league
+    for team in teams:
+        league = TEAM_LEAGUE_HINTS.get(normalize_key(team))
+        if league:
+            return league
+    return None
+
+
+def split_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
     if content.startswith("---\n"):
         closing_marker_index = content.find("\n---\n", 4)
         if closing_marker_index != -1:
-            existing_body = content[closing_marker_index + len("\n---\n") :]
-            return existing_body.lstrip("\n") or DEFAULT_BODY
+            frontmatter_raw = content[4:closing_marker_index]
+            body = content[closing_marker_index + len("\n---\n") :].lstrip("\n")
+            try:
+                frontmatter = yaml.safe_load(frontmatter_raw) or {}
+            except Exception:
+                frontmatter = {}
+            if not isinstance(frontmatter, dict):
+                frontmatter = {}
+            return frontmatter, body
+    return {}, content
 
-    return content
+
+def read_existing_content(target_path: Path) -> Tuple[Dict[str, Any], str]:
+    if not target_path.exists():
+        return {}, DEFAULT_BODY
+
+    content = target_path.read_text(encoding="utf-8")
+    if not content.strip():
+        return {}, DEFAULT_BODY
+
+    frontmatter, body = split_frontmatter(content)
+    return frontmatter, body or DEFAULT_BODY
+
+
+def merge_frontmatter_defaults(existing: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(existing or {})
+    for key, default_value in defaults.items():
+        existing_value = merged.get(key)
+        if isinstance(default_value, dict):
+            child_existing = existing_value if isinstance(existing_value, dict) else {}
+            merged[key] = merge_frontmatter_defaults(child_existing, default_value)
+            continue
+        if key not in merged:
+            merged[key] = default_value
+    return merged
 
 
 def build_markdown(frontmatter: Dict[str, Any], body: str) -> str:
@@ -116,9 +209,87 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Initialize or upgrade team archive Markdown with v4.2 schema."
     )
-    parser.add_argument("--team", required=True, help="Team name, e.g. Arsenal")
-    parser.add_argument("--league", required=True, help="League name, e.g. EPL")
+    parser.add_argument("--team", help="Team name, e.g. Arsenal")
+    parser.add_argument("--league", help="League name, e.g. EPL")
+    parser.add_argument("--issue", help="Dispatch manifest issue, e.g. 26065")
     return parser.parse_args()
+
+
+def build_archive_path(vault_root: Path, team: str, league: str) -> Path:
+    team_name = sanitize_segment(team, "team")
+    league_name = sanitize_segment(league, "league")
+    candidates = [team_name, team_name.replace(" ", "_"), team_name.replace("_", " ")]
+    seen = set()
+    archive_root = vault_root / "02_Team_Archives"
+    recursive_hits = []
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        recursive_hits.extend(archive_root.glob(f"**/{candidate}.md"))
+    unique_recursive_hits = []
+    seen_paths = set()
+    for path in recursive_hits:
+        resolved = str(path.resolve())
+        if resolved in seen_paths:
+            continue
+        seen_paths.add(resolved)
+        unique_recursive_hits.append(path)
+    if len(unique_recursive_hits) == 1:
+        return unique_recursive_hits[0]
+
+    archive_dir = archive_root / league_name
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    seen.clear()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        existing = archive_dir / f"{candidate}.md"
+        if existing.exists():
+            return existing
+    return archive_dir / f"{team_name}.md"
+
+
+def ensure_team_archive(vault_root: Path, *, team: str, league: str) -> Path:
+    target_path = build_archive_path(vault_root, team, league)
+    frontmatter, body = read_existing_content(target_path)
+    merged_frontmatter = merge_frontmatter_defaults(frontmatter, DEFAULT_FRONTMATTER)
+    markdown_content = build_markdown(merged_frontmatter, body)
+    write_markdown_safely(target_path, markdown_content)
+    logger.info("球队档案写入完成 -> %s", target_path)
+    return target_path
+
+
+def iter_issue_teams(base_dir: Path, vault_root: Path, issue: str) -> Iterable[Tuple[str, str]]:
+    manifest_path = vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake" / f"{issue}_dispatch_manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"找不到 dispatch manifest: {manifest_path}")
+
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    alias_map = load_team_alias_map(base_dir)
+    yielded = set()
+    for match in payload.get("matches", []):
+        home, away = split_pair_text(match.get("english", ""))
+        if not home or not away:
+            home_zh, away_zh = split_pair_text(match.get("chinese", ""))
+            home = home or resolve_team_name(home_zh, alias_map)
+            away = away or resolve_team_name(away_zh, alias_map)
+        else:
+            home = resolve_team_name(home, alias_map)
+            away = resolve_team_name(away, alias_map)
+
+        league = infer_league(home, away, explicit_league=match.get("league"))
+        if not league:
+            logger.warning("无法推断联赛，跳过 issue=%s match=%s", issue, match.get("english") or match.get("chinese"))
+            continue
+
+        for team in (home, away):
+            key = (league, team)
+            if key in yielded:
+                continue
+            yielded.add(key)
+            yield team, league
 
 
 def main() -> int:
@@ -133,18 +304,18 @@ def main() -> int:
         )
 
     vault_root = normalize_vault_path(vault_env)
-    team_name = sanitize_segment(args.team, "team")
-    league_name = sanitize_segment(args.league, "league")
+    if args.issue:
+        created = 0
+        for team, league in iter_issue_teams(base_dir, vault_root, args.issue):
+            ensure_team_archive(vault_root, team=team, league=league)
+            created += 1
+        logger.info("issue=%s 球队档案批量补齐完成，共处理 %s 支球队", args.issue, created)
+        return 0
 
-    archive_dir = vault_root / "02_Team_Archives" / league_name
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    target_path = archive_dir / f"{team_name}.md"
+    if not args.team or not args.league:
+        raise ValueError("单队模式必须同时提供 --team 和 --league，或改用 --issue 批量模式。")
 
-    body = read_existing_body(target_path)
-    markdown_content = build_markdown(DEFAULT_FRONTMATTER, body)
-    write_markdown_safely(target_path, markdown_content)
-
-    logger.info("球队档案写入完成 -> %s", target_path)
+    ensure_team_archive(vault_root, team=args.team, league=args.league)
     return 0
 
 

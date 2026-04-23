@@ -100,15 +100,18 @@ class MatchTelemetryPipeline:
             self.cold_data_dir = vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake"
             self.hot_reports_dir = vault_root / "03_Match_Audits" / "Postmatch_Telemetry"
             self.team_archives_dir = vault_root / "02_Team_Archives"
+            self.team_archives_runtime_dir = self.team_archives_dir / "_Postmatch_Runtime"
         else:
             logger.warning("未检测到环境变量 ARES_VAULT_PATH，将降级写入项目目录。")
             self.cold_data_dir = self.base_dir / "raw_reports"
             self.hot_reports_dir = self.base_dir / "draft_reports"
             self.team_archives_dir = self.base_dir / "02_Team_Archives"
+            self.team_archives_runtime_dir = self.team_archives_dir / "_Postmatch_Runtime"
 
         self.cold_data_dir.mkdir(parents=True, exist_ok=True)
         self.hot_reports_dir.mkdir(parents=True, exist_ok=True)
         self.team_archives_dir.mkdir(parents=True, exist_ok=True)
+        self.team_archives_runtime_dir.mkdir(parents=True, exist_ok=True)
         
         # 加载队名映射
         self.alias_map = self._load_team_alias_map()
@@ -725,20 +728,46 @@ class MatchTelemetryPipeline:
 
     def _resolve_team_archive_md_path(self, team_name: str) -> Path:
         safe_team = self._sanitize_segment(team_name, "team")
+        candidate_names = []
+        for candidate in [safe_team, safe_team.replace(" ", "_"), safe_team.replace("_", " ")]:
+            if candidate and candidate not in candidate_names:
+                candidate_names.append(candidate)
+
+        def _pick_preferred(paths: List[Path]) -> Optional[Path]:
+            existing_by_name: Dict[str, Path] = {}
+            for path in paths:
+                if path.exists():
+                    existing_by_name.setdefault(path.name, path)
+            for candidate in candidate_names:
+                match = existing_by_name.get(f"{candidate}.md")
+                if match is not None:
+                    return match
+            unique_existing = list(existing_by_name.values())
+            if len(unique_existing) == 1:
+                return unique_existing[0]
+            if len(unique_existing) > 1:
+                raise ValueError(
+                    f"检测到多个球队档案候选: {[p.name for p in unique_existing]}，请统一命名。"
+                )
+            return None
+
         if self.league:
             safe_league = self._sanitize_segment(self.league, "league")
-            return self.team_archives_dir / safe_league / f"{safe_team}.md"
-
-        candidates = list(self.team_archives_dir.glob(f"*/{safe_team}.md"))
-        if len(candidates) == 1:
-            return candidates[0]
-        if len(candidates) > 1:
-            raise ValueError(
-                f"检测到多个同名球队档案 {safe_team}.md，请通过 --league 指定联赛以避免歧义。"
+            preferred = _pick_preferred(
+                [self.team_archives_dir / safe_league / f"{candidate}.md" for candidate in candidate_names]
             )
+            if preferred is not None:
+                return preferred
+
+        candidates: List[Path] = []
+        for candidate in candidate_names:
+            candidates.extend(self.team_archives_dir.glob(f"**/{candidate}.md"))
+        preferred = _pick_preferred(candidates)
+        if preferred is not None:
+            return preferred
         raise FileNotFoundError(
-            f"未找到球队档案: {safe_team}.md。请先执行 team_forge.py 初始化，"
-            f"或在命令中传入 --league 以定位 {self.team_archives_dir}/{{league}}/{safe_team}.md"
+            f"未找到球队档案: {candidate_names}。请先执行 team_forge.py 初始化，"
+            f"或在命令中传入 --league 以定位 {self.team_archives_dir}/{{league}}/<team>.md"
         )
 
     def _update_physical_reality(
@@ -795,7 +824,7 @@ class MatchTelemetryPipeline:
             return {"bias_type": "Underestimated", "S_dynamic_modifier": -0.10}
         return dict(REALITY_GAP_DEFAULTS)
 
-    def _update_team_archive_markdown(self, team_name: str, payload: Dict[str, Any]) -> None:
+    def _update_team_archive_markdown(self, team_name: str, payload: Dict[str, Any]) -> Path:
         archive_path = self._resolve_team_archive_md_path(team_name)
         content = archive_path.read_text(encoding="utf-8")
         frontmatter, body = self._split_frontmatter(content)
@@ -835,6 +864,7 @@ class MatchTelemetryPipeline:
             reality_gap["bias_type"],
             reality_gap["S_dynamic_modifier"],
         )
+        return archive_path
 
     def extract_hot_features(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -939,8 +969,10 @@ class MatchTelemetryPipeline:
         ]
 
         for team_name, payload in team_payloads:
-            safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", team_name).strip("_") or "team"
-            team_dir = self.team_archives_dir / safe_name
+            archive_path = self._update_team_archive_markdown(team_name, payload)
+            runtime_league = re.sub(r"[^A-Za-z0-9._-]+", "_", archive_path.parent.name).strip("_") or "league"
+            runtime_team = re.sub(r"[^A-Za-z0-9._-]+", "_", archive_path.stem).strip("_") or "team"
+            team_dir = self.team_archives_runtime_dir / runtime_league / runtime_team
             team_dir.mkdir(parents=True, exist_ok=True)
 
             latest_path = team_dir / "latest_postmatch.json"
@@ -950,7 +982,6 @@ class MatchTelemetryPipeline:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             with open(history_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-            self._update_team_archive_markdown(team_name, payload)
 
     def validate_official_score(self, hot_data: Dict[str, Any]) -> bool:
         actual_score = hot_data["result"]["score"]

@@ -386,6 +386,11 @@ if __name__ == "__main__":
     prematch_summary = {"success": 0, "failed": 0}
     if not args.skip_prematch:
         rag_readiness = inspect_rag_readiness(engine_dir, manifest)
+        if router.enabled and rag_readiness["ok"]:
+            try:
+                router.clear_prematch_blocker_report(args.issue)
+            except Exception as e:
+                logger.warning("Prematch blocker 清理失败（不影响主流程）: %s", e)
         if router.enabled:
             try:
                 router.ensure_issue_governance(
@@ -437,6 +442,15 @@ if __name__ == "__main__":
             logger.warning("AuditRouter 预处理失败（不影响主流程）: %s", e)
 
     if args.skip_postmatch:
+        if router.enabled:
+            try:
+                router.ensure_issue_governance(
+                    issue=args.issue,
+                    manifest=manifest,
+                    create_prematch_stubs=False,
+                )
+            except Exception as e:
+                logger.warning("AuditRouter 收尾失败（不影响主流程）: %s", e)
         logger.info(
             "一键流程结束（已跳过赛后复盘） issue=%s, prematch_success=%s, prematch_failed=%s",
             args.issue,

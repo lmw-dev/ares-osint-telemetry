@@ -608,6 +608,13 @@ class AuditRouter:
         target.write_text("\n".join(lines), encoding="utf-8")
         return target
 
+    def clear_prematch_blocker_report(self, issue: str) -> None:
+        if not self.enabled:
+            return
+        blocker_path = self._ensure_issue_dirs(issue)["review_dir"] / f"REVIEW-{issue}-Prematch_Blocker.md"
+        if blocker_path.exists():
+            blocker_path.unlink()
+
     def _sync_duplicate_postmatch(self, issue: str, issue_dir: Path) -> int:
         if not self.postmatch_dir.exists():
             return 0

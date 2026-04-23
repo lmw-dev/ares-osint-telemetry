@@ -168,7 +168,7 @@ python src/data/osint_postmatch.py --issue 24040 --match-id 22064 --official-sco
 * **Cold Data (冷数据)**：保存结构化冷数据，同时落盘源站原始响应（赛前 `500_raw.html/json`、赛后 `understat_raw.html/json` 或 `fbref_raw.html`）到 `$ARES_VAULT_PATH/04_RAG_Raw_Data/Cold_Data_Lake/`。
 * **Hot Data (热数据)**：提取洗练后带 Frontmatter 的 Markdown 报告（含战术分析与预期进球警告），输出至 `$ARES_VAULT_PATH/03_Match_Audits/Postmatch_Telemetry/`。
 * **Team Archives (球队底座)**：每场赛后会同步更新 `$ARES_VAULT_PATH/02_Team_Archives/`（每队 `latest_postmatch.json` + `postmatch_history.jsonl`）。
-* **Audit Router (审计路由)**：自动创建 `$ARES_VAULT_PATH/03_Match_Audits/{issue}/01~04` 结构、自动生成 prematch 骨架、自动归档与 `Postmatch_Telemetry` 重复的历史 postmatch 文件、自动更新 `00_Governance/INDEX`。
+* **Audit Router (审计路由)**：自动创建 `$ARES_VAULT_PATH/03_Match_Audits/{issue}/01~04` 结构、自动生成 prematch 骨架、自动归档重复 prematch/postmatch、自动执行 prematch 质量闸门（`draft` / `Insufficient Resilience Data` / `low confidence` / `cross-team contamination` 自动转入 `03_Review_Reports`）、自动更新 `00_Governance/INDEX`。
 * **批量模式命名规则**：每场单独输出为 `{issue}_{match_id}_postmatch.md`，避免 14 场互相覆盖。
 * **数据源审计字段**：YAML 中新增 `data_source` 与 `data_source_ref`，可追溯本场来自 Understat 还是 FBref。
 

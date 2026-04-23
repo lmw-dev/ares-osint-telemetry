@@ -514,10 +514,12 @@ class AuditRouter:
 
     def _write_review_report(self, issue: str, review_dir: Path, prematch_dir: Path) -> None:
         findings = self._build_quality_findings(prematch_dir, review_dir)
+        blocker_path = review_dir / f"REVIEW-{issue}-Prematch_Blocker.md"
         lines: List[str] = []
         lines.append(f"# Review {issue} - Prematch Data Quality")
         lines.append("")
         lines.append(f"- Updated At: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%SZ')}")
+        lines.append(f"- Prematch Blocker Active: {'Yes' if blocker_path.exists() else 'No'}")
         lines.append(f"- Accepted Prematch Reports: {len(findings['accepted'])}")
         lines.append(f"- Rejected Prematch Reports: {len(findings['rejected'])}")
         lines.append(f"- Draft Stubs: {len(findings['drafts'])}")
@@ -525,6 +527,11 @@ class AuditRouter:
         lines.append(f"- Insufficient Resilience Data: {len(findings['insufficient_resilience_data'])}")
         lines.append(f"- Cross-Team Contamination: {len(findings['cross_team_contamination'])}")
         lines.append("")
+
+        if blocker_path.exists():
+            lines.append("## Active Blocker")
+            lines.append(f"- `REVIEW-{issue}-Prematch_Blocker.md`")
+            lines.append("")
 
         lines.append("## Accepted Prematch Reports")
         if findings["accepted"]:
@@ -570,6 +577,36 @@ class AuditRouter:
 
         target = review_dir / f"REVIEW-{issue}-Prematch_Data_Quality.md"
         target.write_text("\n".join(lines), encoding="utf-8")
+
+    def write_prematch_blocker_report(
+        self,
+        issue: str,
+        blocker_type: str,
+        summary: str,
+        details: List[str],
+    ) -> Optional[Path]:
+        if not self.enabled:
+            return None
+
+        issue_dirs = self._ensure_issue_dirs(issue)
+        lines = [
+            f"# Review {issue} - Prematch Blocker",
+            "",
+            f"- Updated At: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%SZ')}",
+            f"- Blocker Type: `{blocker_type}`",
+            f"- Summary: {summary}",
+            "",
+            "## Details",
+        ]
+        if details:
+            lines.extend(f"- {detail}" for detail in details)
+        else:
+            lines.append("- None")
+        lines.append("")
+
+        target = issue_dirs["review_dir"] / f"REVIEW-{issue}-Prematch_Blocker.md"
+        target.write_text("\n".join(lines), encoding="utf-8")
+        return target
 
     def _sync_duplicate_postmatch(self, issue: str, issue_dir: Path) -> int:
         if not self.postmatch_dir.exists():

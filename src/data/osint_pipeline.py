@@ -2,9 +2,11 @@ import argparse
 import json
 import logging
 import os
+import sqlite3
 import subprocess
+import unicodedata
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from audit_router import AuditRouter, load_dotenv_into_env
 from osint_crawler import AresOsintCrawler
@@ -19,9 +21,24 @@ logging.basicConfig(
 logger = logging.getLogger("AresTelemetry.Pipeline")
 
 
+def _normalize_team_key(value: str) -> str:
+    ascii_name = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii")
+    return "".join(ch for ch in ascii_name.lower() if ch.isalnum())
+
+
+def _split_match_english(english: str) -> tuple[str, str]:
+    if " vs " in english:
+        home, away = english.split(" vs ", 1)
+        return home.strip(), away.strip()
+    if " VS " in english:
+        home, away = english.split(" VS ", 1)
+        return home.strip(), away.strip()
+    return english.strip(), ""
+
+
 def _resolve_engine_dir(explicit_engine_dir: Optional[str] = None) -> Path:
     """定位 20-engine 仓库根目录。"""
-    current_repo = Path(__file__).resolve().parents[3]
+    current_repo = Path(__file__).resolve().parents[2]
     sibling = current_repo.parent / "20-ares-v4-engine"
     raw_path = explicit_engine_dir or os.getenv("ARES_ENGINE_DIR", str(sibling))
     return Path(raw_path).expanduser().resolve()
@@ -64,6 +81,114 @@ def preflight_checks(engine_dir: Path) -> list[str]:
         errors.append(f"审计目录不可写: {audit_root}")
 
     return errors
+
+
+def inspect_rag_readiness(engine_dir: Path, manifest: Dict[str, Any]) -> Dict[str, Any]:
+    chroma_db = engine_dir / "chromadb" / "chroma.sqlite3"
+    diagnostics: Dict[str, Any] = {
+        "ok": True,
+        "blocker_type": None,
+        "summary": "",
+        "details": [],
+        "doc_count": 0,
+        "issue_teams": [],
+        "covered_teams": [],
+        "missing_teams": [],
+    }
+    if not chroma_db.exists():
+        diagnostics.update(
+            ok=False,
+            blocker_type="rag_missing_database",
+            summary=f"找不到 RAG 数据库: {chroma_db}",
+            details=[f"Prematch 未执行；20-engine 缺少 `{chroma_db}`。"],
+        )
+        return diagnostics
+
+    issue_team_map: Dict[str, str] = {}
+    for match in manifest.get("matches", []):
+        english = str(match.get("english", "")).strip()
+        if not english:
+            continue
+        home, away = _split_match_english(english)
+        for team in [home, away]:
+            if not team:
+                continue
+            issue_team_map.setdefault(_normalize_team_key(team), team)
+
+    diagnostics["issue_teams"] = sorted(issue_team_map.values())
+
+    try:
+        conn = sqlite3.connect(f"file:{chroma_db}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        diagnostics.update(
+            ok=False,
+            blocker_type="rag_unreadable_database",
+            summary=f"无法读取 RAG 数据库: {exc}",
+            details=[f"Prematch 未执行；Chroma sqlite 只读检查失败: {exc}"],
+        )
+        return diagnostics
+
+    with conn:
+        try:
+            row = conn.execute("select count(*) from embeddings").fetchone()
+            doc_count = int(row[0]) if row and row[0] is not None else 0
+            team_rows = conn.execute(
+                "select distinct string_value from embedding_metadata where key='team' and string_value is not null"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            diagnostics.update(
+                ok=False,
+                blocker_type="rag_query_failed",
+                summary=f"RAG 元数据检查失败: {exc}",
+                details=[f"Prematch 未执行；检查 embeddings / embedding_metadata 失败: {exc}"],
+            )
+            return diagnostics
+
+    team_values = {
+        _normalize_team_key(row[0]): str(row[0])
+        for row in team_rows
+        if row and row[0]
+    }
+    covered_keys = sorted(set(issue_team_map) & set(team_values))
+    missing_keys = sorted(set(issue_team_map) - set(team_values))
+
+    diagnostics["doc_count"] = doc_count
+    diagnostics["covered_teams"] = [issue_team_map[key] for key in covered_keys]
+    diagnostics["missing_teams"] = [issue_team_map[key] for key in missing_keys]
+
+    blockers: List[str] = []
+    if doc_count < 3:
+        blockers.append(
+            f"RAG 总文档数仅 `{doc_count}`，低于 Prematch 最低阈值 `3`。"
+        )
+    if issue_team_map and len(covered_keys) < max(1, len(issue_team_map) // 4):
+        blockers.append(
+            f"Issue 球队覆盖不足：`{len(covered_keys)}/{len(issue_team_map)}` 支球队在 RAG metadata 中可见。"
+        )
+
+    if blockers:
+        diagnostics.update(
+            ok=False,
+            blocker_type="rag_undercoverage",
+            summary="Prematch 已被上游 RAG 覆盖不足阻断。",
+            details=blockers
+            + [
+                f"当前 issue 球队: {', '.join(diagnostics['issue_teams']) or 'None'}",
+                f"RAG 已覆盖球队: {', '.join(diagnostics['covered_teams']) or 'None'}",
+                f"RAG 缺失球队: {', '.join(diagnostics['missing_teams']) or 'None'}",
+                "这不是路径映射故障，而是战术逆境样本库供给不足；继续执行只会产出整批 REJECTED 报告。",
+            ],
+        )
+        return diagnostics
+
+    diagnostics["summary"] = (
+        f"RAG readiness OK: docs={doc_count}, covered={len(covered_keys)}/{len(issue_team_map)}"
+    )
+    diagnostics["details"] = [
+        f"RAG 总文档数: {doc_count}",
+        f"Issue 球队覆盖: {len(covered_keys)}/{len(issue_team_map)}",
+    ]
+    return diagnostics
 
 
 def normalize_vault_path(path_text: str) -> str:
@@ -258,7 +383,50 @@ if __name__ == "__main__":
         except Exception as e:
             logger.warning("Team Forge 批量补档失败（不影响主流程）: %s", e)
 
-    if router.enabled:
+    prematch_summary = {"success": 0, "failed": 0}
+    if not args.skip_prematch:
+        rag_readiness = inspect_rag_readiness(engine_dir, manifest)
+        if router.enabled:
+            try:
+                router.ensure_issue_governance(
+                    issue=args.issue,
+                    manifest=manifest,
+                    create_prematch_stubs=rag_readiness["ok"] and not args.no_prematch_stubs,
+                )
+            except Exception as e:
+                logger.warning("AuditRouter 预处理失败（不影响主流程）: %s", e)
+
+        if not rag_readiness["ok"]:
+            logger.error("Prematch 熔断: %s", rag_readiness["summary"])
+            for detail in rag_readiness.get("details", []):
+                logger.error("Prematch 熔断详情: %s", detail)
+            if router.enabled:
+                try:
+                    router.write_prematch_blocker_report(
+                        issue=args.issue,
+                        blocker_type=str(rag_readiness.get("blocker_type") or "unknown"),
+                        summary=str(rag_readiness.get("summary") or "Prematch blocked"),
+                        details=[str(item) for item in rag_readiness.get("details", [])],
+                    )
+                    router.ensure_issue_governance(
+                        issue=args.issue,
+                        manifest=manifest,
+                        create_prematch_stubs=False,
+                    )
+                except Exception as e:
+                    logger.warning("Prematch blocker report 写入失败（不影响主流程）: %s", e)
+            prematch_summary = {"success": 0, "failed": len(manifest.get("matches", []))}
+        else:
+            try:
+                prematch_summary = run_prematch_engine(
+                    issue=args.issue,
+                    manifest_path=manifest_path,
+                    engine_dir=engine_dir,
+                )
+            except Exception as e:
+                logger.error("Prematch orchestration 失败: %s", e)
+                prematch_summary = {"success": 0, "failed": 1}
+    elif router.enabled:
         try:
             router.ensure_issue_governance(
                 issue=args.issue,
@@ -267,18 +435,6 @@ if __name__ == "__main__":
             )
         except Exception as e:
             logger.warning("AuditRouter 预处理失败（不影响主流程）: %s", e)
-
-    prematch_summary = {"success": 0, "failed": 0}
-    if not args.skip_prematch:
-        try:
-            prematch_summary = run_prematch_engine(
-                issue=args.issue,
-                manifest_path=manifest_path,
-                engine_dir=engine_dir,
-            )
-        except Exception as e:
-            logger.error("Prematch orchestration 失败: %s", e)
-            prematch_summary = {"success": 0, "failed": 1}
 
     if args.skip_postmatch:
         logger.info(

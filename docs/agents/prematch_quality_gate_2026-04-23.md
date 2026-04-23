@@ -27,3 +27,16 @@
 ## 3. 当前行为
 - `01_Prematch_Audits` 只保留可用的 match-level prematch 审计。
 - 质量不过关的 prematch 不再作为正式报告留在 issue 主目录。
+
+## 4. 追加收敛（2026-04-23）
+- 文件：`src/data/osint_pipeline.py`
+- 新增 Prematch RAG Readiness Gate：
+- 在调用 `20-engine/main.py audit-issue` 前，先只读检查 `20-engine/chromadb/chroma.sqlite3`
+- 检查项包含：
+- `embeddings` 总文档数
+- `embedding_metadata.key='team'` 的 issue 球队覆盖率
+- 若命中 `rag_undercoverage / rag_missing_database / rag_unreadable_database / rag_query_failed`，则：
+- 不再继续执行 prematch 引擎
+- 不再制造一批 `整体韧性=0.000` 的伪正式报告
+- 自动写入 `03_Match_Audits/{issue}/03_Review_Reports/REVIEW-{issue}-Prematch_Blocker.md`
+- 结论层面会明确区分：这是上游 RAG 样本库供给不足，不是路径映射故障

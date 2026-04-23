@@ -428,6 +428,15 @@ if __name__ == "__main__":
                     manifest_path=manifest_path,
                     engine_dir=engine_dir,
                 )
+                if router.enabled:
+                    try:
+                        router.ensure_issue_governance(
+                            issue=args.issue,
+                            manifest=manifest,
+                            create_prematch_stubs=False,
+                        )
+                    except Exception as e:
+                        logger.warning("Prematch 质量闸门收口失败（不影响主流程）: %s", e)
             except Exception as e:
                 logger.error("Prematch orchestration 失败: %s", e)
                 prematch_summary = {"success": 0, "failed": 1}

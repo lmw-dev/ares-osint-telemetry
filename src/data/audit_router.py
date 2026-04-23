@@ -64,6 +64,7 @@ class AuditRouter:
         except Exception:
             self.team_alias = {}
         self._team_patterns = self._build_team_patterns()
+        self.prematch_min_confidence = float(os.getenv("ARES_PREMATCH_MIN_CONFIDENCE", "0.6"))
 
     @staticmethod
     def _sanitize_segment(value: str, fallback: str = "segment") -> str:
@@ -137,6 +138,16 @@ class AuditRouter:
             if self._canonical_team_name(english) == canonical:
                 return english
         return canonical
+
+    @staticmethod
+    def _extract_issue_and_match_index(path: Path) -> Tuple[Optional[str], Optional[int]]:
+        match = re.match(r"^Audit-(\d+)-(\d+)-", path.name.replace("REJECTED-", "", 1))
+        if not match:
+            return None, None
+        try:
+            return match.group(1), int(match.group(2))
+        except ValueError:
+            return match.group(1), None
 
     def _ensure_core_dirs(self) -> None:
         if not self.enabled:
@@ -222,7 +233,39 @@ class AuditRouter:
             content = path.read_text(encoding="utf-8")
         except Exception:
             return False
+        return AuditRouter._is_generated_prematch_stub_text(content)
+
+    @staticmethod
+    def _is_generated_prematch_stub_text(content: str) -> bool:
         return content.startswith("---\n") and 'status: "draft"' in content and "## Prematch Audit" in content
+
+    def _canonical_report_name(self, issue: str, index: int, home: str, away: str) -> str:
+        home_safe = self._sanitize_segment(home, f"Home{index:02d}")
+        away_safe = self._sanitize_segment(away, f"Away{index:02d}")
+        return f"Audit-{issue}-{index:02d}-{home_safe}-vs-{away_safe}.md"
+
+    def _build_manifest_match_lookup(self, issue: str, manifest: Optional[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+        if not isinstance(manifest, dict):
+            return {}
+
+        lookup: Dict[int, Dict[str, Any]] = {}
+        matches = manifest.get("matches", [])
+        if not isinstance(matches, list):
+            return lookup
+
+        for match in matches:
+            index = int(match.get("index", 0) or 0)
+            if index <= 0:
+                continue
+            english_home, english_away = self._resolve_match_names(match, index)
+            lookup[index] = {
+                "index": index,
+                "home": english_home,
+                "away": english_away,
+                "canonical_name": self._canonical_report_name(issue, index, english_home, english_away),
+                "match_key": f"{issue}:{index:02d}",
+            }
+        return lookup
 
     def _archive_prematch_duplicate(self, issue: str, path: Path) -> None:
         duplicate_dir = self.legacy_dir / "Duplicate_Prematch" / str(issue)
@@ -238,6 +281,62 @@ class AuditRouter:
         if stem.endswith("_Host"):
             return stem[:-5]
         return stem
+
+    def _infer_report_pair(self, path: Path, text: str) -> Tuple[str, str]:
+        filename_match = re.match(r"^Audit-\d+-\d+-(.+)-vs-(.+?)(?:_Host)?$", path.stem.replace("REJECTED-", "", 1))
+        if filename_match:
+            return filename_match.group(1), filename_match.group(2)
+
+        english_match = re.search(r'english:\s*"([^"]+)"', text)
+        if english_match:
+            return self._split_pair_text(english_match.group(1))
+
+        title_match = re.search(r"^# Ares Prematch Audit - Issue \d+ - (.+)$", text, flags=re.MULTILINE)
+        if title_match:
+            return self._split_match_english(title_match.group(1))
+
+        return "", ""
+
+    def _resolve_report_identity(
+        self,
+        issue: str,
+        path: Path,
+        text: str,
+        manifest_lookup: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        report_issue, match_index = self._extract_issue_and_match_index(path)
+        effective_issue = report_issue or issue
+        manifest_meta = (manifest_lookup or {}).get(match_index or -1)
+        if manifest_meta:
+            return {
+                "issue": effective_issue,
+                "match_index": match_index,
+                "match_key": manifest_meta["match_key"],
+                "canonical_name": manifest_meta["canonical_name"],
+                "home": manifest_meta["home"],
+                "away": manifest_meta["away"],
+            }
+
+        home, away = self._infer_report_pair(path, text)
+        canonical_home = self._canonical_team_name(home)
+        canonical_away = self._canonical_team_name(away)
+        match_key = (
+            f"{effective_issue}:{match_index:02d}"
+            if match_index is not None
+            else f"{effective_issue}:{canonical_home}:{canonical_away}"
+        )
+        canonical_name = path.name.replace("REJECTED-", "", 1)
+        if match_index is not None and home and away:
+            canonical_name = self._canonical_report_name(effective_issue, match_index, home, away)
+
+        return {
+            "issue": effective_issue,
+            "match_index": match_index,
+            "match_key": match_key,
+            "canonical_name": canonical_name,
+            "home": home,
+            "away": away,
+        }
 
     def _parse_expected_teams(self, path: Path, text: str) -> Set[str]:
         expected: Set[str] = set()
@@ -304,23 +403,46 @@ class AuditRouter:
         except ValueError:
             return None
 
-    def _assess_report_quality(self, path: Path) -> Dict[str, Any]:
-        try:
-            text = path.read_text(encoding="utf-8")
-        except Exception:
-            return {"path": path, "status": "reject", "reasons": ["unreadable"], "text": ""}
+    @staticmethod
+    def _extract_confidence_scores(text: str) -> List[float]:
+        scores: List[float] = []
+        for label in ["整体置信度", "总体置信度", "置信度", "Confidence", "confidence"]:
+            for match in re.finditer(rf"{re.escape(label)}\**[:：]\s*`?([0-9.]+)`?", text):
+                try:
+                    scores.append(float(match.group(1)))
+                except ValueError:
+                    continue
+        return scores
 
-        if self._is_generated_prematch_stub(path):
-            return {"path": path, "status": "reject", "reasons": ["draft_stub"], "text": text}
-
+    def _assess_report_text(
+        self,
+        issue: str,
+        path: Path,
+        text: str,
+        manifest_lookup: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        identity = self._resolve_report_identity(issue, path, text, manifest_lookup)
         reasons: List[str] = []
+        if self._is_generated_prematch_stub_text(text):
+            reasons.append("draft_stub")
+
         if self._has_insufficient_resilience_data(text):
             reasons.append("insufficient_resilience_data")
 
         overall_resilience = self._extract_numeric_marker(text, "整体韧性评分")
         if overall_resilience is None:
             overall_resilience = self._extract_numeric_marker(text, "整体韧性")
-        if "insufficient_resilience_data" in reasons or overall_resilience == 0.0:
+        confidence_scores = self._extract_confidence_scores(text)
+        explicit_low_confidence = any(score < self.prematch_min_confidence for score in confidence_scores)
+        resilience_low_confidence = (
+            overall_resilience == 0.0
+            and (
+                "insufficient_resilience_data" in reasons
+                or "[HALT]" in text
+                or "[Unknown: Insufficient Resilience Data]" in text
+            )
+        )
+        if explicit_low_confidence or resilience_low_confidence:
             reasons.append("low_confidence")
 
         contaminated_teams = self._detect_cross_team_contamination(path, text)
@@ -333,7 +455,29 @@ class AuditRouter:
             "reasons": sorted(set(reasons)),
             "text": text,
             "contaminated_teams": contaminated_teams,
+            "overall_resilience": overall_resilience,
+            "confidence_scores": confidence_scores,
+            **identity,
         }
+
+    def _assess_report_quality(
+        self,
+        issue: str,
+        path: Path,
+        manifest_lookup: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            identity = self._resolve_report_identity(issue, path, "", manifest_lookup)
+            return {
+                "path": path,
+                "status": "reject",
+                "reasons": ["unreadable"],
+                "text": "",
+                **identity,
+            }
+        return self._assess_report_text(issue, path, text, manifest_lookup)
 
     @staticmethod
     def _reason_label(reason: str) -> str:
@@ -348,15 +492,33 @@ class AuditRouter:
 
     def _build_rejected_review_content(self, issue: str, assessment: Dict[str, Any]) -> str:
         path = assessment["path"]
+        source_report = assessment.get("source_report") or path.name
         reasons = assessment.get("reasons", [])
+        canonical_name = assessment.get("canonical_name") or path.name
+        match_index = assessment.get("match_index")
+        source_variants = sorted(set(assessment.get("source_variants") or [source_report]))
         lines = [
-            f"# Rejected Prematch Audit - {path.name}",
+            "---",
+            f'issue: "{issue}"',
+            f'match_index: {match_index if match_index is not None else ""}',
+            f'canonical_report: "{canonical_name}"',
+            f'source_report: "{source_report}"',
+            f"reject_reasons: [{', '.join(json.dumps(reason) for reason in reasons)}]",
+            f"foreign_team_signals: [{', '.join(json.dumps(team) for team in assessment.get('contaminated_teams', []))}]",
+            'status: "rejected"',
+            "---",
+            "",
+            f"# Rejected Prematch Audit - {source_report}",
             "",
             f"- Issue: `{issue}`",
+            f"- Match Index: `{match_index}`" if match_index is not None else "- Match Index: `unknown`",
             f"- Rejected At: `{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%SZ')}`",
-            f"- Source File: `01_Prematch_Audits/{path.name}`",
+            f"- Source File: `01_Prematch_Audits/{source_report}`",
+            f"- Canonical Match File: `{canonical_name}`",
             f"- Reject Reasons: {', '.join(f'`{self._reason_label(reason)}`' for reason in reasons) if reasons else '`Unknown`'}",
         ]
+        if len(source_variants) > 1:
+            lines.append("- Source Variants: " + ", ".join(f"`{name}`" for name in source_variants))
 
         contaminated_teams = assessment.get("contaminated_teams") or []
         if contaminated_teams:
@@ -376,18 +538,39 @@ class AuditRouter:
         )
         return "\n".join(lines)
 
-    def _gate_prematch_reports(self, issue: str, prematch_dir: Path, review_dir: Path) -> Dict[str, List[str]]:
+    @staticmethod
+    def _extract_original_review_content(text: str) -> str:
+        marker = "\n## Original Content\n\n"
+        if marker in text:
+            return text.split(marker, 1)[1].strip()
+        return text.strip()
+
+    @staticmethod
+    def _extract_review_source_name(path: Path, text: str) -> str:
+        source_match = re.search(r"- Source File: `01_Prematch_Audits/([^`]+)`", text)
+        if source_match:
+            return source_match.group(1)
+        return path.name.replace("REJECTED-", "", 1)
+
+    def _gate_prematch_reports(
+        self,
+        issue: str,
+        prematch_dir: Path,
+        review_dir: Path,
+        manifest_lookup: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> Dict[str, List[str]]:
         rejected: Dict[str, List[str]] = defaultdict(list)
         for path in sorted(prematch_dir.glob("Audit-*.md")):
-            assessment = self._assess_report_quality(path)
+            assessment = self._assess_report_quality(issue, path, manifest_lookup)
             if assessment["status"] != "reject":
                 continue
 
-            target = review_dir / f"REJECTED-{path.name}"
+            target_name = f"REJECTED-{assessment.get('canonical_name') or path.name}"
+            target = review_dir / target_name
             target.write_text(self._build_rejected_review_content(issue, assessment), encoding="utf-8")
             path.unlink()
             for reason in assessment.get("reasons", []):
-                rejected[reason].append(path.name)
+                rejected[reason].append(target_name.replace("REJECTED-", "", 1))
         return {reason: sorted(names) for reason, names in rejected.items()}
 
     def _sync_prematch_stubs(
@@ -461,27 +644,108 @@ class AuditRouter:
                     chosen.rename(canonical_path)
         return created, archived
 
-    def _sync_real_prematch_duplicates(self, issue: str, prematch_dir: Path) -> int:
-        grouped: Dict[str, List[Path]] = {}
+    def _sync_real_prematch_duplicates(
+        self,
+        issue: str,
+        prematch_dir: Path,
+        manifest_lookup: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> int:
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
         for path in sorted(prematch_dir.glob("Audit-*.md")):
             if self._is_generated_prematch_stub(path):
                 continue
-            base_key = self._strip_host_suffix(path.stem)
-            grouped.setdefault(base_key, []).append(path)
+            assessment = self._assess_report_quality(issue, path, manifest_lookup)
+            grouped.setdefault(assessment["match_key"], []).append(assessment)
 
         archived = 0
-        for paths in grouped.values():
-            if len(paths) < 2:
+        for assessments in grouped.values():
+            if len(assessments) < 2:
                 continue
 
-            canonical = next((p for p in paths if not p.stem.endswith("_Host")), None)
-            host_variant = next((p for p in paths if p.stem.endswith("_Host")), None)
-            if canonical is None or host_variant is None:
-                continue
+            assessments.sort(
+                key=lambda item: (
+                    1 if item["status"] == "accept" else 0,
+                    -len(item.get("reasons", [])),
+                    1 if item["path"].name == item.get("canonical_name") else 0,
+                    0 if item["path"].stem.endswith("_Host") else 1,
+                    len(item.get("text", "")),
+                ),
+                reverse=True,
+            )
+            chosen = assessments[0]
+            canonical_name = chosen.get("canonical_name") or chosen["path"].name
+            canonical_path = prematch_dir / canonical_name
 
-            self._archive_prematch_duplicate(issue, host_variant)
-            archived += 1
+            if chosen["path"].name != canonical_name:
+                if canonical_path.exists() and canonical_path != chosen["path"]:
+                    self._archive_prematch_duplicate(issue, canonical_path)
+                    archived += 1
+                if chosen["path"].exists():
+                    chosen["path"].rename(canonical_path)
+                    chosen["path"] = canonical_path
+
+            for assessment in assessments[1:]:
+                if assessment["path"].exists():
+                    self._archive_prematch_duplicate(issue, assessment["path"])
+                    archived += 1
         return archived
+
+    def _sync_rejected_review_duplicates(
+        self,
+        issue: str,
+        review_dir: Path,
+        manifest_lookup: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> int:
+        grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for path in sorted(review_dir.glob("REJECTED-Audit-*.md")):
+            try:
+                review_text = path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            source_name = self._extract_review_source_name(path, review_text)
+            original_text = self._extract_original_review_content(review_text)
+            assessment = self._assess_report_text(issue, Path(source_name), original_text, manifest_lookup)
+            assessment["path"] = Path(source_name)
+            assessment["review_path"] = path
+            grouped[assessment["match_key"]].append(assessment)
+
+        deduped = 0
+        for assessments in grouped.values():
+            if len(assessments) < 2:
+                continue
+
+            assessments.sort(
+                key=lambda item: (
+                    1 if "cross_team_contamination" in item.get("reasons", []) else 0,
+                    1 if "insufficient_resilience_data" in item.get("reasons", []) else 0,
+                    len(item.get("reasons", [])),
+                    len(item.get("text", "")),
+                ),
+                reverse=True,
+            )
+            chosen = assessments[0]
+            canonical_name = chosen.get("canonical_name") or chosen["path"].name
+            target = review_dir / f"REJECTED-{canonical_name}"
+            merged = dict(chosen)
+            merged["path"] = Path(canonical_name)
+            merged["source_report"] = chosen["path"].name
+            merged["source_variants"] = [item["path"].name for item in assessments]
+            merged["reasons"] = sorted({reason for item in assessments for reason in item.get("reasons", [])})
+            merged["contaminated_teams"] = sorted(
+                {
+                    team
+                    for item in assessments
+                    for team in item.get("contaminated_teams", [])
+                }
+            )
+            target.write_text(self._build_rejected_review_content(issue, merged), encoding="utf-8")
+
+            for assessment in assessments:
+                review_path = assessment["review_path"]
+                if review_path != target and review_path.exists():
+                    review_path.unlink()
+                    deduped += 1
+        return deduped
 
     def _build_quality_findings(self, prematch_dir: Path, review_dir: Path) -> Dict[str, List[str]]:
         findings = {
@@ -495,12 +759,14 @@ class AuditRouter:
         for path in sorted(prematch_dir.glob("Audit-*.md")):
             findings["accepted"].append(path.name)
         for path in sorted(review_dir.glob("REJECTED-Audit-*.md")):
-            name = path.name.replace("REJECTED-", "", 1)
-            findings["rejected"].append(name)
             try:
                 text = path.read_text(encoding="utf-8")
             except Exception:
                 continue
+
+            canonical_match = re.search(r'canonical_report:\s*"([^"]+)"', text)
+            name = canonical_match.group(1) if canonical_match else path.name.replace("REJECTED-", "", 1)
+            findings["rejected"].append(name)
 
             if "`Draft Stub`" in text:
                 findings["drafts"].append(name)
@@ -510,6 +776,8 @@ class AuditRouter:
                 findings["insufficient_resilience_data"].append(name)
             if "`Cross-Team Contamination`" in text:
                 findings["cross_team_contamination"].append(name)
+        for key in findings:
+            findings[key] = sorted(set(findings[key]))
         return findings
 
     def _write_review_report(self, issue: str, review_dir: Path, prematch_dir: Path) -> None:
@@ -702,6 +970,7 @@ class AuditRouter:
 
         self._ensure_core_dirs()
         issue_dirs = self._ensure_issue_dirs(issue)
+        manifest_lookup = self._build_manifest_match_lookup(issue, manifest)
 
         created_stubs = 0
         archived_prematch_duplicates = 0
@@ -715,19 +984,34 @@ class AuditRouter:
                     issue_dirs["review_dir"],
                 )
 
-        archived_prematch_duplicates += self._sync_real_prematch_duplicates(issue, issue_dirs["prematch_dir"])
-        rejected_reports = self._gate_prematch_reports(issue, issue_dirs["prematch_dir"], issue_dirs["review_dir"])
+        archived_prematch_duplicates += self._sync_real_prematch_duplicates(
+            issue,
+            issue_dirs["prematch_dir"],
+            manifest_lookup,
+        )
+        rejected_reports = self._gate_prematch_reports(
+            issue,
+            issue_dirs["prematch_dir"],
+            issue_dirs["review_dir"],
+            manifest_lookup,
+        )
+        deduped_review_reports = self._sync_rejected_review_duplicates(
+            issue,
+            issue_dirs["review_dir"],
+            manifest_lookup,
+        )
 
         moved_duplicates = self._sync_duplicate_postmatch(issue, issue_dirs["issue_dir"])
         self._write_review_report(issue, issue_dirs["review_dir"], issue_dirs["prematch_dir"])
         self._write_issue_readme(issue, issue_dirs, manifest)
         self._write_global_index()
         logger.info(
-            "AuditRouter 更新完成 issue=%s, created_stubs=%s, archived_prematch_duplicates=%s, rejected_prematch=%s, moved_duplicate_postmatch=%s",
+            "AuditRouter 更新完成 issue=%s, created_stubs=%s, archived_prematch_duplicates=%s, rejected_prematch=%s, deduped_review_reports=%s, moved_duplicate_postmatch=%s",
             issue,
             created_stubs,
             archived_prematch_duplicates,
             len({name for names in rejected_reports.values() for name in names}),
+            deduped_review_reports,
             moved_duplicates,
         )
         return True

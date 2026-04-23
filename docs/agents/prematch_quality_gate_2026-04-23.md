@@ -40,3 +40,13 @@
 - 不再制造一批 `整体韧性=0.000` 的伪正式报告
 - 自动写入 `03_Match_Audits/{issue}/03_Review_Reports/REVIEW-{issue}-Prematch_Blocker.md`
 - 结论层面会明确区分：这是上游 RAG 样本库供给不足，不是路径映射故障
+
+## 5. 今天复发后的补丁（2026-04-24）
+- 根因不是 `docs/agents` 没记，而是代码链路还有两个漏点：
+- `osint_pipeline.py` 昨天只做了 prematch 前的 readiness gate，但 `20-engine audit-issue` 跑完后没有立刻再次收口，低质量正式稿会先留在 `01_Prematch_Audits`，直到后续 postmatch/收尾才有机会被搬走。
+- `audit_router.py` 之前只会处理 `_Host` 这种重复真实稿，像 `PSG` / `Paris_Saint_Germain` 这类同场别名变体，仍可能在 rejected review 里留下两份。
+- 今天新增的代码收敛：
+- `osint_pipeline.py` 在 prematch 引擎执行完后，立即再跑一次 `audit_router.ensure_issue_governance(...)`，把低质量 prematch 当场转入 review。
+- `audit_router.py` 现在会基于 dispatch manifest 的 match index + canonical filename 统一识别“同一场比赛”，不再只靠 `_Host` 后缀。
+- rejected review 现在也会按 canonical match file 去重，避免同一场比赛出现多份 `REJECTED-*` 变体稿。
+- rejected review 顶部会写入结构化元数据（`canonical_report / source_report / reject_reasons`），后续汇总单不再只能靠字符串扫描。

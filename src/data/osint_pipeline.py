@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import math
 import os
 import sqlite3
 import subprocess
@@ -34,6 +35,28 @@ def _split_match_english(english: str) -> tuple[str, str]:
         home, away = english.split(" VS ", 1)
         return home.strip(), away.strip()
     return english.strip(), ""
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("环境变量 %s=%r 不是合法浮点数，回退默认值 %s", name, raw, default)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("环境变量 %s=%r 不是合法整数，回退默认值 %s", name, raw, default)
+        return default
 
 
 def _resolve_engine_dir(explicit_engine_dir: Optional[str] = None) -> Path:
@@ -156,14 +179,26 @@ def inspect_rag_readiness(engine_dir: Path, manifest: Dict[str, Any]) -> Dict[st
     diagnostics["covered_teams"] = [issue_team_map[key] for key in covered_keys]
     diagnostics["missing_teams"] = [issue_team_map[key] for key in missing_keys]
 
+    min_doc_count = _env_int("ARES_PREMATCH_RAG_MIN_DOC_COUNT", 3)
+    min_team_coverage_ratio = max(0.0, min(1.0, _env_float("ARES_PREMATCH_RAG_MIN_TEAM_COVERAGE_RATIO", 0.75)))
+    max_missing_teams = max(0, _env_int("ARES_PREMATCH_RAG_MAX_MISSING_TEAMS", 4))
+    required_team_coverage = math.ceil(len(issue_team_map) * min_team_coverage_ratio) if issue_team_map else 0
+
     blockers: List[str] = []
-    if doc_count < 3:
+    if doc_count < min_doc_count:
         blockers.append(
-            f"RAG 总文档数仅 `{doc_count}`，低于 Prematch 最低阈值 `3`。"
+            f"RAG 总文档数仅 `{doc_count}`，低于 Prematch 最低阈值 `{min_doc_count}`。"
         )
-    if issue_team_map and len(covered_keys) < max(1, len(issue_team_map) // 4):
+    if issue_team_map and len(covered_keys) < required_team_coverage:
         blockers.append(
-            f"Issue 球队覆盖不足：`{len(covered_keys)}/{len(issue_team_map)}` 支球队在 RAG metadata 中可见。"
+            "Issue 球队覆盖不足："
+            f"`{len(covered_keys)}/{len(issue_team_map)}` 支球队在 RAG metadata 中可见，"
+            f"低于阈值 `{required_team_coverage}/{len(issue_team_map)}`"
+            f"（coverage ratio >= `{min_team_coverage_ratio:.0%}`）。"
+        )
+    if issue_team_map and len(missing_keys) > max_missing_teams:
+        blockers.append(
+            f"Issue 球队缺口过大：缺失 `{len(missing_keys)}` 支球队，高于允许上限 `{max_missing_teams}`。"
         )
 
     if blockers:
@@ -187,6 +222,8 @@ def inspect_rag_readiness(engine_dir: Path, manifest: Dict[str, Any]) -> Dict[st
     diagnostics["details"] = [
         f"RAG 总文档数: {doc_count}",
         f"Issue 球队覆盖: {len(covered_keys)}/{len(issue_team_map)}",
+        f"Coverage 阈值: {required_team_coverage}/{len(issue_team_map) if issue_team_map else 0}",
+        f"Missing 上限: {max_missing_teams}",
     ]
     return diagnostics
 

@@ -169,8 +169,9 @@ python src/data/osint_postmatch.py --issue 24040 --match-id 22064 --official-sco
 * **Hot Data (热数据)**：提取洗练后带 Frontmatter 的 Markdown 报告（含战术分析与预期进球警告），输出至 `$ARES_VAULT_PATH/03_Match_Audits/Postmatch_Telemetry/`。
 * **Team Archives (球队底座)**：`osint_pipeline.py` 默认会先按 issue 自动补齐本期球队 Markdown 档案，再由赛后流程持续更新 `$ARES_VAULT_PATH/02_Team_Archives/`（每队 `latest_postmatch.json` + `postmatch_history.jsonl`）。
 * **Audit Router (审计路由)**：自动创建 `$ARES_VAULT_PATH/03_Match_Audits/{issue}/01~04` 结构、自动生成 prematch 骨架、自动归档重复 prematch/postmatch、自动执行 prematch 质量闸门（`draft` / `Insufficient Resilience Data` / `low confidence` / `cross-team contamination` 自动转入 `03_Review_Reports`）、按 manifest canonical 名收敛同场 prematch / rejected review 重复稿、自动更新 `00_Governance/INDEX`。
-* **Prematch RAG Readiness Gate**：`osint_pipeline.py` 在调用 `20-engine audit-issue` 前，会先检查 `20-engine/chromadb/chroma.sqlite3` 的文档量和 issue 球队覆盖率。若 RAG 库明显供给不足，将直接阻断 prematch，写入 `REVIEW-{issue}-Prematch_Blocker.md`，避免链路“跑完再整批 REJECTED”。
+* **Prematch RAG Readiness Gate**：`osint_pipeline.py` 在调用 `20-engine audit-issue` 前，会先检查 `20-engine/chromadb/chroma.sqlite3` 的文档量和 issue 球队覆盖率。默认要求 issue 球队 coverage ratio 至少 `75%`，且缺失球队不超过 `4` 支；若 RAG 库明显供给不足，将直接阻断 prematch，写入 `REVIEW-{issue}-Prematch_Blocker.md`，避免链路“跑完再整批 REJECTED”。
 * **Prematch Immediate Closeout**：`osint_pipeline.py` 在 `20-engine audit-issue` 完成后，会立刻再次执行 `audit_router` 收口，不再等 postmatch 收尾后才搬运低质量 prematch。
+* **Engine Direct-Run Safety Net**：`20-ares-v4-engine/main.py audit-issue` 在直跑写入 prematch 后，也会尝试回调同目录下的 `21-ares-osint-telemetry/src/data/audit_router.py`，避免 direct-run 绕过质量闸门。
 * **批量模式命名规则**：每场单独输出为 `{issue}_{match_id}_postmatch.md`，避免 14 场互相覆盖。
 * **数据源审计字段**：YAML 中新增 `data_source` 与 `data_source_ref`，可追溯本场来自 Understat 还是 FBref。
 

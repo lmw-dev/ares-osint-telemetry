@@ -3,6 +3,7 @@ import json
 import logging
 import argparse
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import yaml
@@ -76,6 +77,7 @@ class MatchTelemetryPipeline:
         fbref_url: Optional[str] = None,
         official_score: Optional[str] = None,
         league: Optional[str] = None,
+        expected_match: Optional[Dict[str, Any]] = None,
     ):
         self.issue = issue
         self.match_id = match_id
@@ -83,6 +85,7 @@ class MatchTelemetryPipeline:
         self.fbref_url = fbref_url or (match_id if "fbref.com" in str(match_id).lower() else None)
         self.official_score = self._normalize_score(official_score) if official_score else None
         self.league = league
+        self.expected_match = expected_match or {}
         if official_score and not self.official_score:
             raise ValueError(f"official_score 格式非法: {official_score}（应为 2-1）")
         
@@ -261,6 +264,34 @@ class MatchTelemetryPipeline:
             return None
         return f"{int(m.group(1))}-{int(m.group(2))}"
 
+    @staticmethod
+    def _parse_match_datetime(value: Any) -> Optional[datetime]:
+        txt = str(value or "").strip()
+        if not txt:
+            return None
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(txt, fmt)
+            except ValueError:
+                continue
+        return None
+
+    @staticmethod
+    def _normalize_team_token(value: str) -> str:
+        cleaned = str(value or "").replace("_", " ").replace("-", " ").strip().lower()
+        return re.sub(r"[^a-z0-9]+", "", cleaned)
+
+    @staticmethod
+    def _split_match_english(english: str) -> Tuple[str, str]:
+        txt = str(english or "").strip()
+        if " vs " in txt:
+            home, away = txt.split(" vs ", 1)
+            return home.strip(), away.strip()
+        if " VS " in txt:
+            home, away = txt.split(" VS ", 1)
+            return home.strip(), away.strip()
+        return txt, ""
+
     def _dump_raw_artifact(self, suffix: str, content: str) -> str:
         path = self.cold_data_dir / f"{self.issue}_{self.match_id}_{suffix}"
         path.write_text(content, encoding="utf-8")
@@ -300,6 +331,8 @@ class MatchTelemetryPipeline:
 
         if raw_data is None:
             raise RuntimeError(" | ".join(errors) if errors else "未获取到有效数据")
+
+        self.validate_expected_match_identity(raw_data)
         
         # 落盘结构化冷数据
         raw_file_path = self.cold_data_dir / f"{self.issue}_{self.match_id}.json"
@@ -311,6 +344,39 @@ class MatchTelemetryPipeline:
             logger.error(f"冷存储落盘失败: {e}")
             
         return raw_data
+
+    def validate_expected_match_identity(self, raw_data: Dict[str, Any]) -> None:
+        if not self.expected_match:
+            return
+
+        expected_english = str(self.expected_match.get("english", "")).strip()
+        expected_home, expected_away = self._split_match_english(expected_english)
+        actual_home = self._normalize_team_name(raw_data.get("home_team_raw", ""))
+        actual_away = self._normalize_team_name(raw_data.get("away_team_raw", ""))
+
+        if expected_home and expected_away:
+            if (
+                self._normalize_team_token(expected_home) != self._normalize_team_token(actual_home)
+                or self._normalize_team_token(expected_away) != self._normalize_team_token(actual_away)
+            ):
+                raise ValueError(
+                    "[ContaminationAlert] 比赛身份校验失败: "
+                    f"expected={expected_home} vs {expected_away}, "
+                    f"actual={actual_home} vs {actual_away}"
+                )
+
+        expected_dt = self._parse_match_datetime(
+            self.expected_match.get("understat_date")
+            or self.expected_match.get("fbref_date")
+            or self.expected_match.get("football_data_date")
+        )
+        actual_dt = self._parse_match_datetime(raw_data.get("match_date"))
+        if expected_dt and actual_dt and abs((actual_dt - expected_dt).total_seconds()) > 36 * 3600:
+            raise ValueError(
+                "[ContaminationAlert] 比赛日期校验失败: "
+                f"expected={expected_dt.strftime('%Y-%m-%d %H:%M:%S')}, "
+                f"actual={actual_dt.strftime('%Y-%m-%d %H:%M:%S')}"
+            )
 
     def _fetch_understat_raw_data(self) -> Dict[str, Any]:
         url = f"https://understat.com/match/{self.match_id}"
@@ -340,6 +406,7 @@ class MatchTelemetryPipeline:
             "source": "understat",
             "source_ref": url,
             "match_id": str(self.match_id),
+            "match_date": match_data.get("date"),
             "home_team_raw": match_data.get("team_h", "Home"),
             "away_team_raw": match_data.get("team_a", "Away"),
             "goals_home": int(match_data.get("h_goals", 0)),
@@ -430,6 +497,7 @@ class MatchTelemetryPipeline:
             "source": "fbref",
             "source_ref": self.fbref_url,
             "match_id": str(self.match_id),
+            "match_date": None,
             "home_team_raw": team_names[0],
             "away_team_raw": team_names[1],
             "goals_home": goals_home,
@@ -1159,6 +1227,34 @@ if __name__ == "__main__":
         else:
             with open(manifest_path, "r", encoding="utf-8") as f:
                 manifest = json.load(f)
+
+            match_dates: List[datetime] = []
+            for match in manifest.get("matches", []):
+                candidate_dt = MatchTelemetryPipeline._parse_match_datetime(
+                    match.get("understat_date")
+                    or match.get("fbref_date")
+                    or match.get("football_data_date")
+                )
+                if candidate_dt is not None:
+                    match_dates.append(candidate_dt)
+
+            issue_window_start: Optional[datetime] = None
+            issue_window_end: Optional[datetime] = None
+            if match_dates:
+                match_dates.sort()
+                anchor = match_dates[len(match_dates) // 2]
+                window_days = int(os.getenv("ARES_POSTMATCH_ISSUE_WINDOW_DAYS", "3"))
+                in_window = [
+                    dt for dt in match_dates if abs((dt - anchor).total_seconds()) <= window_days * 86400
+                ]
+                if in_window:
+                    issue_window_start = min(in_window)
+                    issue_window_end = max(in_window)
+                    logger.info(
+                        "检测到本期赛程时间窗口: %s -> %s",
+                        issue_window_start.strftime("%Y-%m-%d %H:%M:%S"),
+                        issue_window_end.strftime("%Y-%m-%d %H:%M:%S"),
+                    )
             
             success = 0
             skipped = 0
@@ -1167,6 +1263,22 @@ if __name__ == "__main__":
                 fbref_url = match.get("fbref_url")
                 uid = match.get("understat_id") or fbref_url
                 official_score = match.get("official_score") or match.get("result_score")
+                expected_dt = MatchTelemetryPipeline._parse_match_datetime(
+                    match.get("understat_date")
+                    or match.get("fbref_date")
+                    or match.get("football_data_date")
+                )
+                if expected_dt and issue_window_start and issue_window_end:
+                    if expected_dt < issue_window_start or expected_dt > issue_window_end:
+                        skipped += 1
+                        logger.warning(
+                            "[ContaminationAlert] 跳过 manifest 映射疑似串期比赛: %s | expected_date=%s | issue_window=%s -> %s",
+                            match.get("english"),
+                            expected_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                            issue_window_start.strftime("%Y-%m-%d %H:%M:%S"),
+                            issue_window_end.strftime("%Y-%m-%d %H:%M:%S"),
+                        )
+                        continue
                 if uid:
                     logger.info(f"==> 正在批量复盘: {match['chinese']} (Ref: {uid})")
                     pipeline = MatchTelemetryPipeline(
@@ -1181,6 +1293,7 @@ if __name__ == "__main__":
                             or manifest.get("league")
                             or args.league
                         ),
+                        expected_match=match,
                     )
                     try:
                         out_file = pipeline.run()

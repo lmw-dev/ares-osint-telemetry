@@ -758,6 +758,7 @@ class AuditRouter:
         }
         for path in sorted(prematch_dir.glob("Audit-*.md")):
             findings["accepted"].append(path.name)
+        accepted_names = set(findings["accepted"])
         for path in sorted(review_dir.glob("REJECTED-Audit-*.md")):
             try:
                 text = path.read_text(encoding="utf-8")
@@ -766,6 +767,8 @@ class AuditRouter:
 
             canonical_match = re.search(r'canonical_report:\s*"([^"]+)"', text)
             name = canonical_match.group(1) if canonical_match else path.name.replace("REJECTED-", "", 1)
+            if name in accepted_names:
+                continue
             findings["rejected"].append(name)
 
             if "`Draft Stub`" in text:

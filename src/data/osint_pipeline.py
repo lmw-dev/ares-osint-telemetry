@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import logging
 import math
@@ -13,7 +14,7 @@ from audit_router import AuditRouter, load_dotenv_into_env
 from osint_crawler import AresOsintCrawler
 from osint_postmatch import MatchTelemetryPipeline
 from postmatch_cleanup import cleanup_issue_postmatch
-from team_forge import ensure_team_archive, iter_issue_teams
+from team_forge import ensure_team_archive, infer_league, iter_issue_teams, load_team_alias_map, resolve_team_name, split_pair_text
 
 
 logging.basicConfig(
@@ -25,7 +26,10 @@ logger = logging.getLogger("AresTelemetry.Pipeline")
 
 def _normalize_team_key(value: str) -> str:
     ascii_name = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii")
-    return "".join(ch for ch in ascii_name.lower() if ch.isalnum())
+    normalized = "".join(ch for ch in ascii_name.lower() if ch.isalnum())
+    if normalized:
+        return normalized
+    return "".join(ch for ch in str(value).strip().lower() if ch.isalnum())
 
 
 def _split_match_english(english: str) -> tuple[str, str]:
@@ -239,6 +243,7 @@ def run_prematch_engine(
     issue: str,
     manifest_path: Path,
     engine_dir: Path,
+    limit: Optional[int] = None,
 ) -> Dict[str, int]:
     """调用 20-engine 的 audit-issue 入口执行 Prematch 批量推演。"""
     python_bin = engine_dir / ".venv" / "bin" / "python"
@@ -254,14 +259,28 @@ def run_prematch_engine(
         "--manifest",
         str(manifest_path),
     ]
+    if limit is not None and limit > 0:
+        cmd.extend(["--limit", str(limit)])
     logger.info("==> 一键流程 Prematch 推演: %s", " ".join(cmd))
-    result = subprocess.run(
-        cmd,
-        cwd=engine_dir,
-        env=os.environ.copy(),
-        text=True,
-        capture_output=True,
-    )
+    timeout_sec = _env_int("ARES_PREMATCH_ENGINE_TIMEOUT_SEC", 600)
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=engine_dir,
+            env=os.environ.copy(),
+            text=True,
+            capture_output=True,
+            timeout=timeout_sec,
+        )
+    except subprocess.TimeoutExpired as exc:
+        logger.error("Prematch 推演超时，timeout=%ss, cmd=%s", timeout_sec, " ".join(cmd))
+        if exc.stdout:
+            for line in str(exc.stdout).splitlines():
+                logger.info("[20-engine][partial] %s", line)
+        if exc.stderr:
+            for line in str(exc.stderr).splitlines():
+                logger.warning("[20-engine][partial-stderr] %s", line)
+        return {"success": 0, "failed": limit or 1}
     if result.stdout:
         for line in result.stdout.splitlines():
             logger.info("[20-engine] %s", line)
@@ -303,6 +322,44 @@ def load_manifest(path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
+def normalize_manifest_team_names(
+    *,
+    manifest: Dict[str, Any],
+    manifest_path: Path,
+    base_dir: Path,
+) -> Dict[str, int]:
+    """用本地别名字典修补 manifest 中仍是中文缩写的 english 字段。"""
+    alias_map = load_team_alias_map(base_dir)
+    updated = 0
+    for match in manifest.get("matches", []):
+        chinese_home, chinese_away = split_pair_text(match.get("chinese", ""))
+        english_home, english_away = split_pair_text(match.get("english", ""))
+        resolved_home = resolve_team_name(english_home or chinese_home, alias_map)
+        resolved_away = resolve_team_name(english_away or chinese_away, alias_map)
+
+        if chinese_home:
+            resolved_home = resolve_team_name(chinese_home, alias_map) if resolved_home == english_home else resolved_home
+        if chinese_away:
+            resolved_away = resolve_team_name(chinese_away, alias_map) if resolved_away == english_away else resolved_away
+
+        if resolved_home and resolved_away:
+            new_english = f"{resolved_home} vs {resolved_away}"
+            if new_english != match.get("english"):
+                match["english"] = new_english
+                updated += 1
+
+        if not match.get("league"):
+            league = infer_league(resolved_home, resolved_away)
+            if league:
+                match["league"] = league
+                updated += 1
+
+    if updated:
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info("Manifest 队名/联赛归一化完成: updated_fields=%s -> %s", updated, manifest_path)
+    return {"updated_fields": updated}
+
+
 def run_issue_team_forge(*, issue: str, base_dir: Path) -> Dict[str, int]:
     vault_path = os.getenv("ARES_VAULT_PATH")
     if not vault_path:
@@ -326,6 +383,82 @@ def run_issue_team_forge(*, issue: str, base_dir: Path) -> Dict[str, int]:
         failed,
     )
     return {"created_or_updated": created_or_updated, "failed": failed}
+
+
+def sync_issue_team_archives_to_rag(
+    *,
+    issue: str,
+    base_dir: Path,
+    engine_dir: Path,
+) -> Dict[str, int]:
+    """导入本期球队档案到 20-engine RAG，确保 readiness gate 看到最新补档。"""
+    vault_path = os.getenv("ARES_VAULT_PATH")
+    if not vault_path:
+        logger.warning("未配置 ARES_VAULT_PATH，跳过 issue 球队 RAG 同步。")
+        return {"synced": 0, "skipped": 0, "failed": 1}
+
+    python_bin = engine_dir / ".venv" / "bin" / "python"
+    if not python_bin.exists():
+        logger.warning("找不到 engine Python 解释器，跳过 issue 球队 RAG 同步: %s", python_bin)
+        return {"synced": 0, "skipped": 0, "failed": 1}
+
+    vault_root = Path(normalize_vault_path(vault_path)).expanduser()
+    synced = 0
+    skipped = 0
+    failed = 0
+    seen: set[tuple[str, str]] = set()
+    for team, league in iter_issue_teams(base_dir, vault_root, issue):
+        key = (team, league)
+        if key in seen:
+            skipped += 1
+            continue
+        seen.add(key)
+        try:
+            archive_path = ensure_team_archive(vault_root, team=team, league=league)
+        except Exception as exc:
+            logger.warning("RAG 同步前定位球队档案失败 team=%s league=%s: %s", team, league, exc)
+            failed += 1
+            continue
+        if not archive_path.exists():
+            skipped += 1
+            continue
+
+        doc_key = hashlib.md5(f"issue-team-archive:{team}:{archive_path}".encode("utf-8")).hexdigest()[:16]
+        cmd = [
+            str(python_bin),
+            "main.py",
+            "add-doc",
+            "--file",
+            str(archive_path),
+            "--team",
+            team,
+            "--source-level",
+            "B",
+            "--doc-id",
+            f"team-{doc_key}",
+        ]
+        result = subprocess.run(
+            cmd,
+            cwd=engine_dir,
+            env=os.environ.copy(),
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            failed += 1
+            logger.warning(
+                "issue 球队档案导入 RAG 失败 team=%s file=%s exit=%s stdout=%s stderr=%s",
+                team,
+                archive_path,
+                result.returncode,
+                (result.stdout or "").strip(),
+                (result.stderr or "").strip(),
+            )
+            continue
+        synced += 1
+
+    logger.info("Issue 球队档案 RAG 同步完成 issue=%s, synced=%s, skipped=%s, failed=%s", issue, synced, skipped, failed)
+    return {"synced": synced, "skipped": skipped, "failed": failed}
 
 
 def run_batch_postmatch(
@@ -430,6 +563,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip-prematch", action="store_true", help="跳过 Prematch 推演，仅跑 crawler/路由/postmatch")
     parser.add_argument("--skip-postmatch", action="store_true", help="只跑 crawler 与目录路由，不跑赛后复盘")
     parser.add_argument("--skip-team-forge", action="store_true", help="跳过 Team Archives 批量补档")
+    parser.add_argument("--prematch-limit", type=int, required=False, help="仅执行前 N 场 Prematch，用于串联调试")
     parser.add_argument("--no-prematch-stubs", action="store_true", help="不生成 Prematch 骨架文档")
     args = parser.parse_args()
 
@@ -458,12 +592,26 @@ if __name__ == "__main__":
         raise SystemExit(1)
 
     manifest = load_manifest(manifest_path)
+    normalize_manifest_team_names(
+        manifest=manifest,
+        manifest_path=manifest_path,
+        base_dir=base_dir,
+    )
 
     if not args.skip_team_forge:
         try:
             run_issue_team_forge(issue=args.issue, base_dir=base_dir)
         except Exception as e:
             logger.warning("Team Forge 批量补档失败（不影响主流程）: %s", e)
+    if not args.skip_prematch and engine_dir is not None:
+        try:
+            sync_issue_team_archives_to_rag(
+                issue=args.issue,
+                base_dir=base_dir,
+                engine_dir=engine_dir,
+            )
+        except Exception as e:
+            logger.warning("Issue 球队档案 RAG 同步失败（不影响主流程）: %s", e)
 
     prematch_summary = {"success": 0, "failed": 0}
     if not args.skip_prematch:
@@ -509,6 +657,7 @@ if __name__ == "__main__":
                     issue=args.issue,
                     manifest_path=manifest_path,
                     engine_dir=engine_dir,
+                    limit=args.prematch_limit,
                 )
                 if router.enabled:
                     try:

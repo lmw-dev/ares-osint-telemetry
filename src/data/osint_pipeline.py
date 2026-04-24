@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from audit_router import AuditRouter, load_dotenv_into_env
 from osint_crawler import AresOsintCrawler
 from osint_postmatch import MatchTelemetryPipeline
+from postmatch_cleanup import cleanup_issue_postmatch
 from team_forge import ensure_team_archive, iter_issue_teams
 
 
@@ -369,6 +370,50 @@ def run_batch_postmatch(
     return {"success": success, "skipped": skipped, "failed": failed}
 
 
+def inspect_postmatch_readiness(manifest: Dict[str, Any]) -> Dict[str, Any]:
+    matches = manifest.get("matches", [])
+    if not isinstance(matches, list):
+        matches = []
+
+    total_matches = len(matches)
+    scored_matches = 0
+    missing_score_matches: List[str] = []
+    for match in matches:
+        official_score = match.get("official_score") or match.get("result_score")
+        if official_score:
+            scored_matches += 1
+        else:
+            missing_score_matches.append(str(match.get("english") or match.get("chinese") or "Unknown Match"))
+
+    min_ready_matches = max(1, _env_int("ARES_POSTMATCH_MIN_READY_MATCHES", total_matches if total_matches else 1))
+    min_ready_ratio = max(0.0, min(1.0, _env_float("ARES_POSTMATCH_MIN_READY_RATIO", 1.0)))
+    required_by_ratio = math.ceil(total_matches * min_ready_ratio) if total_matches else 0
+    required_ready_matches = max(min_ready_matches, required_by_ratio)
+
+    ok = scored_matches >= required_ready_matches
+    summary = (
+        f"Postmatch readiness OK: scores={scored_matches}/{total_matches}"
+        if ok
+        else "Postmatch 已被官方比分门禁阻断。"
+    )
+    details = [
+        f"Manifest 比赛数: {total_matches}",
+        f"已具备 official_score/result_score 的比赛数: {scored_matches}",
+        f"Postmatch 最低要求: {required_ready_matches}/{total_matches if total_matches else 0}",
+    ]
+    if missing_score_matches:
+        details.append("缺少官方比分的比赛: " + ", ".join(missing_score_matches))
+
+    return {
+        "ok": ok,
+        "summary": summary,
+        "details": details,
+        "total_matches": total_matches,
+        "scored_matches": scored_matches,
+        "missing_score_matches": missing_score_matches,
+    }
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ares One-Command OSINT Pipeline")
     parser.add_argument("--issue", type=str, required=True, help="中国体彩期号，如 26064")
@@ -505,12 +550,36 @@ if __name__ == "__main__":
         )
         raise SystemExit(0)
 
-    summary = run_batch_postmatch(
-        issue=args.issue,
-        manifest=manifest,
-        source=args.source,
-        league=args.league,
-    )
+    postmatch_readiness = inspect_postmatch_readiness(manifest)
+    if not postmatch_readiness["ok"]:
+        logger.warning("Postmatch 熔断: %s", postmatch_readiness["summary"])
+        for detail in postmatch_readiness.get("details", []):
+            logger.warning("Postmatch 熔断详情: %s", detail)
+        if router.enabled:
+            try:
+                cleanup_summary = cleanup_issue_postmatch(args.issue, vault_path=str(router.vault_root))
+                logger.info(
+                    "Postmatch 存量清理完成: before=%s, after=%s, new_stale=%s, new_pending=%s, report=%s",
+                    len(cleanup_summary["before_main"]),
+                    len(cleanup_summary["after_main"]),
+                    len(cleanup_summary["new_stale"]),
+                    len(cleanup_summary["new_pending"]),
+                    cleanup_summary["report_path"],
+                )
+            except Exception as e:
+                logger.warning("Postmatch 存量清理失败（不影响主流程熔断）: %s", e)
+        summary = {
+            "success": 0,
+            "skipped": len(manifest.get("matches", [])),
+            "failed": 0,
+        }
+    else:
+        summary = run_batch_postmatch(
+            issue=args.issue,
+            manifest=manifest,
+            source=args.source,
+            league=args.league,
+        )
 
     if router.enabled:
         try:

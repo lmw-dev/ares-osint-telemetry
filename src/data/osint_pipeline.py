@@ -4,17 +4,28 @@ import json
 import logging
 import math
 import os
+import re
 import sqlite3
 import subprocess
+import tempfile
 import unicodedata
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from audit_router import AuditRouter, load_dotenv_into_env
 from osint_crawler import AresOsintCrawler
 from osint_postmatch import MatchTelemetryPipeline
 from postmatch_cleanup import cleanup_issue_postmatch
-from team_forge import ensure_team_archive, infer_league, iter_issue_teams, load_team_alias_map, resolve_team_name, split_pair_text
+from team_forge import (
+    build_archive_path,
+    ensure_team_archive,
+    infer_league,
+    iter_issue_teams,
+    load_team_alias_map,
+    resolve_team_name,
+    split_pair_text,
+)
 
 
 logging.basicConfig(
@@ -105,8 +116,12 @@ def preflight_checks(engine_dir: Path) -> list[str]:
         errors.append(f"无法创建或访问审计目录 {audit_root}: {exc}")
         return errors
 
-    if not os.access(audit_root, os.W_OK):
-        errors.append(f"审计目录不可写: {audit_root}")
+    probe_path = audit_root / "_ARES_PIPELINE_WRITE_PROBE.tmp"
+    try:
+        probe_path.write_text("ok", encoding="utf-8")
+        probe_path.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning("审计目录写入探针失败，继续交由实际流程验证: %s: %s", audit_root, exc)
 
     return errors
 
@@ -322,6 +337,201 @@ def load_manifest(path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
+def _is_prematch_mapped_match(match: Dict[str, Any]) -> bool:
+    mapping_source = str(match.get("mapping_source") or "").strip().lower()
+    has_anchor = bool(match.get("understat_id") or match.get("fbref_url") or match.get("football_data_match_id"))
+    titan_snapshot = match.get("titan_prematch") if isinstance(match.get("titan_prematch"), dict) else {}
+    titan_signals = titan_snapshot.get("signals") if isinstance(titan_snapshot.get("signals"), dict) else {}
+    titan_ready = (
+        bool(match.get("cn_match_id"))
+        and str(titan_signals.get("coverage") or "none").strip().lower() in {"full", "partial"}
+    )
+    if mapping_source == "unmapped":
+        return False
+    if mapping_source == "titan":
+        return titan_ready
+    if mapping_source in {"understat", "fbref", "football-data"}:
+        return has_anchor
+    return has_anchor or titan_ready
+
+
+def build_prematch_manifest(
+    *,
+    manifest: Dict[str, Any],
+    mapped_only: bool,
+) -> Dict[str, Any]:
+    matches = manifest.get("matches", [])
+    if not isinstance(matches, list):
+        matches = []
+    if not mapped_only:
+        return {
+            "manifest": manifest,
+            "total_matches": len(matches),
+            "selected_matches": len(matches),
+            "skipped_unmapped": 0,
+        }
+
+    selected = [match for match in matches if _is_prematch_mapped_match(match)]
+    skipped = len(matches) - len(selected)
+    filtered_manifest = dict(manifest)
+    filtered_manifest["matches"] = selected
+    return {
+        "manifest": filtered_manifest,
+        "total_matches": len(matches),
+        "selected_matches": len(selected),
+        "skipped_unmapped": skipped,
+    }
+
+
+def _load_issue_team_diagnostics(vault_root: Path, issue: str) -> Dict[str, Any]:
+    path = vault_root / "03_Match_Audits" / str(issue) / f"Audit-{issue}-team-diagnostics.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_prematch_input_gate_report(
+    *,
+    vault_root: Path,
+    issue: str,
+    rows: List[Dict[str, Any]],
+    selected: int,
+    total: int,
+    min_team_docs: int,
+) -> None:
+    review_dir = vault_root / "03_Match_Audits" / str(issue) / "03_Review_Reports"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    target = review_dir / f"REVIEW-{issue}-Prematch_Input_Gate.md"
+    lines: List[str] = []
+    lines.append(f"# Review {issue} - Prematch Input Gate")
+    lines.append("")
+    lines.append(f"- Updated At: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%SZ')}")
+    lines.append(f"- Total Matches: {total}")
+    lines.append(f"- Selected Matches: {selected}")
+    lines.append(f"- Filtered Matches: {max(0, total - selected)}")
+    lines.append(f"- Min Team RAG Docs: {min_team_docs}")
+    lines.append("")
+    lines.append("| # | Match | Quality Tag | Ready | Reasons |")
+    lines.append("| --- | --- | --- | --- | --- |")
+    for row in rows:
+        reasons = "<br>".join(row.get("reasons") or []) or "-"
+        lines.append(
+            f"| {row.get('index')} | {row.get('match')} | `{row.get('quality_tag')}` | `{row.get('ready')}` | {reasons} |"
+        )
+    target.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+
+
+def build_prematch_ready_manifest(
+    *,
+    issue: str,
+    manifest: Dict[str, Any],
+    base_dir: Path,
+    min_team_docs: int,
+) -> Dict[str, Any]:
+    vault_path = os.getenv("ARES_VAULT_PATH")
+    if not vault_path:
+        return {
+            "manifest": manifest,
+            "total_matches": len(manifest.get("matches", []) if isinstance(manifest.get("matches"), list) else []),
+            "selected_matches": len(manifest.get("matches", []) if isinstance(manifest.get("matches"), list) else []),
+            "filtered_matches": 0,
+            "rows": [],
+        }
+    vault_root = Path(normalize_vault_path(vault_path)).expanduser()
+    diagnostics = _load_issue_team_diagnostics(vault_root, issue)
+    teams = diagnostics.get("teams") if isinstance(diagnostics.get("teams"), list) else []
+    if not teams:
+        matches = manifest.get("matches", []) if isinstance(manifest.get("matches"), list) else []
+        return {
+            "manifest": manifest,
+            "total_matches": len(matches),
+            "selected_matches": len(matches),
+            "filtered_matches": 0,
+            "rows": [],
+        }
+    alias_map = load_team_alias_map(base_dir)
+    team_map: Dict[str, Dict[str, Any]] = {}
+    for team_row in teams:
+        team = str(team_row.get("team") or "").strip()
+        if not team:
+            continue
+        key = _normalize_team_key(resolve_team_name(team, alias_map))
+        team_map[key] = team_row
+
+    matches = manifest.get("matches", []) if isinstance(manifest.get("matches"), list) else []
+    selected_matches: List[Dict[str, Any]] = []
+    rows: List[Dict[str, Any]] = []
+    for match in matches:
+        english = str(match.get("english") or "").strip()
+        home, away = _split_match_english(english)
+        resolved_home = resolve_team_name(home, alias_map)
+        resolved_away = resolve_team_name(away, alias_map)
+        home_row = team_map.get(_normalize_team_key(resolved_home))
+        away_row = team_map.get(_normalize_team_key(resolved_away))
+        reasons: List[str] = []
+        for side_name, row in ((resolved_home, home_row), (resolved_away, away_row)):
+            if not isinstance(row, dict):
+                reasons.append(f"missing_team_diagnostics:{side_name}")
+                continue
+            archive_status = str(row.get("archive_status") or "").strip().lower()
+            rag_docs = int(row.get("rag_doc_count") or 0)
+            needs_enrichment = bool(row.get("needs_enrichment"))
+            if archive_status != "usable":
+                reasons.append(f"non_usable_archive:{side_name}:{archive_status or 'unknown'}")
+            if rag_docs < min_team_docs:
+                reasons.append(f"low_rag_docs:{side_name}:{rag_docs}")
+            if needs_enrichment:
+                reasons.append(f"needs_enrichment:{side_name}")
+
+        quality_tag = "ACTIONABLE" if not reasons else ("HALT_DRIVEN" if any("low_rag_docs" in x for x in reasons) else "DATA_WEAK")
+        ready = not reasons
+        if ready:
+            selected_matches.append(match)
+        rows.append(
+            {
+                "index": match.get("index"),
+                "match": english or str(match.get("chinese") or "Unknown"),
+                "ready": "yes" if ready else "no",
+                "quality_tag": quality_tag,
+                "reasons": reasons,
+            }
+        )
+        match["prematch_input_quality"] = {"quality_tag": quality_tag, "reasons": reasons, "ready": ready}
+
+    filtered_manifest = dict(manifest)
+    filtered_manifest["matches"] = selected_matches
+    _write_prematch_input_gate_report(
+        vault_root=vault_root,
+        issue=issue,
+        rows=rows,
+        selected=len(selected_matches),
+        total=len(matches),
+        min_team_docs=min_team_docs,
+    )
+    return {
+        "manifest": filtered_manifest,
+        "total_matches": len(matches),
+        "selected_matches": len(selected_matches),
+        "filtered_matches": max(0, len(matches) - len(selected_matches)),
+        "rows": rows,
+    }
+
+
+def write_temp_manifest(*, issue: str, manifest: Dict[str, Any]) -> Path:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        prefix=f"ares_{issue}_prematch_",
+        suffix=".json",
+        delete=False,
+        encoding="utf-8",
+    ) as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+        return Path(f.name)
+
+
 def normalize_manifest_team_names(
     *,
     manifest: Dict[str, Any],
@@ -402,6 +612,75 @@ def sync_issue_team_archives_to_rag(
         logger.warning("找不到 engine Python 解释器，跳过 issue 球队 RAG 同步: %s", python_bin)
         return {"synced": 0, "skipped": 0, "failed": 1}
 
+    def _split_archive_chunks(content: str) -> List[Tuple[str, str]]:
+        max_sections = max(1, _env_int("ARES_TEAM_ARCHIVE_RAG_MAX_SECTIONS", 4))
+        min_chars = max(80, _env_int("ARES_TEAM_ARCHIVE_RAG_MIN_SECTION_CHARS", 180))
+        body = content
+        if content.startswith("---\n"):
+            closing = content.find("\n---\n", 4)
+            if closing != -1:
+                body = content[closing + len("\n---\n") :].lstrip("\n")
+        sections: List[Tuple[str, str]] = [("full", content)]
+        current_title = "intro"
+        current_lines: List[str] = []
+
+        def _flush() -> None:
+            nonlocal current_title, current_lines
+            section_text = "\n".join(current_lines).strip()
+            if len(section_text) >= min_chars:
+                section_key = "".join(ch.lower() if ch.isalnum() else "-" for ch in current_title).strip("-")
+                section_key = section_key or f"section-{len(sections)}"
+                sections.append((section_key[:36], section_text))
+            current_lines = []
+
+        for line in body.splitlines():
+            if line.startswith("## "):
+                _flush()
+                current_title = line[3:].strip() or "section"
+                current_lines = [line]
+                continue
+            current_lines.append(line)
+        _flush()
+
+        dedup: List[Tuple[str, str]] = []
+        seen = set()
+        for suffix, text in sections:
+            key = (suffix, text.strip())
+            if key in seen:
+                continue
+            seen.add(key)
+            dedup.append((suffix, text))
+            if len(dedup) >= 1 + max_sections:
+                break
+        return dedup
+
+    def _add_doc(
+        *,
+        team: str,
+        source_file: Path,
+        doc_id: str,
+    ) -> subprocess.CompletedProcess:
+        cmd = [
+            str(python_bin),
+            "main.py",
+            "add-doc",
+            "--file",
+            str(source_file),
+            "--team",
+            team,
+            "--source-level",
+            "B",
+            "--doc-id",
+            doc_id,
+        ]
+        return subprocess.run(
+            cmd,
+            cwd=engine_dir,
+            env=os.environ.copy(),
+            text=True,
+            capture_output=True,
+        )
+
     vault_root = Path(normalize_vault_path(vault_path)).expanduser()
     synced = 0
     skipped = 0
@@ -414,7 +693,9 @@ def sync_issue_team_archives_to_rag(
             continue
         seen.add(key)
         try:
-            archive_path = ensure_team_archive(vault_root, team=team, league=league)
+            archive_path = build_archive_path(vault_root, team=team, league=league)
+            if not archive_path.exists():
+                archive_path = ensure_team_archive(vault_root, team=team, league=league)
         except Exception as exc:
             logger.warning("RAG 同步前定位球队档案失败 team=%s league=%s: %s", team, league, exc)
             failed += 1
@@ -423,37 +704,36 @@ def sync_issue_team_archives_to_rag(
             skipped += 1
             continue
 
+        content = archive_path.read_text(encoding="utf-8")
+        chunks = _split_archive_chunks(content)
         doc_key = hashlib.md5(f"issue-team-archive:{team}:{archive_path}".encode("utf-8")).hexdigest()[:16]
-        cmd = [
-            str(python_bin),
-            "main.py",
-            "add-doc",
-            "--file",
-            str(archive_path),
-            "--team",
-            team,
-            "--source-level",
-            "B",
-            "--doc-id",
-            f"team-{doc_key}",
-        ]
-        result = subprocess.run(
-            cmd,
-            cwd=engine_dir,
-            env=os.environ.copy(),
-            text=True,
-            capture_output=True,
-        )
-        if result.returncode != 0:
+        team_failed = False
+        with tempfile.TemporaryDirectory(prefix=f"ares_team_rag_{_normalize_team_key(team)}_") as temp_dir:
+            temp_root = Path(temp_dir)
+            for idx, (suffix, chunk_text) in enumerate(chunks, start=1):
+                if idx == 1 and suffix == "full":
+                    source_file = archive_path
+                else:
+                    source_file = temp_root / f"{_normalize_team_key(team)}_{idx:02d}_{suffix}.md"
+                    source_file.write_text(chunk_text.strip() + "\n", encoding="utf-8")
+                result = _add_doc(
+                    team=team,
+                    source_file=source_file,
+                    doc_id=f"team-{doc_key}-{idx:02d}-{suffix}",
+                )
+                if result.returncode != 0:
+                    team_failed = True
+                    logger.warning(
+                        "issue 球队档案导入 RAG 失败 team=%s doc=%s exit=%s stdout=%s stderr=%s",
+                        team,
+                        source_file,
+                        result.returncode,
+                        (result.stdout or "").strip(),
+                        (result.stderr or "").strip(),
+                    )
+                    break
+        if team_failed:
             failed += 1
-            logger.warning(
-                "issue 球队档案导入 RAG 失败 team=%s file=%s exit=%s stdout=%s stderr=%s",
-                team,
-                archive_path,
-                result.returncode,
-                (result.stdout or "").strip(),
-                (result.stderr or "").strip(),
-            )
             continue
         synced += 1
 
@@ -563,6 +843,21 @@ if __name__ == "__main__":
     parser.add_argument("--skip-prematch", action="store_true", help="跳过 Prematch 推演，仅跑 crawler/路由/postmatch")
     parser.add_argument("--skip-postmatch", action="store_true", help="只跑 crawler 与目录路由，不跑赛后复盘")
     parser.add_argument("--skip-team-forge", action="store_true", help="跳过 Team Archives 批量补档")
+    parser.add_argument(
+        "--sync-team-rag-only",
+        action="store_true",
+        help="仅执行 issue 球队档案 RAG 同步（含 Team Forge），不进入 prematch/postmatch",
+    )
+    parser.add_argument(
+        "--prematch-mapped-only",
+        action="store_true",
+        help="Prematch 仅执行已映射场次（跳过 mapping_source=unmapped 的比赛）",
+    )
+    parser.add_argument(
+        "--no-prematch-ready-gate",
+        action="store_true",
+        help="关闭按场次输入质量门槛（默认开启，筛除低质量输入场次）",
+    )
     parser.add_argument("--prematch-limit", type=int, required=False, help="仅执行前 N 场 Prematch，用于串联调试")
     parser.add_argument("--no-prematch-stubs", action="store_true", help="不生成 Prematch 骨架文档")
     args = parser.parse_args()
@@ -570,7 +865,7 @@ if __name__ == "__main__":
     base_dir = Path(__file__).resolve().parent.parent.parent
     load_dotenv_into_env(base_dir)
     engine_dir: Optional[Path] = None
-    if not args.skip_prematch:
+    if (not args.skip_prematch) or args.sync_team_rag_only:
         engine_dir = _resolve_engine_dir(args.engine_dir)
         preflight_errors = preflight_checks(engine_dir)
         if preflight_errors:
@@ -603,7 +898,7 @@ if __name__ == "__main__":
             run_issue_team_forge(issue=args.issue, base_dir=base_dir)
         except Exception as e:
             logger.warning("Team Forge 批量补档失败（不影响主流程）: %s", e)
-    if not args.skip_prematch and engine_dir is not None:
+    if ((not args.skip_prematch) or args.sync_team_rag_only) and engine_dir is not None:
         try:
             sync_issue_team_archives_to_rag(
                 issue=args.issue,
@@ -612,10 +907,72 @@ if __name__ == "__main__":
             )
         except Exception as e:
             logger.warning("Issue 球队档案 RAG 同步失败（不影响主流程）: %s", e)
+    if args.sync_team_rag_only:
+        logger.info("sync-team-rag-only 已完成，流程提前结束。")
+        raise SystemExit(0)
+    prematch_manifest_path = manifest_path
+    prematch_temp_manifest_path: Optional[Path] = None
+    prematch_selection = build_prematch_manifest(
+        manifest=manifest,
+        mapped_only=args.prematch_mapped_only,
+    )
+    prematch_manifest = prematch_selection["manifest"]
+    if args.prematch_mapped_only:
+        logger.info(
+            "Prematch mapped-only 已启用: selected=%s/%s, skipped_unmapped=%s",
+            prematch_selection["selected_matches"],
+            prematch_selection["total_matches"],
+            prematch_selection["skipped_unmapped"],
+        )
+        if prematch_selection["selected_matches"] > 0:
+            if prematch_temp_manifest_path is not None:
+                try:
+                    prematch_temp_manifest_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            prematch_temp_manifest_path = write_temp_manifest(
+                issue=args.issue,
+                manifest=prematch_manifest,
+            )
+            prematch_manifest_path = prematch_temp_manifest_path
+            logger.info("Prematch 将使用过滤 manifest: %s", prematch_manifest_path)
+        else:
+            logger.warning("Prematch mapped-only 下无可执行场次（全部为 unmapped 或缺锚点）。")
+
+    if not args.no_prematch_ready_gate:
+        min_team_docs = max(1, _env_int("ARES_PREMATCH_READY_MIN_TEAM_DOCS", 3))
+        gate_selection = build_prematch_ready_manifest(
+            issue=args.issue,
+            manifest=prematch_manifest,
+            base_dir=base_dir,
+            min_team_docs=min_team_docs,
+        )
+        prematch_manifest = gate_selection["manifest"]
+        logger.info(
+            "Prematch ready-gate 已启用: selected=%s/%s, filtered=%s, min_team_docs=%s",
+            gate_selection["selected_matches"],
+            gate_selection["total_matches"],
+            gate_selection["filtered_matches"],
+            min_team_docs,
+        )
+        if gate_selection["selected_matches"] > 0:
+            if prematch_temp_manifest_path is not None:
+                try:
+                    prematch_temp_manifest_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            prematch_temp_manifest_path = write_temp_manifest(
+                issue=args.issue,
+                manifest=prematch_manifest,
+            )
+            prematch_manifest_path = prematch_temp_manifest_path
+            logger.info("Prematch ready-gate 将使用过滤 manifest: %s", prematch_manifest_path)
+        else:
+            logger.warning("Prematch ready-gate 下无可执行场次（输入质量不达标）。")
 
     prematch_summary = {"success": 0, "failed": 0}
     if not args.skip_prematch:
-        rag_readiness = inspect_rag_readiness(engine_dir, manifest)
+        rag_readiness = inspect_rag_readiness(engine_dir, prematch_manifest)
         if router.enabled and rag_readiness["ok"]:
             try:
                 router.clear_prematch_blocker_report(args.issue)
@@ -650,15 +1007,26 @@ if __name__ == "__main__":
                     )
                 except Exception as e:
                     logger.warning("Prematch blocker report 写入失败（不影响主流程）: %s", e)
-            prematch_summary = {"success": 0, "failed": len(manifest.get("matches", []))}
+            prematch_summary = {"success": 0, "failed": len(prematch_manifest.get("matches", []))}
         else:
             try:
-                prematch_summary = run_prematch_engine(
-                    issue=args.issue,
-                    manifest_path=manifest_path,
-                    engine_dir=engine_dir,
-                    limit=args.prematch_limit,
-                )
+                if not prematch_manifest.get("matches"):
+                    prematch_summary = {"success": 0, "failed": 0}
+                    if args.prematch_mapped_only and not args.no_prematch_ready_gate:
+                        logger.warning("Prematch 已跳过：mapped-only + ready-gate 后没有可执行场次。")
+                    elif args.prematch_mapped_only:
+                        logger.warning("Prematch 已跳过：mapped-only 模式下没有可执行场次。")
+                    elif not args.no_prematch_ready_gate:
+                        logger.warning("Prematch 已跳过：ready-gate 过滤后没有可执行场次。")
+                    else:
+                        logger.warning("Prematch 已跳过：当前 manifest 没有可执行场次。")
+                else:
+                    prematch_summary = run_prematch_engine(
+                        issue=args.issue,
+                        manifest_path=prematch_manifest_path,
+                        engine_dir=engine_dir,
+                        limit=args.prematch_limit,
+                    )
                 if router.enabled:
                     try:
                         router.ensure_issue_governance(
@@ -697,6 +1065,11 @@ if __name__ == "__main__":
             prematch_summary["success"],
             prematch_summary["failed"],
         )
+        if prematch_temp_manifest_path is not None:
+            try:
+                prematch_temp_manifest_path.unlink(missing_ok=True)
+            except Exception as e:
+                logger.warning("清理临时 prematch manifest 失败（不影响结果）: %s", e)
         raise SystemExit(0)
 
     postmatch_readiness = inspect_postmatch_readiness(manifest)
@@ -749,3 +1122,8 @@ if __name__ == "__main__":
         summary["skipped"],
         summary["failed"],
     )
+    if prematch_temp_manifest_path is not None:
+        try:
+            prematch_temp_manifest_path.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning("清理临时 prematch manifest 失败（不影响结果）: %s", e)

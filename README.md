@@ -116,6 +116,8 @@ export ARES_VAULT_PATH="/path/to/your/Vault"
 | 先抓当期赛程与赔率，生成派发单 | `python src/data/osint_crawler.py --issue <issue>` | 当你还没有 `dispatch_manifest.json` 时 |
 | 先做 prematch 预检总揽 | `python src/data/prematch_preflight.py --issue <issue>` | 当你要判断“直接跑全量”还是“先补档”时 |
 | 批量补 Team Archives | `python src/data/team_archive_backfill.py --issue <issue> [--intel-file ...]` | 当预检结果提示 placeholder 队档过多，或你已经整理好一批 issue 级球队情报时 |
+| 生成 issue 最终收口结论 | `python src/data/prematch_synthesis.py --issue <issue>` | 当 prematch 已跑完，准备输出最终执行结论时 |
+| 赛后命中复盘（推演 vs 赛果） | `python src/data/prematch_outcome_review.py --issue <issue>` | 当官方比分入库后，评估 prematch 推演命中率 |
 | 一键主流程 | `python src/data/osint_pipeline.py --issue <issue>` | 当预检通过或你确认可以继续跑时 |
 | 单场/单队情报补录 | `python src/data/intel_sweeper.py --team <team> --league <league> --url ...` | 当你已经有明确新闻源，要回填单支球队情报时 |
 
@@ -151,6 +153,9 @@ python src/data/osint_pipeline.py --issue 24040 --skip-postmatch
 
 # 跳过 crawler，只消费已有 dispatch_manifest 继续 postmatch
 python src/data/osint_pipeline.py --issue 24040 --skip-crawler
+
+# 关闭按场次输入质量门槛（默认已开启）
+python src/data/osint_pipeline.py --issue 24040 --no-prematch-ready-gate
 ```
 
 ### 1.6 Prematch 预检总揽（推荐先跑）
@@ -190,6 +195,15 @@ python src/data/osint_crawler.py --issue 24040
 ```
 手工锚点文件优先级高于 generated 骨架。
 
+Titan prematch 补采（默认开启）：
+- `osint_crawler.py` 会优先从 500 行内链接自动提取 `cn_match_id`，再抓取以下页面并写入 `dispatch_manifest` 的 `titan_prematch`：
+  - `https://zq.titan007.com/analysis/{id}cn.htm`
+  - `https://vip.titan007.com/AsianOdds_n.aspx?id={id}&l=0`
+  - `https://vip.titan007.com/OverDown_n.aspx?id={id}&l=0`
+  - `https://1x2.titan007.com/oddslist/{id}.htm`
+- 对应原始 HTML 冷数据会落盘到 `Cold_Data_Lake`，并自动合并进 `cold_data_refs`。
+- 如需临时关闭，可设置：`ARES_ENABLE_TITAN_PREMATCH_ENRICH=0`。
+
 如需做回归测试（不依赖真实第三方锚点），可用 smoke 注入脚本：
 ```bash
 # 自动给前 3 个 unmapped 场次注入测试锚点
@@ -213,6 +227,37 @@ python src/data/prematch_regression.py --issue 24040 --mode smoke --smoke-count 
 # 清理 smoke 后重跑全链路
 python src/data/prematch_regression.py --issue 24040 --mode smoke --clear-smoke
 ```
+
+Prematch 输入质量门槛（默认开启）：
+- `osint_pipeline.py` 会在进入 `20-engine audit-issue` 前按场次检查输入质量（两队 `archive_status=usable`、`needs_enrichment=false`、且 `rag_doc_count` 达到阈值）。
+- 不达标场次会被自动过滤，避免“低质量输入 -> 模板化回避结论”。
+- 过滤明细会写入：`$ARES_VAULT_PATH/03_Match_Audits/{issue}/03_Review_Reports/REVIEW-{issue}-Prematch_Input_Gate.md`
+- 同时会输出球队补强优先队列（阻断原因 + 优先级）：`REVIEW-{issue}-Team_Enrichment_Queue.md` 与 `TEAM-ENRICHMENT-QUEUE-{issue}.json`
+- 阈值可通过环境变量调整：`ARES_PREMATCH_READY_MIN_TEAM_DOCS`（默认 `3`）。
+
+Prematch 最终收口（LLM 综合）：
+```bash
+# 默认读取 ARES_USE_LLM_SYNTHESIS（未设置时回退 ARES_USE_LLM_BACKFILL）
+python src/data/prematch_synthesis.py --issue 24040
+
+# 如需禁用 LLM，走规则兜底
+python src/data/prematch_synthesis.py --issue 24040 --force-rule
+```
+产出物：
+- `$ARES_VAULT_PATH/03_Match_Audits/{issue}/02_Special_Analyses/FINAL-{issue}-Prematch_Synthesis.md`
+- `$ARES_VAULT_PATH/03_Match_Audits/{issue}/02_Special_Analyses/FINAL-{issue}-Prematch_Synthesis.json`
+
+Prematch 赛后命中复盘（当比分已入库）：
+```bash
+# 全量场次回测
+python src/data/prematch_outcome_review.py --issue 24040
+
+# 仅五大联赛口径回测（对应 FINAL-...-Top5）
+python src/data/prematch_outcome_review.py --issue 24040 --top5-only
+```
+产出物：
+- `$ARES_VAULT_PATH/03_Match_Audits/{issue}/03_Review_Reports/REVIEW-{issue}-Prematch_Outcome.md`
+- `$ARES_VAULT_PATH/03_Match_Audits/{issue}/03_Review_Reports/REVIEW-{issue}-Prematch_Outcome-Top5.md`
 
 `--intel-file` 结构示例：
 ```json

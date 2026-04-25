@@ -424,6 +424,153 @@ def _write_prematch_input_gate_report(
     target.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
 
 
+def _parse_gate_reason(reason: str) -> Tuple[str, str, Optional[str]]:
+    raw = str(reason or "").strip()
+    if not raw:
+        return "", "", None
+    parts = raw.split(":")
+    if len(parts) >= 3:
+        return parts[0], parts[1], ":".join(parts[2:])
+    if len(parts) == 2:
+        return parts[0], parts[1], None
+    return parts[0], "", None
+
+
+def _write_team_enrichment_queue_report(
+    *,
+    vault_root: Path,
+    issue: str,
+    rows: List[Dict[str, Any]],
+    team_map: Dict[str, Dict[str, Any]],
+    min_team_docs: int,
+) -> None:
+    review_dir = vault_root / "03_Match_Audits" / str(issue) / "03_Review_Reports"
+    review_dir.mkdir(parents=True, exist_ok=True)
+
+    queue_map: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        match_label = str(row.get("match") or "Unknown")
+        match_index = str(row.get("index") or "")
+        for raw_reason in row.get("reasons") or []:
+            reason_type, reason_team, reason_value = _parse_gate_reason(str(raw_reason))
+            if not reason_type or not reason_team:
+                continue
+            team_key = _normalize_team_key(reason_team)
+            team_diag = team_map.get(team_key) if team_key else None
+            display_team = str((team_diag or {}).get("team") or reason_team)
+            display_league = str((team_diag or {}).get("league") or "")
+            archive_status = str((team_diag or {}).get("archive_status") or "unknown")
+            rag_docs = int((team_diag or {}).get("rag_doc_count") or 0)
+            needs_enrichment = bool((team_diag or {}).get("needs_enrichment"))
+            node = queue_map.setdefault(
+                team_key or _normalize_team_key(display_team),
+                {
+                    "team": display_team,
+                    "league": display_league,
+                    "archive_status": archive_status,
+                    "rag_doc_count": rag_docs,
+                    "needs_enrichment": needs_enrichment,
+                    "blocker_types": set(),
+                    "blocker_reasons": set(),
+                    "blocked_matches": set(),
+                },
+            )
+            node["blocker_types"].add(reason_type)
+            node["blocker_reasons"].add(str(raw_reason))
+            node["blocked_matches"].add(f"{match_index}:{match_label}" if match_index else match_label)
+            if reason_type == "non_usable_archive":
+                node["archive_status"] = str(reason_value or node["archive_status"] or "unknown")
+            elif reason_type == "low_rag_docs":
+                try:
+                    node["rag_doc_count"] = int(reason_value) if reason_value is not None else node["rag_doc_count"]
+                except ValueError:
+                    pass
+            elif reason_type == "needs_enrichment":
+                node["needs_enrichment"] = True
+
+    queue_rows: List[Dict[str, Any]] = []
+    for node in queue_map.values():
+        score = 0
+        archive_status = str(node.get("archive_status") or "")
+        rag_docs = int(node.get("rag_doc_count") or 0)
+        needs_enrichment = bool(node.get("needs_enrichment"))
+        blockers = sorted(str(item) for item in node.get("blocker_reasons") or [])
+        blocked_matches = sorted(str(item) for item in node.get("blocked_matches") or [])
+
+        if archive_status != "usable":
+            score += 50
+        if "missing_team_diagnostics" in node.get("blocker_types", set()):
+            score += 40
+        if rag_docs < min_team_docs:
+            score += (min_team_docs - rag_docs) * 10
+        if needs_enrichment:
+            score += 20
+        score += len(blocked_matches)
+
+        if score >= 80:
+            priority = "P0"
+        elif score >= 50:
+            priority = "P1"
+        else:
+            priority = "P2"
+
+        queue_rows.append(
+            {
+                "team": node.get("team"),
+                "league": node.get("league"),
+                "priority": priority,
+                "priority_score": score,
+                "archive_status": archive_status or "unknown",
+                "rag_doc_count": rag_docs,
+                "needs_enrichment": needs_enrichment,
+                "blocked_match_count": len(blocked_matches),
+                "blocked_matches": blocked_matches,
+                "blocker_types": sorted(str(item) for item in node.get("blocker_types") or []),
+                "blocker_reasons": blockers,
+            }
+        )
+
+    queue_rows.sort(
+        key=lambda item: (
+            0 if item.get("priority") == "P0" else (1 if item.get("priority") == "P1" else 2),
+            -int(item.get("priority_score") or 0),
+            str(item.get("team") or ""),
+        )
+    )
+
+    json_target = review_dir / f"TEAM-ENRICHMENT-QUEUE-{issue}.json"
+    json_payload = {
+        "issue": str(issue),
+        "updated_at_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ"),
+        "min_team_rag_docs": int(min_team_docs),
+        "total_blocked_teams": len(queue_rows),
+        "teams": queue_rows,
+    }
+    json_target.write_text(json.dumps(json_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    md_target = review_dir / f"REVIEW-{issue}-Team_Enrichment_Queue.md"
+    lines: List[str] = []
+    lines.append(f"# Review {issue} - Team Enrichment Queue")
+    lines.append("")
+    lines.append(f"- Updated At: {json_payload['updated_at_utc']}")
+    lines.append(f"- Min Team RAG Docs: {min_team_docs}")
+    lines.append(f"- Blocked Teams: {len(queue_rows)}")
+    lines.append(f"- Queue JSON: `{json_target.name}`")
+    lines.append("")
+    lines.append("| Priority | Team | League | Archive | RAG Docs | Needs Enrichment | Blocked Matches | Blockers |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+    for item in queue_rows:
+        blockers = "<br>".join(item.get("blocker_reasons") or []) or "-"
+        lines.append(
+            f"| `{item['priority']}` | `{item['team']}` | `{item['league'] or '-'}"
+            f"` | `{item['archive_status']}` | `{item['rag_doc_count']}` | "
+            f"`{'yes' if item['needs_enrichment'] else 'no'}` | `{item['blocked_match_count']}` | {blockers} |"
+        )
+    if not queue_rows:
+        lines.append("| `P2` | `None` | `-` | `usable` | `-` | `no` | `0` | - |")
+    md_target.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+
+
 def build_prematch_ready_manifest(
     *,
     issue: str,
@@ -509,6 +656,13 @@ def build_prematch_ready_manifest(
         rows=rows,
         selected=len(selected_matches),
         total=len(matches),
+        min_team_docs=min_team_docs,
+    )
+    _write_team_enrichment_queue_report(
+        vault_root=vault_root,
+        issue=issue,
+        rows=rows,
+        team_map=team_map,
         min_team_docs=min_team_docs,
     )
     return {

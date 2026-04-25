@@ -103,6 +103,8 @@ class AresOsintCrawler:
         self._football_data_cold_refs: List[str] = []
         self._odds_cold_refs: List[str] = []
         self._odds_events_cache: Dict[str, List[Dict[str, Any]]] = {}
+        self._manual_anchor_source_path: Optional[str] = None
+        self._manual_anchor_overrides = self._load_manual_anchor_overrides()
         self._load_provider_runtime_config()
         
         # Load aliases
@@ -161,11 +163,69 @@ class AresOsintCrawler:
         self.enable_external_odds_enrich = str(
             os.getenv("ARES_ENABLE_EXTERNAL_ODDS_ENRICH", "0")
         ).strip().lower() in {"1", "true", "yes", "on"}
+        self.mapping_max_gap_days = int(os.getenv("ARES_MATCH_MAPPING_MAX_GAP_DAYS", "10"))
 
         if not self.football_data_api_key:
             logger.info("未配置 football-data API Key，映射回退将跳过 football-data 源。")
         if self.enable_external_odds_enrich and not self.the_odds_api_key:
             logger.warning("ARES_ENABLE_EXTERNAL_ODDS_ENRICH=1 但未配置 THE_ODDS_API_KEY，赔率补采将跳过。")
+
+    def _normalize_match_english(self, english: str) -> str:
+        home, away = [part.strip() for part in str(english or "").split(" vs ", 1)] if " vs " in str(english or "") else (str(english or "").strip(), "")
+        if not home or not away:
+            return self._normalize_team_name(str(english or ""))
+        return f"{self._normalize_team_name(home)}vs{self._normalize_team_name(away)}"
+
+    def _load_manual_anchor_overrides(self) -> Dict[str, Dict[Any, Dict[str, Any]]]:
+        result: Dict[str, Dict[Any, Dict[str, Any]]] = {"by_index": {}, "by_english": {}}
+        if not self.vault_path:
+            return result
+        issue_dir = Path(self.vault_path) / "03_Match_Audits" / str(self.issue) / "03_Review_Reports"
+        candidates = [
+            issue_dir / f"UNMAPPED-ANCHORS-{self.issue}.json",
+            issue_dir / f"UNMAPPED-ANCHORS-{self.issue}.generated.json",
+        ]
+        payload = None
+        loaded_path = None
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            try:
+                payload = json.loads(candidate.read_text(encoding="utf-8"))
+                loaded_path = candidate
+                break
+            except Exception as exc:
+                logger.warning("读取手工锚点文件失败 %s: %s", candidate, exc)
+        if not isinstance(payload, dict):
+            return result
+
+        matches = payload.get("matches")
+        if not isinstance(matches, list):
+            return result
+        for item in matches:
+            if not isinstance(item, dict):
+                continue
+            idx = item.get("index")
+            if isinstance(idx, int):
+                result["by_index"][idx] = item
+            key = self._normalize_match_english(str(item.get("english") or ""))
+            if key:
+                result["by_english"][key] = item
+        if loaded_path:
+            self._manual_anchor_source_path = str(loaded_path)
+            logger.info("已加载手工锚点覆盖: %s, rows=%s", loaded_path, len(matches))
+        return result
+
+    @staticmethod
+    def _infer_anchor_mode(override: Dict[str, Any]) -> str:
+        mode = str(override.get("anchor_mode") or "").strip().lower()
+        if mode in {"smoke", "production"}:
+            return mode
+        notes = str(override.get("notes") or "").strip().lower()
+        fbref_url = str(override.get("fbref_url") or "").strip().lower()
+        if "[smoke]" in notes or fbref_url.startswith("https://anchor.local/"):
+            return "smoke"
+        return "production"
 
     def fetch_500_lottery(self) -> list:
         logger.info(f"[A端获取] 尝试从 500.com 抓取足彩期号: {self.issue}")
@@ -942,7 +1002,11 @@ class AresOsintCrawler:
                     break
                 # Understat mapped but gap suspicious => heal.
                 try:
-                    if has_understat and understat_gap_days is not None and float(understat_gap_days) > 45:
+                    if (
+                        has_understat
+                        and understat_gap_days is not None
+                        and float(understat_gap_days) > self.mapping_max_gap_days
+                    ):
                         needs_db = True
                         break
                 except Exception:
@@ -1037,6 +1101,7 @@ class AresOsintCrawler:
                 found_id, found_date, found_gap_days, found_league = self._pick_understat_id_by_time(
                     understat_candidates,
                     anchor_dt,
+                    max_gap_days=self.mapping_max_gap_days,
                 )
 
                 if not found_id:
@@ -1046,7 +1111,11 @@ class AresOsintCrawler:
                         found_fbref_date,
                         found_fbref_gap_days,
                         fbref_league,
-                    ) = self._pick_fbref_match_by_time(fbref_candidates, anchor_dt)
+                    ) = self._pick_fbref_match_by_time(
+                        fbref_candidates,
+                        anchor_dt,
+                        max_gap_days=self.mapping_max_gap_days,
+                    )
                     if fbref_league:
                         found_league = fbref_league
 
@@ -1058,7 +1127,11 @@ class AresOsintCrawler:
                         found_football_data_gap_days,
                         football_data_league,
                         found_football_data_competition,
-                    ) = self._pick_football_data_match_by_time(football_data_candidates, anchor_dt)
+                    ) = self._pick_football_data_match_by_time(
+                        football_data_candidates,
+                        anchor_dt,
+                        max_gap_days=self.mapping_max_gap_days,
+                    )
                     if football_data_league:
                         found_league = football_data_league
 
@@ -1077,6 +1150,44 @@ class AresOsintCrawler:
                 found_league = existing_match.get("league")
             else:
                 anchor_dt = current_time_dt
+
+            override = self._manual_anchor_overrides["by_index"].get(i + 1)
+            manual_anchor_mode = None
+            manual_anchor_notes = None
+            manual_anchor_applied = False
+            if not override:
+                override_key = self._normalize_match_english(f"{home_en} vs {away_en}")
+                override = self._manual_anchor_overrides["by_english"].get(override_key)
+            if override and not (found_id or found_fbref_url or found_football_data_match_id):
+                found_id = override.get("understat_id") or found_id
+                found_fbref_url = override.get("fbref_url") or found_fbref_url
+                found_football_data_match_id = override.get("football_data_match_id") or found_football_data_match_id
+                found_date = override.get("understat_date") or found_date
+                found_fbref_date = override.get("fbref_date") or found_fbref_date
+                found_football_data_date = override.get("football_data_date") or found_football_data_date
+                found_league = override.get("league") or found_league
+                manual_anchor_mode = self._infer_anchor_mode(override)
+                manual_anchor_notes = str(override.get("notes") or "").strip() or None
+                manual_anchor_applied = True
+                logger.info(
+                    "[%s/14] 应用手工锚点覆盖: %s vs %s (understat=%s fbref=%s football-data=%s)",
+                    i + 1,
+                    home_zh,
+                    away_zh,
+                    bool(found_id),
+                    bool(found_fbref_url),
+                    bool(found_football_data_match_id),
+                )
+            if not manual_anchor_applied and found_fbref_url and str(found_fbref_url).lower().startswith("https://anchor.local/"):
+                logger.info(
+                    "[%s/14] 检测到历史 smoke 锚点残留，已清空以避免误判生产映射: %s vs %s",
+                    i + 1,
+                    home_zh,
+                    away_zh,
+                )
+                found_fbref_url = None
+                found_fbref_date = None
+                found_fbref_gap_days = None
 
             mapping_source = "unmapped"
             if found_id:
@@ -1119,6 +1230,16 @@ class AresOsintCrawler:
                 existing_match["mapping_source"] = mapping_source
                 if found_league:
                     existing_match["league"] = found_league
+                if manual_anchor_applied:
+                    existing_match["manual_anchor_applied"] = True
+                    existing_match["manual_anchor_mode"] = manual_anchor_mode
+                    existing_match["manual_anchor_notes"] = manual_anchor_notes
+                    existing_match["manual_anchor_source"] = self._manual_anchor_source_path
+                else:
+                    existing_match["manual_anchor_applied"] = False
+                    existing_match["manual_anchor_mode"] = None
+                    existing_match["manual_anchor_notes"] = None
+                    existing_match["manual_anchor_source"] = None
                 if "market_odds_history" not in existing_match:
                     existing_match["market_odds_history"] = []
                 # Remove initial legacy snapshot mapping if present, just keep history clean
@@ -1193,6 +1314,10 @@ class AresOsintCrawler:
                     "football_data_competition": found_football_data_competition,
                     "mapping_source": mapping_source,
                     "league": found_league,
+                    "manual_anchor_applied": bool(manual_anchor_applied),
+                    "manual_anchor_mode": manual_anchor_mode,
+                    "manual_anchor_notes": manual_anchor_notes,
+                    "manual_anchor_source": self._manual_anchor_source_path if manual_anchor_applied else None,
                     "market_odds_history": [market_snapshot]
                 }
                 if external_odds_snapshot:

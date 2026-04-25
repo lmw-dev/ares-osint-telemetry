@@ -109,6 +109,16 @@ export ARES_VAULT_PATH="/path/to/your/Vault"
 
 ## 🚀 运行示例 (Usage)
 
+### 0. 脚本导航（建议按这个顺序）
+
+| 目标 | 脚本 | 什么时候用 |
+| --- | --- | --- |
+| 先抓当期赛程与赔率，生成派发单 | `python src/data/osint_crawler.py --issue <issue>` | 当你还没有 `dispatch_manifest.json` 时 |
+| 先做 prematch 预检总揽 | `python src/data/prematch_preflight.py --issue <issue>` | 当你要判断“直接跑全量”还是“先补档”时 |
+| 批量补 Team Archives | `python src/data/team_archive_backfill.py --issue <issue> [--intel-file ...]` | 当预检结果提示 placeholder 队档过多，或你已经整理好一批 issue 级球队情报时 |
+| 一键主流程 | `python src/data/osint_pipeline.py --issue <issue>` | 当预检通过或你确认可以继续跑时 |
+| 单场/单队情报补录 | `python src/data/intel_sweeper.py --team <team> --league <league> --url ...` | 当你已经有明确新闻源，要回填单支球队情报时 |
+
 ### 1. 赛前映射（Crawler）
 获取中国足彩期号并从海外数据库寻找比赛映射 ID。
 *(内置高级网络爬取：利用逆向工程提取了 Understat 的私有隐密接口，无需 Selenium/代理池即可无痕获取数据且避免 API-Football 等授权费)*。
@@ -118,6 +128,7 @@ python src/data/osint_crawler.py --issue 24040
 **产出物**：
 - 配置了 `ARES_VAULT_PATH`：落盘到 `$ARES_VAULT_PATH/04_RAG_Raw_Data/Cold_Data_Lake/[issue]_dispatch_manifest.json`
 - 未配置 `ARES_VAULT_PATH`：回退到 `raw_reports/[issue]_dispatch_manifest.json`
+- 如需生成 issue 总揽页，继续执行：`python src/data/prematch_preflight.py --issue <issue>`
 
 默认映射回退链路：
 - `Understat`（主源）
@@ -141,6 +152,100 @@ python src/data/osint_pipeline.py --issue 24040 --skip-postmatch
 # 跳过 crawler，只消费已有 dispatch_manifest 继续 postmatch
 python src/data/osint_pipeline.py --issue 24040 --skip-crawler
 ```
+
+### 1.6 Prematch 预检总揽（推荐先跑）
+在进入全量 prematch 前，先生成 issue 总揽页，判断是直接跑主流程，还是先补 Team Archives / 映射锚点。
+```bash
+python src/data/prematch_preflight.py --issue 24040
+```
+**产出物**：
+- `$ARES_VAULT_PATH/03_Match_Audits/{issue}/Audit-{issue}.md`
+- `$ARES_VAULT_PATH/03_Match_Audits/{issue}/Audit-{issue}-team-diagnostics.json`
+- `$ARES_VAULT_PATH/03_Match_Audits/{issue}/03_Review_Reports/TEAM-INTEL-{issue}.generated.json`
+- `$ARES_VAULT_PATH/03_Match_Audits/{issue}/03_Review_Reports/UNMAPPED-ANCHORS-{issue}.generated.json`
+
+### 1.7 批量补 Placeholder Team Archives
+当 `Audit-{issue}.md` 提示 placeholder 队档过多时，先批量把空壳档案升级成可维护模板；如果你已经整理了 issue 级球队情报，还可以直接批量把部分队档提升为 `usable`。若未手工准备 intel 文件，脚本会自动尝试读取预检生成的 `TEAM-INTEL-{issue}.generated.json`。
+```bash
+python src/data/team_archive_backfill.py --issue 24040
+```
+```bash
+python src/data/team_archive_backfill.py --issue 24040 --intel-file /path/to/TEAM-INTEL-24040.json
+```
+**产出物**：
+- 更新 `$ARES_VAULT_PATH/02_Team_Archives/` 中本期相关的 placeholder 球队档案
+- 写入 `$ARES_VAULT_PATH/03_Match_Audits/{issue}/03_Review_Reports/REVIEW-{issue}-Team_Archive_Backfill.md`
+- 自动优先读取：
+  - `$ARES_VAULT_PATH/03_Match_Audits/{issue}/03_Review_Reports/TEAM-INTEL-{issue}.json`
+  - 若不存在，则回退读取 `$ARES_VAULT_PATH/03_Match_Audits/{issue}/03_Review_Reports/TEAM-INTEL-{issue}.generated.json`
+
+### 1.8 unmapped 锚点回注（可选）
+当 `Audit-{issue}.md` 仍有大量 `unmapped`，可先编辑预检生成的锚点骨架，再重新跑 crawler 做回注：
+```bash
+# 1) 先把 generated 复制成手工版并补字段（understat_id / fbref_url / football_data_match_id 三选一即可）
+# 03_Match_Audits/{issue}/03_Review_Reports/UNMAPPED-ANCHORS-{issue}.json
+
+# 2) 重新跑 crawler，自动应用手工锚点覆盖
+python src/data/osint_crawler.py --issue 24040
+```
+手工锚点文件优先级高于 generated 骨架。
+
+如需做回归测试（不依赖真实第三方锚点），可用 smoke 注入脚本：
+```bash
+# 自动给前 3 个 unmapped 场次注入测试锚点
+python src/data/unmapped_anchor_seed.py --issue 24040 --mode smoke --allow-smoke --smoke-count 3
+
+# 只给指定场次注入测试锚点
+python src/data/unmapped_anchor_seed.py --issue 24040 --mode smoke --allow-smoke --indices 2,3,4
+
+# 清理 smoke 锚点
+python src/data/unmapped_anchor_seed.py --issue 24040 --clear-smoke
+```
+注意：
+- `unmapped_anchor_seed.py` 默认 `--mode production`，不会生成 synthetic 锚点；只有显式 `--mode smoke --allow-smoke` 才会注入测试锚点。
+- smoke 锚点仅用于流程回归，不应用于正式生产回放。`prematch_preflight.py` 会在 `Audit-{issue}.md` 中显式标注 smoke 场次。
+
+一键回归（seed -> crawler -> preflight）：
+```bash
+# smoke 回归：注入后立即跑全链路
+python src/data/prematch_regression.py --issue 24040 --mode smoke --smoke-count 3
+
+# 清理 smoke 后重跑全链路
+python src/data/prematch_regression.py --issue 24040 --mode smoke --clear-smoke
+```
+
+`--intel-file` 结构示例：
+```json
+{
+  "issue": "24040",
+  "teams": [
+    {
+      "team": "Arsenal",
+      "manager_doctrine": "High press with left-sided overloads.",
+      "market_sentiment": "Pessimistic",
+      "recent_news_summary": "Recent coverage focuses on rotation pressure and a thinner midfield base.",
+      "key_node_dependency": ["left-side progression", "rest defense"],
+      "tactical_logic": {
+        "P": "P2",
+        "Space": "V",
+        "F": "M",
+        "H": "M",
+        "Set_Piece": "N"
+      },
+      "avg_xG_last_5": 1.42,
+      "conversion_efficiency": 0.1,
+      "defensive_leakage": 0.54,
+      "actual_tactical_entropy": 0.46,
+      "bias_type": "Overestimated",
+      "prematch_focus_items": [
+        "Rest-defense exposure after fullback advance",
+        "Set-piece second-ball control"
+      ]
+    }
+  ]
+}
+```
+
 
 ### 2. 赛后遥测（Postmatch）
 执行赛后物理事实数据遥测（以西汉姆联为例）：
@@ -168,10 +273,15 @@ python src/data/osint_postmatch.py --issue 24040 --match-id 22064 --official-sco
 * **Cold Data (冷数据)**：保存结构化冷数据，同时落盘源站原始响应（赛前 `500_raw.html/json`、赛后 `understat_raw.html/json` 或 `fbref_raw.html`）到 `$ARES_VAULT_PATH/04_RAG_Raw_Data/Cold_Data_Lake/`。
 * **Hot Data (热数据)**：提取洗练后带 Frontmatter 的 Markdown 报告（含战术分析与预期进球警告），输出至 `$ARES_VAULT_PATH/03_Match_Audits/Postmatch_Telemetry/`。
 * **Team Archives (球队底座)**：`osint_pipeline.py` 默认会先按 issue 自动补齐本期球队 Markdown 档案，再由赛后流程持续更新 `$ARES_VAULT_PATH/02_Team_Archives/`（每队 `latest_postmatch.json` + `postmatch_history.jsonl`）。
+* **Team Archive Backfill**：`team_archive_backfill.py` 会按 issue 批量扫描 placeholder 队档，把默认空壳升级成统一的可维护模板；若提供 `--intel-file`（或 issue 目录下存在 `TEAM-INTEL-{issue}.json`），还会把结构化情报直接写入 frontmatter 与正文，并将满足最小实质内容的队档提升为 `archive_quality: usable`。
+* **Placeholder Backfilled 语义**：`archive_quality: placeholder_backfilled` 表示“模板已回填但内容仍低质量占位”，在 `prematch_preflight.py` 中会独立识别，不会按 `usable` 处理。
 * **Audit Router (审计路由)**：自动创建 `$ARES_VAULT_PATH/03_Match_Audits/{issue}/01~04` 结构、自动生成 prematch 骨架、自动归档重复 prematch/postmatch、自动执行 prematch 质量闸门（`draft` / `Insufficient Resilience Data` / `low confidence` / `cross-team contamination` 自动转入 `03_Review_Reports`）、按 manifest canonical 名收敛同场 prematch / rejected review 重复稿、自动更新 `00_Governance/INDEX`。
+* **Prematch Soft Gate Recovery**：`audit_router.py` 现在会保留正式生成但仅命中 `low confidence / Insufficient Resilience Data` 的 prematch，并自动清理历史上误移入 `REJECTED-*` 的软门禁存量；`draft` 与 `cross-team contamination` 仍维持硬拒收。
 * **Prematch RAG Readiness Gate**：`osint_pipeline.py` 在调用 `20-engine audit-issue` 前，会先检查 `20-engine/chromadb/chroma.sqlite3` 的文档量和 issue 球队覆盖率。默认要求 issue 球队 coverage ratio 至少 `75%`，且缺失球队不超过 `4` 支；若 RAG 库明显供给不足，将直接阻断 prematch，写入 `REVIEW-{issue}-Prematch_Blocker.md`，避免链路“跑完再整批 REJECTED”。
+* **Prematch Preflight Overview**：`prematch_preflight.py` 会单独生成 `Audit-{issue}.md`，并区分 `usable / placeholder / placeholder_backfilled / missing` 四类 Team Archive 状态；总览页中的摘要统计、比赛看板、球队诊断、风险场次会保持一致，作为 agent 是否继续主流程的前置判断。
 * **Prematch Immediate Closeout**：`osint_pipeline.py` 在 `20-engine audit-issue` 完成后，会立刻再次执行 `audit_router` 收口，不再等 postmatch 收尾后才搬运低质量 prematch。
 * **Engine Direct-Run Safety Net**：`20-ares-v4-engine/main.py audit-issue` 在直跑写入 prematch 后，也会尝试回调同目录下的 `21-ares-osint-telemetry/src/data/audit_router.py`，避免 direct-run 绕过质量闸门。
+* **Postmatch Official-Score Gate**：`osint_pipeline.py --issue <issue>` 只有在 dispatch manifest 已具备足够的 `official_score/result_score` 后才会继续 batch postmatch；若官方比分尚未入库，则直接跳过 postmatch，避免把赛前/串期映射误落到 `Postmatch_Telemetry/`。
 * **批量模式命名规则**：每场单独输出为 `{issue}_{match_id}_postmatch.md`，避免 14 场互相覆盖。
 * **数据源审计字段**：YAML 中新增 `data_source` 与 `data_source_ref`，可追溯本场来自 Understat 还是 FBref。
 

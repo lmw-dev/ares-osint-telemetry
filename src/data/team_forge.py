@@ -4,10 +4,11 @@ import os
 import re
 import json
 from pathlib import Path
-from typing import Dict, Any, Iterable, Optional, Tuple
+from typing import Dict, Any, Iterable, List, Optional, Tuple
 
 import yaml
 from team_archive_paths import candidate_team_filenames, league_archive_dir
+from team_archive_paths import canonical_team_filename
 
 
 logging.basicConfig(
@@ -23,6 +24,10 @@ DEFAULT_FRONTMATTER: Dict[str, Any] = {
         "market_sentiment": "Neutral",
         "key_node_dependency": [],
         "recent_news_summary": "",
+    },
+    "market_osint": {
+        "market_external_notes": [],
+        "youtube_tactical_briefs": [],
     },
     "physical_reality": {
         "avg_xG_last_5": 1.0,
@@ -42,6 +47,9 @@ DEFAULT_BODY = (
     "## Team Notes\n\n"
     "- Baseline profile initialized by `team_forge.py`.\n"
     "- Add tactical observations, injury patterns, and review snapshots below.\n"
+    "\n## Market & YouTube Intel\n\n"
+    "- Market external notes: pending.\n"
+    "- YouTube tactical briefs: pending.\n"
 )
 
 _INVALID_SEGMENT_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1F]+')
@@ -63,6 +71,8 @@ TEAM_LEAGUE_HINTS: Dict[str, str] = {
     "kaiserslautern": "Bundesliga_2",
     "eintrachtbraunschweig": "Bundesliga_2",
     "atalanta": "Serie_A",
+    "inter": "Serie_A",
+    "torino": "Serie_A",
     "lazio": "Serie_A",
     "napoli": "Serie_A",
     "cremonese": "Serie_A",
@@ -79,6 +89,10 @@ TEAM_LEAGUE_HINTS: Dict[str, str] = {
     "realoviedo": "La_liga",
     "villarreal": "La_liga",
     "parissaintgermain": "Ligue_1",
+    "lehavre": "Ligue_1",
+    "metz": "Ligue_1",
+    "parisfc": "Ligue_1",
+    "lille": "Ligue_1",
     "nantes": "Ligue_1",
     "brest": "Ligue_1",
     "lens": "Ligue_1",
@@ -243,6 +257,7 @@ def parse_args() -> argparse.Namespace:
 def build_archive_path(vault_root: Path, team: str, league: str) -> Path:
     team_name = sanitize_segment(team, "team")
     league_name = sanitize_segment(league, "league")
+    canonical_name = canonical_team_filename(team_name)
     candidates = candidate_team_filenames(team_name)
     seen = set()
     archive_root = vault_root / "02_Team_Archives"
@@ -273,11 +288,52 @@ def build_archive_path(vault_root: Path, team: str, league: str) -> Path:
         existing = archive_dir / f"{candidate}.md"
         if existing.exists():
             return existing
-    return archive_dir / f"{team_name}.md"
+    return archive_dir / f"{canonical_name}.md"
 
 
 def ensure_team_archive(vault_root: Path, *, team: str, league: str) -> Path:
-    target_path = build_archive_path(vault_root, team, league)
+    team_name = sanitize_segment(team, "team")
+    league_name = sanitize_segment(league, "league")
+    archive_root = vault_root / "02_Team_Archives"
+    archive_dir = league_archive_dir(archive_root, league_name)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    canonical_name = canonical_team_filename(team_name)
+    canonical_path = archive_dir / f"{canonical_name}.md"
+    candidates = candidate_team_filenames(team_name)
+
+    existing: List[Path] = []
+    seen = set()
+    for candidate in [canonical_name, *candidates, team_name]:
+        txt = str(candidate).strip()
+        if not txt or txt in seen:
+            continue
+        seen.add(txt)
+        path = archive_dir / f"{txt}.md"
+        if path.exists():
+            existing.append(path)
+
+    target_path = canonical_path
+    if not canonical_path.exists() and existing:
+        # Prefer keeping the richest existing content when canonical file absent.
+        best = max(existing, key=lambda p: p.stat().st_size)
+        if best != canonical_path:
+            best.replace(canonical_path)
+        target_path = canonical_path
+    elif canonical_path.exists():
+        target_path = canonical_path
+
+    # Move duplicate alias files to archive to avoid future split-brain updates.
+    alias_archive_root = archive_root / "99_Alias_Archive" / "auto_name_cleanup" / archive_dir.name
+    for path in existing:
+        if path == target_path or not path.exists():
+            continue
+        alias_archive_root.mkdir(parents=True, exist_ok=True)
+        archived = alias_archive_root / path.name
+        if archived.exists():
+            archived.unlink()
+        path.replace(archived)
+
     frontmatter, body = read_existing_content(target_path)
     merged_frontmatter = merge_frontmatter_defaults(frontmatter, DEFAULT_FRONTMATTER)
     markdown_content = build_markdown(merged_frontmatter, body)

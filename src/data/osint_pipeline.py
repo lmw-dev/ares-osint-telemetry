@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unicodedata
 from datetime import datetime
@@ -749,6 +750,59 @@ def run_issue_team_forge(*, issue: str, base_dir: Path) -> Dict[str, int]:
     return {"created_or_updated": created_or_updated, "failed": failed}
 
 
+def run_issue_team_archive_backfill(
+    *,
+    issue: str,
+    base_dir: Path,
+    intel_file: Optional[str] = None,
+) -> Dict[str, int]:
+    """在 prematch 前统一回填 issue 球队档案（可选注入 TEAM-INTEL 文件）。"""
+    script_path = base_dir / "src" / "data" / "team_archive_backfill.py"
+    if not script_path.exists():
+        logger.warning("找不到 team_archive_backfill.py，跳过队档回填。")
+        return {"backfilled": 0, "enriched": 0, "skipped": 1, "failed": 1}
+
+    cmd = [sys.executable, str(script_path), "--issue", str(issue)]
+    if intel_file:
+        cmd.extend(["--intel-file", str(Path(intel_file).expanduser())])
+
+    result = subprocess.run(
+        cmd,
+        cwd=base_dir,
+        env=os.environ.copy(),
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        logger.warning(
+            "Team Archive 回填失败 issue=%s exit=%s stdout=%s stderr=%s",
+            issue,
+            result.returncode,
+            (result.stdout or "").strip(),
+            (result.stderr or "").strip(),
+        )
+        return {"backfilled": 0, "enriched": 0, "skipped": 0, "failed": 1}
+
+    summary = {"backfilled": 0, "enriched": 0, "skipped": 0, "failed": 0}
+    log_text = f"{result.stdout}\n{result.stderr}"
+    m = re.search(
+        r"backfilled=(\d+), enriched=(\d+), skipped=(\d+)",
+        log_text,
+    )
+    if m:
+        summary["backfilled"] = int(m.group(1))
+        summary["enriched"] = int(m.group(2))
+        summary["skipped"] = int(m.group(3))
+    logger.info(
+        "Team Archive 回填完成 issue=%s, backfilled=%s, enriched=%s, skipped=%s",
+        issue,
+        summary["backfilled"],
+        summary["enriched"],
+        summary["skipped"],
+    )
+    return summary
+
+
 def sync_issue_team_archives_to_rag(
     *,
     issue: str,
@@ -997,6 +1051,8 @@ if __name__ == "__main__":
     parser.add_argument("--skip-prematch", action="store_true", help="跳过 Prematch 推演，仅跑 crawler/路由/postmatch")
     parser.add_argument("--skip-postmatch", action="store_true", help="只跑 crawler 与目录路由，不跑赛后复盘")
     parser.add_argument("--skip-team-forge", action="store_true", help="跳过 Team Archives 批量补档")
+    parser.add_argument("--skip-team-backfill", action="store_true", help="跳过 prematch 前 Team Archive 回填")
+    parser.add_argument("--team-intel-file", required=False, help="prematch 前回填使用的 TEAM-INTEL JSON 文件")
     parser.add_argument(
         "--sync-team-rag-only",
         action="store_true",
@@ -1052,6 +1108,15 @@ if __name__ == "__main__":
             run_issue_team_forge(issue=args.issue, base_dir=base_dir)
         except Exception as e:
             logger.warning("Team Forge 批量补档失败（不影响主流程）: %s", e)
+    if not args.skip_team_backfill and ((not args.skip_prematch) or args.sync_team_rag_only):
+        try:
+            run_issue_team_archive_backfill(
+                issue=args.issue,
+                base_dir=base_dir,
+                intel_file=args.team_intel_file,
+            )
+        except Exception as e:
+            logger.warning("Team Archive 回填失败（不影响主流程）: %s", e)
     if ((not args.skip_prematch) or args.sync_team_rag_only) and engine_dir is not None:
         try:
             sync_issue_team_archives_to_rag(

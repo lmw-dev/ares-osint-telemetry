@@ -381,6 +381,9 @@ def build_preflight_report(
         home, away = _split_match_english(english)
         issues: List[str] = []
         mapping_source = str(match.get("mapping_source") or "unknown")
+        titan_prematch = match.get("titan_prematch") if isinstance(match.get("titan_prematch"), dict) else {}
+        titan_signals = titan_prematch.get("signals") if isinstance(titan_prematch.get("signals"), dict) else {}
+        titan_coverage = str(titan_signals.get("coverage") or "none").strip().lower() or "none"
         if mapping_source == "unmapped":
             issues.append("unmapped_fixture")
         if _is_smoke_manual_anchor(match):
@@ -413,6 +416,9 @@ def build_preflight_report(
             "understat_id": match.get("understat_id"),
             "fbref_url": match.get("fbref_url"),
             "football_data_match_id": match.get("football_data_match_id"),
+            "titan_prematch_coverage": titan_coverage,
+            "titan_prematch_ok_pages": int(titan_signals.get("ok_page_count") or 0),
+            "titan_prematch_total_pages": int(titan_signals.get("total_page_count") or 0),
             "manual_anchor_applied": bool(match.get("manual_anchor_applied")),
             "manual_anchor_mode": str(match.get("manual_anchor_mode") or "").strip().lower() or None,
             "manual_anchor_notes": str(match.get("manual_anchor_notes") or "").strip(),
@@ -434,6 +440,13 @@ def build_preflight_report(
     total_teams = len(team_records)
     unmapped_matches = mapping_counts.get("unmapped", 0)
     smoke_anchor_matches = sum(1 for row in matches if "smoke_anchor_fixture" in row.get("issues", []))
+    titan_prematch_available_matches = sum(
+        1 for row in matches if str(row.get("titan_prematch_coverage") or "none") in {"full", "partial"}
+    )
+    titan_prematch_full_matches = sum(
+        1 for row in matches if str(row.get("titan_prematch_coverage") or "none") == "full"
+    )
+    titan_prematch_missing_matches = max(0, total_matches - titan_prematch_available_matches)
 
     status = "READY"
     recommended_action = "可以进入 prematch 主流程。"
@@ -458,6 +471,7 @@ def build_preflight_report(
         f"manifest 已落盘：`{manifest_path}`",
         f"本期共 `{total_matches}` 场，`mapping_source=unmapped` 有 `{unmapped_matches}` 场。",
         f"本期使用 smoke 锚点的比赛有 `{smoke_anchor_matches}` 场（仅回归测试，不视为生产可用映射）。",
+        f"Titan prematch 覆盖 `{titan_prematch_available_matches}/{total_matches}` 场（full `{titan_prematch_full_matches}` 场，missing `{titan_prematch_missing_matches}` 场）。",
         f"本期球队共 `{total_teams}` 支：usable `{usable_teams}`、placeholder `{placeholder_teams}`、placeholder_backfilled `{placeholder_backfilled_teams}`、missing `{missing_teams}`。",
         f"低质量模板队档（placeholder + placeholder_backfilled）共 `{low_quality_teams}` 支。",
         f"需要补强的球队共 `{enrichment_needed_teams}` 支（含结构缺口、过期时间戳、默认物理值、缺新闻摘要等）。",
@@ -487,6 +501,9 @@ def build_preflight_report(
         "thin_rag_teams": thin_rag_teams,
         "unmapped_matches": unmapped_matches,
         "smoke_anchor_matches": smoke_anchor_matches,
+        "titan_prematch_available_matches": titan_prematch_available_matches,
+        "titan_prematch_full_matches": titan_prematch_full_matches,
+        "titan_prematch_missing_matches": titan_prematch_missing_matches,
         "total_matches": total_matches,
         "total_teams": total_teams,
     }
@@ -537,6 +554,9 @@ def render_markdown(report: Dict[str, Any]) -> str:
     lines.append(f"| 比赛总数 | `{report['total_matches']}` |")
     lines.append(f"| `unmapped` 场次 | `{report['unmapped_matches']}` |")
     lines.append(f"| `smoke` 锚点场次 | `{report['smoke_anchor_matches']}` |")
+    lines.append(f"| Titan Prematch 覆盖场次 | `{report['titan_prematch_available_matches']}` |")
+    lines.append(f"| Titan Prematch Full 场次 | `{report['titan_prematch_full_matches']}` |")
+    lines.append(f"| Titan Prematch Missing 场次 | `{report['titan_prematch_missing_matches']}` |")
     lines.append(f"| 球队总数 | `{report['total_teams']}` |")
     lines.append(f"| Usable 队档 | `{report['usable_team_archives']}` |")
     lines.append(f"| Placeholder 队档 | `{report['placeholder_team_archives']}` |")
@@ -577,8 +597,8 @@ def render_markdown(report: Dict[str, Any]) -> str:
 
     lines.append("## 6. 比赛看板")
     lines.append("")
-    lines.append("| 场次 | 对阵 | 联赛 | Mapping | 外部锚点 | 风险信号 |")
-    lines.append("| --- | --- | --- | --- | --- | --- |")
+    lines.append("| 场次 | 对阵 | 联赛 | Mapping | Titan Prematch | 外部锚点 | 风险信号 |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- |")
     for match in report["matches"]:
         anchors: List[str] = []
         if match["understat_id"]:
@@ -590,12 +610,13 @@ def render_markdown(report: Dict[str, Any]) -> str:
         if str(match.get("manual_anchor_mode") or "").strip().lower() == "smoke":
             anchors.append("manual=smoke")
         anchor_text = "<br>".join(anchors) if anchors else "无"
+        titan_text = f"{match.get('titan_prematch_coverage', 'none')} ({match.get('titan_prematch_ok_pages', 0)}/{match.get('titan_prematch_total_pages', 0)})"
         issue_text = "<br>".join(match["issues"]) if match["issues"] else "无"
         lines.append(
-            f"| `{match['index']:02d}` | `{match['english']}` | `{match['league'] or 'unknown'}` | `{match['mapping_source']}` | {anchor_text} | {issue_text} |"
+            f"| `{match['index']:02d}` | `{match['english']}` | `{match['league'] or 'unknown'}` | `{match['mapping_source']}` | `{titan_text}` | {anchor_text} | {issue_text} |"
         )
     if not report["matches"]:
-        lines.append("| `--` | 无 | 无 | 无 | 无 | 无 |")
+        lines.append("| `--` | 无 | 无 | 无 | 无 | 无 | 无 |")
     lines.append("")
 
     lines.append("## 7. 球队档案诊断")
@@ -710,6 +731,7 @@ def write_team_diagnostics(vault_root: Path, issue: str, report: Dict[str, Any])
 def _extract_team_intel_snapshot(team: Dict[str, Any]) -> Dict[str, Any]:
     frontmatter = team.get("frontmatter") or {}
     intel_base = frontmatter.get("intel_base") if isinstance(frontmatter.get("intel_base"), dict) else {}
+    market_osint = frontmatter.get("market_osint") if isinstance(frontmatter.get("market_osint"), dict) else {}
     tactical_logic = frontmatter.get("tactical_logic") if isinstance(frontmatter.get("tactical_logic"), dict) else {}
     physical_reality = (
         frontmatter.get("physical_reality") if isinstance(frontmatter.get("physical_reality"), dict) else {}
@@ -737,6 +759,12 @@ def _extract_team_intel_snapshot(team: Dict[str, Any]) -> Dict[str, Any]:
         "bias_type": str(reality_gap.get("bias_type") or "").strip(),
         "S_dynamic_modifier": reality_gap.get("S_dynamic_modifier"),
         "prematch_focus_items": [],
+        "market_external_notes": market_osint.get("market_external_notes")
+        if isinstance(market_osint.get("market_external_notes"), list)
+        else [],
+        "youtube_tactical_briefs": market_osint.get("youtube_tactical_briefs")
+        if isinstance(market_osint.get("youtube_tactical_briefs"), list)
+        else [],
     }
     return payload
 

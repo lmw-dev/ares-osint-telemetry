@@ -118,6 +118,7 @@ export ARES_VAULT_PATH="/path/to/your/Vault"
 | 批量补 Team Archives | `python src/data/team_archive_backfill.py --issue <issue> [--intel-file ...]` | 当预检结果提示 placeholder 队档过多，或你已经整理好一批 issue 级球队情报时 |
 | 生成 issue 最终收口结论 | `python src/data/prematch_synthesis.py --issue <issue>` | 当 prematch 已跑完，准备输出最终执行结论时 |
 | 赛后命中复盘（推演 vs 赛果） | `python src/data/prematch_outcome_review.py --issue <issue>` | 当官方比分入库后，评估 prematch 推演命中率 |
+| 赛后综合复盘（物理遥测聚合） | `python src/data/postmatch_synthesis.py --issue <issue>` | 当 postmatch 跑完后，输出“系统调整 + 分组复盘 + 队伍评级建议” |
 | 一键主流程 | `python src/data/osint_pipeline.py --issue <issue>` | 当预检通过或你确认可以继续跑时 |
 | 单场/单队情报补录 | `python src/data/intel_sweeper.py --team <team> --league <league> --url ...` | 当你已经有明确新闻源，要回填单支球队情报时 |
 
@@ -156,6 +157,12 @@ python src/data/osint_pipeline.py --issue 24040 --skip-crawler
 
 # 关闭按场次输入质量门槛（默认已开启）
 python src/data/osint_pipeline.py --issue 24040 --no-prematch-ready-gate
+
+# 跳过 prematch 前 Team Archive 回填（默认会自动执行）
+python src/data/osint_pipeline.py --issue 24040 --skip-team-backfill
+
+# 指定 prematch 前回填使用的 TEAM-INTEL 文件
+python src/data/osint_pipeline.py --issue 24040 --team-intel-file /path/to/TEAM-INTEL-24040.json
 ```
 
 ### 1.6 Prematch 预检总揽（推荐先跑）
@@ -259,6 +266,18 @@ python src/data/prematch_outcome_review.py --issue 24040 --top5-only
 - `$ARES_VAULT_PATH/03_Match_Audits/{issue}/03_Review_Reports/REVIEW-{issue}-Prematch_Outcome.md`
 - `$ARES_VAULT_PATH/03_Match_Audits/{issue}/03_Review_Reports/REVIEW-{issue}-Prematch_Outcome-Top5.md`
 
+### 5.3 赛后综合复盘（Postmatch Synthesis）
+```bash
+python src/data/postmatch_synthesis.py --issue 24040
+
+# 仅五大联赛口径
+python src/data/postmatch_synthesis.py --issue 24040 --top5-only
+```
+
+产物：
+- `$ARES_VAULT_PATH/03_Match_Audits/{issue}/02_Special_Analyses/FINAL-{issue}-Postmatch_Synthesis.md`
+- `$ARES_VAULT_PATH/03_Match_Audits/{issue}/02_Special_Analyses/FINAL-{issue}-Postmatch_Synthesis.json`
+
 `--intel-file` 结构示例：
 ```json
 {
@@ -281,15 +300,24 @@ python src/data/prematch_outcome_review.py --issue 24040 --top5-only
       "conversion_efficiency": 0.1,
       "defensive_leakage": 0.54,
       "actual_tactical_entropy": 0.46,
-      "bias_type": "Overestimated",
+      "bias_type": "Fame_Trap",
+      "S_dynamic_modifier": 0.12,
       "prematch_focus_items": [
         "Rest-defense exposure after fullback advance",
         "Set-piece second-ball control"
+      ],
+      "market_external_notes": [
+        "盘口观点：主胜热度偏高，交易量集中于单边（2026-04-26）"
+      ],
+      "youtube_tactical_briefs": [
+        "频道A：中场二点球保护下滑，建议关注对手反击二次进攻（12:30-14:05）"
       ]
     }
   ]
 }
 ```
+字段规范（含市面/YouTube字段）见：
+- [`docs/agents/team_intel_schema_v2_2026-04-26.md`](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/team_intel_schema_v2_2026-04-26.md)
 
 
 ### 2. 赛后遥测（Postmatch）
@@ -318,13 +346,14 @@ python src/data/osint_postmatch.py --issue 24040 --match-id 22064 --official-sco
 * **Cold Data (冷数据)**：保存结构化冷数据，同时落盘源站原始响应（赛前 `500_raw.html/json`、赛后 `understat_raw.html/json` 或 `fbref_raw.html`）到 `$ARES_VAULT_PATH/04_RAG_Raw_Data/Cold_Data_Lake/`。
 * **Hot Data (热数据)**：提取洗练后带 Frontmatter 的 Markdown 报告（含战术分析与预期进球警告），输出至 `$ARES_VAULT_PATH/03_Match_Audits/{issue}/04_Postmatch_Telemetry/`。
 * **Team Archives (球队底座)**：`osint_pipeline.py` 默认会先按 issue 自动补齐本期球队 Markdown 档案，再由赛后流程持续更新 `$ARES_VAULT_PATH/02_Team_Archives/`（每队 `latest_postmatch.json` + `postmatch_history.jsonl`）。
-* **Team Archive Backfill**：`team_archive_backfill.py` 会按 issue 批量扫描 placeholder 队档，把默认空壳升级成统一的可维护模板；若提供 `--intel-file`（或 issue 目录下存在 `TEAM-INTEL-{issue}.json`），还会把结构化情报直接写入 frontmatter 与正文，并将满足最小实质内容的队档提升为 `archive_quality: usable`。
+* **Team Archive Backfill**：`team_archive_backfill.py` 会按 issue 批量扫描 placeholder 队档，把默认空壳升级成统一的可维护模板；若提供 `--intel-file`（或 issue 目录下存在 `TEAM-INTEL-{issue}.json`），还会把结构化情报直接写入 frontmatter 与正文，并将满足最小实质内容的队档提升为 `archive_quality: usable`。模板中已预留“市面深度情报（外部观点）”章节，可沉淀后续 YouTube 大V技战术解读。
 * **Placeholder Backfilled 语义**：`archive_quality: placeholder_backfilled` 表示“模板已回填但内容仍低质量占位”，在 `prematch_preflight.py` 中会独立识别，不会按 `usable` 处理。
 * **Audit Router (审计路由)**：自动创建 `$ARES_VAULT_PATH/03_Match_Audits/{issue}/01~04` 结构、自动生成 prematch 骨架、自动归档重复 prematch/postmatch、自动执行 prematch 质量闸门（`draft` / `Insufficient Resilience Data` / `low confidence` / `cross-team contamination` 自动转入 `03_Review_Reports`）、按 manifest canonical 名收敛同场 prematch / rejected review 重复稿、自动更新 `00_Governance/INDEX`。
 * **Prematch Soft Gate Recovery**：`audit_router.py` 现在会保留正式生成但仅命中 `low confidence / Insufficient Resilience Data` 的 prematch，并自动清理历史上误移入 `REJECTED-*` 的软门禁存量；`draft` 与 `cross-team contamination` 仍维持硬拒收。
 * **Prematch RAG Readiness Gate**：`osint_pipeline.py` 在调用 `20-engine audit-issue` 前，会先检查 `20-engine/chromadb/chroma.sqlite3` 的文档量和 issue 球队覆盖率。默认要求 issue 球队 coverage ratio 至少 `75%`，且缺失球队不超过 `4` 支；若 RAG 库明显供给不足，将直接阻断 prematch，写入 `REVIEW-{issue}-Prematch_Blocker.md`，避免链路“跑完再整批 REJECTED”。
 * **Prematch Preflight Overview**：`prematch_preflight.py` 会单独生成 `Audit-{issue}.md`，并区分 `usable / placeholder / placeholder_backfilled / missing` 四类 Team Archive 状态；总览页中的摘要统计、比赛看板、球队诊断、风险场次会保持一致，作为 agent 是否继续主流程的前置判断。
 * **Prematch Immediate Closeout**：`osint_pipeline.py` 在 `20-engine audit-issue` 完成后，会立刻再次执行 `audit_router` 收口，不再等 postmatch 收尾后才搬运低质量 prematch。
+* **Prematch Archive Refresh**：`osint_pipeline.py` 在 prematch 前会自动执行一次 Team Archive 刷新链路（`team_forge -> team_archive_backfill -> issue team RAG sync`）；可用 `--skip-team-backfill` 关闭回填步骤，或用 `--team-intel-file` 注入指定情报文件。
 * **Engine Direct-Run Safety Net**：`20-ares-v4-engine/main.py audit-issue` 在直跑写入 prematch 后，也会尝试回调同目录下的 `21-ares-osint-telemetry/src/data/audit_router.py`，避免 direct-run 绕过质量闸门。
 * **Postmatch Official-Score Gate**：`osint_pipeline.py --issue <issue>` 只有在 dispatch manifest 已具备足够的 `official_score/result_score` 后才会继续 batch postmatch；若官方比分尚未入库，则直接跳过 postmatch，避免把赛前/串期映射误落到 `04_Postmatch_Telemetry/`。
 * **批量模式命名规则**：每场单独输出为 `{issue}_{match_id}_postmatch.md`，避免 14 场互相覆盖。

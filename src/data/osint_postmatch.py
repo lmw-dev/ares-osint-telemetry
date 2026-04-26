@@ -3,6 +3,7 @@ import json
 import logging
 import argparse
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
@@ -101,18 +102,23 @@ class MatchTelemetryPipeline:
             self.vault_path = normalized_vault_path
         if self.vault_path:
             vault_root = Path(self.vault_path)
+            self.issue_audit_dir = vault_root / "03_Match_Audits" / str(self.issue)
+            self.issue_postmatch_dir = self.issue_audit_dir / "04_Postmatch_Telemetry"
             self.cold_data_dir = vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake"
-            self.hot_reports_dir = vault_root / "03_Match_Audits" / "Postmatch_Telemetry"
+            self.hot_reports_dir = self.issue_postmatch_dir
             self.team_archives_dir = vault_root / "02_Team_Archives"
             self.team_archives_runtime_dir = self.team_archives_dir / "_Postmatch_Runtime"
         else:
             logger.warning("未检测到环境变量 ARES_VAULT_PATH，将降级写入项目目录。")
+            self.issue_audit_dir = self.base_dir / "draft_audits" / str(self.issue)
+            self.issue_postmatch_dir = self.issue_audit_dir / "04_Postmatch_Telemetry"
             self.cold_data_dir = self.base_dir / "raw_reports"
-            self.hot_reports_dir = self.base_dir / "draft_reports"
+            self.hot_reports_dir = self.issue_postmatch_dir
             self.team_archives_dir = self.base_dir / "02_Team_Archives"
             self.team_archives_runtime_dir = self.team_archives_dir / "_Postmatch_Runtime"
 
         self.cold_data_dir.mkdir(parents=True, exist_ok=True)
+        self.issue_audit_dir.mkdir(parents=True, exist_ok=True)
         self.hot_reports_dir.mkdir(parents=True, exist_ok=True)
         self.team_archives_dir.mkdir(parents=True, exist_ok=True)
         self.team_archives_runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -1063,6 +1069,42 @@ class MatchTelemetryPipeline:
         logger.info(f"官方比分校验通过: {actual_score}")
         return True
 
+    @staticmethod
+    def quarantine_stale_issue_report(
+        *,
+        vault_path: Optional[str],
+        issue: str,
+        match_id: str,
+        reason: str,
+    ) -> Optional[Path]:
+        if not vault_path:
+            return None
+
+        vault_root = Path(vault_path)
+        postmatch_name = f"{issue}_{match_id}_postmatch.md"
+        issue_src = vault_root / "03_Match_Audits" / issue / "04_Postmatch_Telemetry" / postmatch_name
+        legacy_src = vault_root / "03_Match_Audits" / "Postmatch_Telemetry" / postmatch_name
+        src = issue_src if issue_src.exists() else legacy_src
+        if not src.exists():
+            return None
+
+        legacy_dir = vault_root / "03_Match_Audits" / issue / "04_Postmatch_Legacy"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        dst = legacy_dir / f"STALE-{postmatch_name}"
+
+        try:
+            shutil.move(str(src), str(dst))
+            logger.warning(
+                "已隔离疑似串期旧报告: %s -> %s (reason=%s)",
+                src,
+                dst,
+                reason,
+            )
+            return dst
+        except Exception as e:
+            logger.warning("隔离疑似串期旧报告失败 %s: %s", src, e)
+            return None
+
     def calculate_variance(self, hot_data: Dict[str, Any]) -> bool:
         """
         阶段三：逻辑运算 (Enhanced Variance Flag)
@@ -1278,6 +1320,17 @@ if __name__ == "__main__":
                             issue_window_start.strftime("%Y-%m-%d %H:%M:%S"),
                             issue_window_end.strftime("%Y-%m-%d %H:%M:%S"),
                         )
+                        if uid:
+                            MatchTelemetryPipeline.quarantine_stale_issue_report(
+                                vault_path=vault_path,
+                                issue=args.issue,
+                                match_id=str(uid),
+                                reason=(
+                                    f"expected_date={expected_dt.strftime('%Y-%m-%d %H:%M:%S')} "
+                                    f"outside_issue_window={issue_window_start.strftime('%Y-%m-%d %H:%M:%S')}~"
+                                    f"{issue_window_end.strftime('%Y-%m-%d %H:%M:%S')}"
+                                ),
+                            )
                         continue
                 if uid:
                     logger.info(f"==> 正在批量复盘: {match['chinese']} (Ref: {uid})")

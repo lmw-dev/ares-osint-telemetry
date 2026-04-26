@@ -316,7 +316,7 @@ python src/data/osint_postmatch.py --issue 24040 --match-id 22064 --official-sco
 
 **档案管道说明：**
 * **Cold Data (冷数据)**：保存结构化冷数据，同时落盘源站原始响应（赛前 `500_raw.html/json`、赛后 `understat_raw.html/json` 或 `fbref_raw.html`）到 `$ARES_VAULT_PATH/04_RAG_Raw_Data/Cold_Data_Lake/`。
-* **Hot Data (热数据)**：提取洗练后带 Frontmatter 的 Markdown 报告（含战术分析与预期进球警告），输出至 `$ARES_VAULT_PATH/03_Match_Audits/Postmatch_Telemetry/`。
+* **Hot Data (热数据)**：提取洗练后带 Frontmatter 的 Markdown 报告（含战术分析与预期进球警告），输出至 `$ARES_VAULT_PATH/03_Match_Audits/{issue}/04_Postmatch_Telemetry/`。
 * **Team Archives (球队底座)**：`osint_pipeline.py` 默认会先按 issue 自动补齐本期球队 Markdown 档案，再由赛后流程持续更新 `$ARES_VAULT_PATH/02_Team_Archives/`（每队 `latest_postmatch.json` + `postmatch_history.jsonl`）。
 * **Team Archive Backfill**：`team_archive_backfill.py` 会按 issue 批量扫描 placeholder 队档，把默认空壳升级成统一的可维护模板；若提供 `--intel-file`（或 issue 目录下存在 `TEAM-INTEL-{issue}.json`），还会把结构化情报直接写入 frontmatter 与正文，并将满足最小实质内容的队档提升为 `archive_quality: usable`。
 * **Placeholder Backfilled 语义**：`archive_quality: placeholder_backfilled` 表示“模板已回填但内容仍低质量占位”，在 `prematch_preflight.py` 中会独立识别，不会按 `usable` 处理。
@@ -326,7 +326,7 @@ python src/data/osint_postmatch.py --issue 24040 --match-id 22064 --official-sco
 * **Prematch Preflight Overview**：`prematch_preflight.py` 会单独生成 `Audit-{issue}.md`，并区分 `usable / placeholder / placeholder_backfilled / missing` 四类 Team Archive 状态；总览页中的摘要统计、比赛看板、球队诊断、风险场次会保持一致，作为 agent 是否继续主流程的前置判断。
 * **Prematch Immediate Closeout**：`osint_pipeline.py` 在 `20-engine audit-issue` 完成后，会立刻再次执行 `audit_router` 收口，不再等 postmatch 收尾后才搬运低质量 prematch。
 * **Engine Direct-Run Safety Net**：`20-ares-v4-engine/main.py audit-issue` 在直跑写入 prematch 后，也会尝试回调同目录下的 `21-ares-osint-telemetry/src/data/audit_router.py`，避免 direct-run 绕过质量闸门。
-* **Postmatch Official-Score Gate**：`osint_pipeline.py --issue <issue>` 只有在 dispatch manifest 已具备足够的 `official_score/result_score` 后才会继续 batch postmatch；若官方比分尚未入库，则直接跳过 postmatch，避免把赛前/串期映射误落到 `Postmatch_Telemetry/`。
+* **Postmatch Official-Score Gate**：`osint_pipeline.py --issue <issue>` 只有在 dispatch manifest 已具备足够的 `official_score/result_score` 后才会继续 batch postmatch；若官方比分尚未入库，则直接跳过 postmatch，避免把赛前/串期映射误落到 `04_Postmatch_Telemetry/`。
 * **批量模式命名规则**：每场单独输出为 `{issue}_{match_id}_postmatch.md`，避免 14 场互相覆盖。
 * **数据源审计字段**：YAML 中新增 `data_source` 与 `data_source_ref`，可追溯本场来自 Understat 还是 FBref。
 

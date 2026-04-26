@@ -298,7 +298,10 @@ def cleanup_issue_postmatch(issue: str, vault_path: Optional[str] = None) -> Dic
 
     router = AuditRouter(base_dir=Path(__file__).resolve().parents[2], vault_path=resolved_vault)
     issue_dirs = router._ensure_issue_dirs(issue)
-    postmatch_dir = vault_root / "03_Match_Audits" / "Postmatch_Telemetry"
+    postmatch_dir = issue_dirs["issue_dir"] / "04_Postmatch_Telemetry"
+    legacy_postmatch_dir = vault_root / "03_Match_Audits" / "Postmatch_Telemetry"
+    if not postmatch_dir.exists() and legacy_postmatch_dir.exists():
+        postmatch_dir = legacy_postmatch_dir
     before_main = sorted(path.name for path in postmatch_dir.glob(f"{issue}_*_postmatch.md"))
     legacy_before = {
         path.name for path in issue_dirs["postmatch_legacy_dir"].glob(f"*{issue}_*_postmatch.md")

@@ -54,7 +54,7 @@ class AuditRouter:
         self.enabled = bool(configured_vault_path)
         self.vault_root = Path(configured_vault_path) if configured_vault_path else None
         self.audit_root = (self.vault_root / "03_Match_Audits") if self.vault_root else None
-        self.postmatch_dir = (self.audit_root / "Postmatch_Telemetry") if self.audit_root else None
+        self.postmatch_legacy_dir = (self.audit_root / "Postmatch_Telemetry") if self.audit_root else None
         self.governance_dir = (self.audit_root / "00_Governance") if self.audit_root else None
         self.adhoc_dir = (self.audit_root / "02_Adhoc_Team_Audits") if self.audit_root else None
         self.legacy_dir = (self.audit_root / "99_Legacy_Archive") if self.audit_root else None
@@ -152,7 +152,7 @@ class AuditRouter:
     def _ensure_core_dirs(self) -> None:
         if not self.enabled:
             return
-        for d in [self.audit_root, self.postmatch_dir, self.governance_dir, self.adhoc_dir, self.legacy_dir]:
+        for d in [self.audit_root, self.postmatch_legacy_dir, self.governance_dir, self.adhoc_dir, self.legacy_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
     def _issue_dirs(self, issue: str) -> Dict[str, Path]:
@@ -160,14 +160,35 @@ class AuditRouter:
         prematch_dir = issue_dir / "01_Prematch_Audits"
         special_dir = issue_dir / "02_Special_Analyses"
         review_dir = issue_dir / "03_Review_Reports"
+        postmatch_dir = issue_dir / "04_Postmatch_Telemetry"
         postmatch_legacy_dir = issue_dir / "04_Postmatch_Legacy"
         return {
             "issue_dir": issue_dir,
             "prematch_dir": prematch_dir,
             "special_dir": special_dir,
             "review_dir": review_dir,
+            "postmatch_dir": postmatch_dir,
             "postmatch_legacy_dir": postmatch_legacy_dir,
         }
+
+    def _issue_postmatch_main_dir(self, issue: str) -> Path:
+        issue_dir = self.audit_root / str(issue) / "04_Postmatch_Telemetry"
+        if issue_dir.exists():
+            return issue_dir
+        return self.postmatch_legacy_dir
+
+    def _iter_issue_postmatch_main(self, issue: str):
+        issue_dir = self.audit_root / str(issue) / "04_Postmatch_Telemetry"
+        seen: Set[Path] = set()
+        for directory in [issue_dir, self.postmatch_legacy_dir]:
+            if not directory or not directory.exists():
+                continue
+            for path in directory.glob(f"{issue}_*_postmatch.md"):
+                resolved = path.resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                yield path
 
     def _ensure_issue_dirs(self, issue: str) -> Dict[str, Path]:
         dirs = self._issue_dirs(issue)
@@ -560,9 +581,14 @@ class AuditRouter:
         manifest_lookup: Optional[Dict[int, Dict[str, Any]]] = None,
     ) -> Dict[str, List[str]]:
         rejected: Dict[str, List[str]] = defaultdict(list)
+        soft_gate_reasons = {"insufficient_resilience_data", "low_confidence"}
         for path in sorted(prematch_dir.glob("Audit-*.md")):
             assessment = self._assess_report_quality(issue, path, manifest_lookup)
             if assessment["status"] != "reject":
+                continue
+
+            reasons = set(assessment.get("reasons", []))
+            if reasons and reasons <= soft_gate_reasons:
                 continue
 
             target_name = f"REJECTED-{assessment.get('canonical_name') or path.name}"
@@ -572,6 +598,50 @@ class AuditRouter:
             for reason in assessment.get("reasons", []):
                 rejected[reason].append(target_name.replace("REJECTED-", "", 1))
         return {reason: sorted(names) for reason, names in rejected.items()}
+
+    def _restore_soft_gated_reviews(
+        self,
+        issue: str,
+        prematch_dir: Path,
+        review_dir: Path,
+        manifest_lookup: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> int:
+        restored = 0
+        soft_gate_reasons = {"insufficient_resilience_data", "low_confidence"}
+
+        for review_path in sorted(review_dir.glob("REJECTED-Audit-*.md")):
+            try:
+                review_text = review_path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+
+            source_name = self._extract_review_source_name(review_path, review_text)
+            original_text = self._extract_original_review_content(review_text)
+            assessment = self._assess_report_text(issue, Path(source_name), original_text, manifest_lookup)
+            reasons = set(assessment.get("reasons", []))
+            if not reasons or not reasons <= soft_gate_reasons:
+                continue
+
+            canonical_name = assessment.get("canonical_name") or source_name
+            target_path = prematch_dir / canonical_name
+            if not target_path.exists():
+                target_path.write_text(original_text.rstrip() + "\n", encoding="utf-8")
+                restored += 1
+
+            review_path.unlink(missing_ok=True)
+
+        return restored
+
+    @staticmethod
+    def _clear_obsolete_rejected_for_accepted(prematch_dir: Path, review_dir: Path) -> int:
+        accepted_names = {path.name for path in prematch_dir.glob("Audit-*.md")}
+        cleared = 0
+        for name in accepted_names:
+            rejected_path = review_dir / f"REJECTED-{name}"
+            if rejected_path.exists():
+                rejected_path.unlink()
+                cleared += 1
+        return cleared
 
     def _sync_prematch_stubs(
         self,
@@ -758,6 +828,15 @@ class AuditRouter:
         }
         for path in sorted(prematch_dir.glob("Audit-*.md")):
             findings["accepted"].append(path.name)
+            assessment = self._assess_report_quality("", path)
+            if "draft_stub" in assessment.get("reasons", []):
+                findings["drafts"].append(path.name)
+            if "low_confidence" in assessment.get("reasons", []):
+                findings["low_confidence"].append(path.name)
+            if "insufficient_resilience_data" in assessment.get("reasons", []):
+                findings["insufficient_resilience_data"].append(path.name)
+            if "cross_team_contamination" in assessment.get("reasons", []):
+                findings["cross_team_contamination"].append(path.name)
         accepted_names = set(findings["accepted"])
         for path in sorted(review_dir.glob("REJECTED-Audit-*.md")):
             try:
@@ -887,19 +966,18 @@ class AuditRouter:
             blocker_path.unlink()
 
     def _sync_duplicate_postmatch(self, issue: str, issue_dir: Path) -> int:
-        if not self.postmatch_dir.exists():
-            return 0
-        main_names = {p.name for p in self.postmatch_dir.glob(f"{issue}_*_postmatch.md")}
+        main_names = {p.name for p in self._iter_issue_postmatch_main(issue)}
         if not main_names:
             return 0
 
+        issue_main_dir = self._issue_postmatch_main_dir(issue)
         duplicate_dir = self.legacy_dir / "Duplicate_Postmatch" / str(issue)
         duplicate_dir.mkdir(parents=True, exist_ok=True)
         moved = 0
         for p in issue_dir.rglob(f"{issue}_*_postmatch.md"):
             if p.name not in main_names:
                 continue
-            if p.resolve().parent == self.postmatch_dir.resolve():
+            if p.resolve().parent == issue_main_dir.resolve():
                 continue
 
             target = duplicate_dir / p.name
@@ -917,7 +995,7 @@ class AuditRouter:
         special_count = sum(1 for _ in issue_dirs["special_dir"].glob("*.md"))
         review_count = sum(1 for _ in issue_dirs["review_dir"].glob("*.md"))
         postmatch_legacy_count = sum(1 for _ in issue_dirs["postmatch_legacy_dir"].glob("*.md"))
-        postmatch_count = sum(1 for _ in self.postmatch_dir.glob(f"{issue}_*_postmatch.md"))
+        postmatch_count = sum(1 for _ in self._iter_issue_postmatch_main(issue))
 
         mapped = 0
         total = 0
@@ -933,11 +1011,12 @@ class AuditRouter:
             f"# Audit Issue {issue}\n\n"
             f"- Updated At: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%SZ')}\n"
             f"- Mapping Progress: {mapped}/{total}\n"
-            f"- Postmatch Main Index (`Postmatch_Telemetry`): {postmatch_count}\n\n"
+            f"- Postmatch Main Index (`04_Postmatch_Telemetry`): {postmatch_count}\n\n"
             "## Sections\n"
             f"- `01_Prematch_Audits/`: {prematch_count}\n"
             f"- `02_Special_Analyses/`: {special_count}\n"
             f"- `03_Review_Reports/`: {review_count}\n"
+            f"- `04_Postmatch_Telemetry/`: {postmatch_count}\n"
             f"- `04_Postmatch_Legacy/`: {postmatch_legacy_count}\n"
         )
         (issue_dir / "README.md").write_text(content, encoding="utf-8")
@@ -948,10 +1027,12 @@ class AuditRouter:
         lines.append("# 审计文档导航（自动更新）")
         lines.append("")
         lines.append("## 当前结构")
-        for name in ["00_Governance", "Postmatch_Telemetry", "02_Adhoc_Team_Audits", "99_Legacy_Archive"]:
+        for name in ["00_Governance", "02_Adhoc_Team_Audits", "99_Legacy_Archive"]:
             p = self.audit_root / name
             if p.exists():
                 lines.append(f"- `{name}/`：{sum(1 for _ in p.rglob('*.md'))} 篇 md")
+        if self.postmatch_legacy_dir.exists():
+            lines.append(f"- `Postmatch_Telemetry/`(legacy)：{sum(1 for _ in self.postmatch_legacy_dir.rglob('*.md'))} 篇 md")
         for d in issue_dirs:
             lines.append(f"- `{d.name}/`：{sum(1 for _ in d.rglob('*.md'))} 篇 md")
         lines.append("")
@@ -1003,21 +1084,97 @@ class AuditRouter:
             issue_dirs["review_dir"],
             manifest_lookup,
         )
+        restored_soft_gated = self._restore_soft_gated_reviews(
+            issue,
+            issue_dirs["prematch_dir"],
+            issue_dirs["review_dir"],
+            manifest_lookup,
+        )
+        if restored_soft_gated:
+            archived_prematch_duplicates += self._sync_real_prematch_duplicates(
+                issue,
+                issue_dirs["prematch_dir"],
+                manifest_lookup,
+            )
+        cleared_obsolete_rejected = self._clear_obsolete_rejected_for_accepted(
+            issue_dirs["prematch_dir"],
+            issue_dirs["review_dir"],
+        )
 
         moved_duplicates = self._sync_duplicate_postmatch(issue, issue_dirs["issue_dir"])
         self._write_review_report(issue, issue_dirs["review_dir"], issue_dirs["prematch_dir"])
         self._write_issue_readme(issue, issue_dirs, manifest)
         self._write_global_index()
         logger.info(
-            "AuditRouter 更新完成 issue=%s, created_stubs=%s, archived_prematch_duplicates=%s, rejected_prematch=%s, deduped_review_reports=%s, moved_duplicate_postmatch=%s",
+            "AuditRouter 更新完成 issue=%s, created_stubs=%s, archived_prematch_duplicates=%s, rejected_prematch=%s, deduped_review_reports=%s, restored_soft_gated=%s, cleared_obsolete_rejected=%s, moved_duplicate_postmatch=%s",
             issue,
             created_stubs,
             archived_prematch_duplicates,
             len({name for names in rejected_reports.values() for name in names}),
             deduped_review_reports,
+            restored_soft_gated,
+            cleared_obsolete_rejected,
             moved_duplicates,
         )
         return True
+
+    def write_prematch_input_report(
+        self,
+        issue: str,
+        diagnostics: Dict[str, Any],
+    ) -> Optional[Path]:
+        if not self.enabled:
+            return None
+
+        issue_dirs = self._ensure_issue_dirs(issue)
+        lines = [
+            f"# Review {issue} - Prematch Input Readiness",
+            "",
+            f"- Updated At: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%SZ')}",
+            f"- Total Matches: {diagnostics.get('total_matches', 0)}",
+            f"- Unmapped Matches: {diagnostics.get('unmapped_matches', 0)}",
+            f"- Weak Input Matches: {diagnostics.get('weak_input_matches', 0)}",
+            f"- Placeholder Team Archives: {diagnostics.get('placeholder_team_archives', 0)}",
+            f"- Missing Team Archives: {diagnostics.get('missing_team_archives', 0)}",
+            "",
+        ]
+
+        lines.append("## Summary")
+        for item in diagnostics.get("summary", []):
+            lines.append(f"- {item}")
+        if not diagnostics.get("summary"):
+            lines.append("- None")
+        lines.append("")
+
+        lines.append("## Weak Matches")
+        weak_matches = diagnostics.get("weak_matches", [])
+        if weak_matches:
+            for match in weak_matches:
+                lines.append(
+                    f"- `{match['index']:02d}` `{match['english']}` | mapping=`{match['mapping_source']}` | issues={', '.join(match['issues'])}"
+                )
+        else:
+            lines.append("- None")
+        lines.append("")
+
+        lines.append("## Team Archive Diagnostics")
+        team_diagnostics = diagnostics.get("teams", [])
+        if team_diagnostics:
+            for team in team_diagnostics:
+                archive_status = "missing"
+                if team.get("archive_exists"):
+                    archive_status = "placeholder" if team.get("placeholder") else "usable"
+                markers = ", ".join(team.get("markers", [])) or "none"
+                lines.append(
+                    f"- `{team['team']}` ({team['league']}) | archive=`{archive_status}` | rag_docs=`{team.get('rag_doc_count', 0)}` | markers={markers}"
+                )
+        else:
+            lines.append("- None")
+        lines.append("")
+
+        target = issue_dirs["review_dir"] / f"REVIEW-{issue}-Prematch_Input_Readiness.md"
+        target.write_text("\n".join(lines), encoding="utf-8")
+        return target
 
 
 def _load_manifest_for_issue(vault_root: Path, issue: str) -> Optional[Dict[str, Any]]:

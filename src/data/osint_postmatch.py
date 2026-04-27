@@ -191,7 +191,7 @@ class MatchTelemetryPipeline:
         elif self.llm_provider == "deepseek":
             provider_api_key = str(os.getenv("DEEPSEEK_API_KEY", "")).strip()
             default_base_url = "https://api.deepseek.com"
-            default_model = "deepseek-chat"
+            default_model = "deepseek-v4-pro"
         else:
             provider_api_key = str(os.getenv("OPENAI_API_KEY", "")).strip()
             default_base_url = "https://api.openai.com/v1"

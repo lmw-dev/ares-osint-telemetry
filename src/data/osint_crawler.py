@@ -55,6 +55,13 @@ LEAGUE_TO_ODDS_SPORT_KEY: Dict[str, str] = {
     "Serie_B": "soccer_italy_serie_b",
 }
 
+TITAN_PREMATCH_PAGE_TEMPLATES: Dict[str, str] = {
+    "analysis": "https://zq.titan007.com/analysis/{match_id}cn.htm",
+    "asian_odds": "https://vip.titan007.com/AsianOdds_n.aspx?id={match_id}&l=0",
+    "over_down": "https://vip.titan007.com/OverDown_n.aspx?id={match_id}&l=0",
+    "euro_odds": "https://1x2.titan007.com/oddslist/{match_id}.htm",
+}
+
 
 def load_dotenv_into_env(base_dir: Path) -> None:
     env_path = base_dir / ".env"
@@ -103,6 +110,8 @@ class AresOsintCrawler:
         self._football_data_cold_refs: List[str] = []
         self._odds_cold_refs: List[str] = []
         self._odds_events_cache: Dict[str, List[Dict[str, Any]]] = {}
+        self._titan_cold_refs: List[str] = []
+        self._titan_prematch_cache: Dict[str, Dict[str, Any]] = {}
         self._manual_anchor_source_path: Optional[str] = None
         self._manual_anchor_overrides = self._load_manual_anchor_overrides()
         self._load_provider_runtime_config()
@@ -163,12 +172,129 @@ class AresOsintCrawler:
         self.enable_external_odds_enrich = str(
             os.getenv("ARES_ENABLE_EXTERNAL_ODDS_ENRICH", "0")
         ).strip().lower() in {"1", "true", "yes", "on"}
+        self.enable_titan_prematch_enrich = str(
+            os.getenv("ARES_ENABLE_TITAN_PREMATCH_ENRICH", "1")
+        ).strip().lower() in {"1", "true", "yes", "on"}
         self.mapping_max_gap_days = int(os.getenv("ARES_MATCH_MAPPING_MAX_GAP_DAYS", "10"))
 
         if not self.football_data_api_key:
             logger.info("未配置 football-data API Key，映射回退将跳过 football-data 源。")
         if self.enable_external_odds_enrich and not self.the_odds_api_key:
             logger.warning("ARES_ENABLE_EXTERNAL_ODDS_ENRICH=1 但未配置 THE_ODDS_API_KEY，赔率补采将跳过。")
+        if not self.enable_titan_prematch_enrich:
+            logger.info("ARES_ENABLE_TITAN_PREMATCH_ENRICH=0，已禁用 Titan prematch 补采。")
+
+    @staticmethod
+    def _extract_titan_match_id_from_html(html_fragment: str) -> Optional[str]:
+        text = str(html_fragment or "")
+        patterns = [
+            r"/fenxi/(?:stat|shuju|touzhu|ouzhi|yazhi|rangqiu|zoushi)-(\d+)\.shtml",
+            r"zq\.titan007\.com/analysis/(\d+)cn\.htm",
+            r"(?:AsianOdds_n|OverDown_n)\.aspx\?id=(\d+)",
+            r"1x2\.titan007\.com/oddslist/(\d+)\.htm",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return None
+
+    @staticmethod
+    def _decode_html_bytes(content: bytes) -> Tuple[str, str]:
+        for enc in ("utf-8", "gb18030", "gbk"):
+            try:
+                return content.decode(enc), enc
+            except Exception:
+                continue
+        return content.decode("utf-8", errors="ignore"), "utf-8(ignore)"
+
+    def _fetch_titan_page(self, *, page_key: str, url: str, match_id: str) -> Tuple[Dict[str, Any], Optional[str]]:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+        }
+        try:
+            resp = requests.get(url, headers=headers, timeout=20)
+            status_code = resp.status_code
+            text, encoding_used = self._decode_html_bytes(resp.content)
+            raw_path = self.raw_reports_dir / f"{self.issue}_titan_{match_id}_{page_key}.html"
+            raw_path.write_text(text, encoding="utf-8")
+            raw_ref = str(raw_path)
+            soup = BeautifulSoup(text, "html.parser")
+            title = soup.title.get_text(" ", strip=True) if soup.title else ""
+            table_count = len(soup.select("table"))
+            row_count = len(soup.select("tr"))
+            has_init_keyword = ("初盘" in text) or ("初始" in text)
+            has_live_keyword = ("即时" in text) or ("即盘" in text)
+            has_ah_keyword = ("亚盘" in text) or ("让球" in text)
+            has_ou_keyword = "欧赔" in text
+            has_ouu_keyword = ("大小" in text) or ("Over/Under" in text)
+            status = "ok" if status_code == 200 else "http_error"
+            if raw_ref not in self._titan_cold_refs:
+                self._titan_cold_refs.append(raw_ref)
+            return {
+                "status": status,
+                "http_status": status_code,
+                "url": url,
+                "title": title,
+                "encoding": encoding_used,
+                "table_count": table_count,
+                "row_count": row_count,
+                "has_init_keyword": has_init_keyword,
+                "has_live_keyword": has_live_keyword,
+                "has_ah_keyword": has_ah_keyword,
+                "has_ou_keyword": has_ou_keyword,
+                "has_ouu_keyword": has_ouu_keyword,
+            }, raw_ref
+        except Exception as exc:
+            return {
+                "status": "error",
+                "url": url,
+                "error": str(exc),
+            }, None
+
+    def _fetch_titan_prematch_snapshot(self, cn_match_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        match_id = str(cn_match_id or "").strip()
+        if not self.enable_titan_prematch_enrich or not match_id or not match_id.isdigit():
+            return None
+        if match_id in self._titan_prematch_cache:
+            return dict(self._titan_prematch_cache[match_id])
+
+        pages: Dict[str, Any] = {}
+        raw_refs: List[str] = []
+        ok_count = 0
+        for page_key, tmpl in TITAN_PREMATCH_PAGE_TEMPLATES.items():
+            url = tmpl.format(match_id=match_id)
+            page_payload, raw_ref = self._fetch_titan_page(page_key=page_key, url=url, match_id=match_id)
+            pages[page_key] = page_payload
+            if raw_ref:
+                raw_refs.append(raw_ref)
+            if page_payload.get("status") == "ok":
+                ok_count += 1
+            time.sleep(0.08)
+
+        coverage = "none"
+        if ok_count == len(TITAN_PREMATCH_PAGE_TEMPLATES):
+            coverage = "full"
+        elif ok_count > 0:
+            coverage = "partial"
+
+        snapshot = {
+            "source": "titan007",
+            "match_id": match_id,
+            "pages": pages,
+            "raw_refs": raw_refs,
+            "signals": {
+                "coverage": coverage,
+                "ok_page_count": ok_count,
+                "total_page_count": len(TITAN_PREMATCH_PAGE_TEMPLATES),
+            },
+            "fetched_at": datetime.utcnow().isoformat() + "Z",
+        }
+        self._titan_prematch_cache[match_id] = snapshot
+        return dict(snapshot)
 
     def _normalize_match_english(self, english: str) -> str:
         home, away = [part.strip() for part in str(english or "").split(" vs ", 1)] if " vs " in str(english or "") else (str(english or "").strip(), "")
@@ -250,12 +376,29 @@ class AresOsintCrawler:
         except Exception as e:
             logger.warning(f"500 原始 HTML 冷存储失败: {e}")
 
-        tr_blocks = re.findall(r"<tr[^>]*data-vs=\"[^\"]+\"[^>]*>", resp.text)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        tr_blocks = soup.select("tr[data-vs]")
         raw_rows = []
         matches = []
         for idx, tr in enumerate(tr_blocks, start=1):
-            data_attrs = {k: v for k, v in re.findall(r"\b(data-[a-zA-Z0-9_-]+)=\"([^\"]*)\"", tr)}
-            raw_rows.append({"index": idx, "data_attrs": data_attrs, "raw_tr": tr})
+            data_attrs: Dict[str, str] = {}
+            for key, value in tr.attrs.items():
+                if not str(key).startswith("data-"):
+                    continue
+                if isinstance(value, list):
+                    data_attrs[str(key)] = " ".join(str(v) for v in value)
+                else:
+                    data_attrs[str(key)] = str(value)
+            tr_html = str(tr)
+            cn_match_id = self._extract_titan_match_id_from_html(tr_html)
+            raw_rows.append(
+                {
+                    "index": idx,
+                    "data_attrs": data_attrs,
+                    "raw_tr": tr_html,
+                    "cn_match_id": cn_match_id,
+                }
+            )
 
             vs = data_attrs.get("data-vs")
             if not vs:
@@ -286,7 +429,14 @@ class AresOsintCrawler:
                 except Exception:
                     pass
                 
-                matches.append({"home_zh": h.strip(), "away_zh": a.strip(), "market_snapshot": market_snapshot})
+                matches.append(
+                    {
+                        "home_zh": h.strip(),
+                        "away_zh": a.strip(),
+                        "market_snapshot": market_snapshot,
+                        "cn_match_id": cn_match_id,
+                    }
+                )
 
         try:
             with open(json_raw_path, "w", encoding="utf-8") as f:
@@ -315,7 +465,31 @@ class AresOsintCrawler:
         return matches
 
     def translate_team(self, zh_name: str) -> str:
-        return self.team_alias.get(zh_name, zh_name)
+        team = str(zh_name or "").strip()
+        if not team:
+            return team
+        direct = self.team_alias.get(team)
+        if direct:
+            return direct
+
+        compact = re.sub(r"\s+", "", team)
+        if compact and compact != team:
+            direct_compact = self.team_alias.get(compact)
+            if direct_compact:
+                return direct_compact
+
+        # 兼容 500 页面在不同时期返回的简称/全称差异，例如 “布雷斯” vs “布雷斯特”
+        fuzzy_candidates: List[Tuple[int, str]] = []
+        for alias_zh, alias_en in self.team_alias.items():
+            alias_key = re.sub(r"\s+", "", str(alias_zh))
+            if not alias_key:
+                continue
+            if alias_key in compact or compact in alias_key:
+                fuzzy_candidates.append((len(alias_key), str(alias_en)))
+        if fuzzy_candidates:
+            fuzzy_candidates.sort(key=lambda item: item[0], reverse=True)
+            return fuzzy_candidates[0][1]
+        return team
 
     @staticmethod
     def _normalize_team_name(name: str) -> str:
@@ -336,6 +510,7 @@ class AresOsintCrawler:
         alias = {
             "fcheidenheim": "heidenheim",
             "heidenheim": "heidenheim",
+            "rasenballsportleipzig": "rbleipzig",
             "hellasverona": "verona",
             "verona": "verona",
             "psg": "parissaintgermain",
@@ -1064,6 +1239,7 @@ class AresOsintCrawler:
         for i, match in enumerate(cn_matches):
             home_zh = match["home_zh"]
             away_zh = match["away_zh"]
+            cn_match_id = str(match.get("cn_match_id") or "").strip() or None
             market_snapshot = match.get("market_snapshot", {})
             market_snapshot["timestamp"] = current_time
             
@@ -1076,6 +1252,7 @@ class AresOsintCrawler:
             
             home_en = self.translate_team(home_zh)
             away_en = self.translate_team(away_zh)
+            titan_prematch_snapshot = self._fetch_titan_prematch_snapshot(cn_match_id)
             
             # Understat -> FBref 双源映射
             found_id = None
@@ -1196,6 +1373,15 @@ class AresOsintCrawler:
                 mapping_source = "fbref"
             elif found_football_data_match_id:
                 mapping_source = "football-data"
+            elif (
+                isinstance(titan_prematch_snapshot, dict)
+                and str(
+                    ((titan_prematch_snapshot.get("signals") or {}).get("coverage") or "none")
+                ).strip().lower()
+                in {"full", "partial"}
+            ):
+                # Titan 仅作为 prematch 映射回退锚点，不用于 postmatch xG 主源。
+                mapping_source = "titan"
 
             mapped_match_time = None
             if mapping_source == "understat":
@@ -1227,9 +1413,12 @@ class AresOsintCrawler:
                 existing_match["football_data_competition"] = found_football_data_competition
                 existing_match["chinese"] = f"{home_zh} vs {away_zh}"
                 existing_match["english"] = f"{home_en} vs {away_en}"
+                existing_match["cn_match_id"] = cn_match_id
                 existing_match["mapping_source"] = mapping_source
                 if found_league:
                     existing_match["league"] = found_league
+                if titan_prematch_snapshot:
+                    existing_match["titan_prematch"] = titan_prematch_snapshot
                 if manual_anchor_applied:
                     existing_match["manual_anchor_applied"] = True
                     existing_match["manual_anchor_mode"] = manual_anchor_mode
@@ -1302,6 +1491,7 @@ class AresOsintCrawler:
                     "index": i + 1,
                     "chinese": f"{home_zh} vs {away_zh}",
                     "english": f"{home_en} vs {away_en}",
+                    "cn_match_id": cn_match_id,
                     "understat_id": found_id,
                     "understat_date": found_date,
                     "understat_gap_days": found_gap_days,
@@ -1314,6 +1504,7 @@ class AresOsintCrawler:
                     "football_data_competition": found_football_data_competition,
                     "mapping_source": mapping_source,
                     "league": found_league,
+                    "titan_prematch": titan_prematch_snapshot,
                     "manual_anchor_applied": bool(manual_anchor_applied),
                     "manual_anchor_mode": manual_anchor_mode,
                     "manual_anchor_notes": manual_anchor_notes,
@@ -1325,7 +1516,14 @@ class AresOsintCrawler:
                 output_manifest["matches"].append(match_item)
             
         output_manifest["cold_data_refs"] = (
-            list(dict.fromkeys(self.last_500_cold_refs + self._football_data_cold_refs + self._odds_cold_refs))
+            list(
+                dict.fromkeys(
+                    self.last_500_cold_refs
+                    + self._football_data_cold_refs
+                    + self._odds_cold_refs
+                    + self._titan_cold_refs
+                )
+            )
         )
 
         logger.warning(

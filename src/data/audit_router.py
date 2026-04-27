@@ -387,12 +387,15 @@ class AuditRouter:
             return []
 
         normalized_text = text.lower()
+        # CJK aliases may be substrings of another team name (e.g. "里昂" in "洛里昂");
+        # require CJK token boundaries to avoid false cross-team contamination.
+        cjk_boundary = r"(?<![\u3400-\u9fffA-Za-z0-9]){pat}(?![\u3400-\u9fffA-Za-z0-9])"
         matched: Set[str] = set()
         for pattern, canonical, has_cjk in self._team_patterns:
             if canonical in expected:
                 continue
             if has_cjk:
-                if pattern in text:
+                if re.search(cjk_boundary.format(pat=re.escape(pattern)), text):
                     matched.add(canonical)
             else:
                 if pattern in normalized_text:

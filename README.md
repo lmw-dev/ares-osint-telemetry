@@ -69,7 +69,7 @@ ARES_VAULT_PATH="/path/to/your/Vault"
 # 可选：是否启用 LLM 回填（默认 0）
 ARES_USE_LLM_BACKFILL=0
 
-# 可选：openai | gemini（默认 openai）
+# 可选：openai | gemini | deepseek（默认 openai）
 ARES_LLM_PROVIDER=openai
 
 # 可选：统一 Key（优先级最高）
@@ -78,10 +78,12 @@ ARES_LLM_API_KEY=
 # Provider 专用 Key（当 ARES_LLM_API_KEY 为空时生效）
 OPENAI_API_KEY=
 GEMINI_API_KEY=
+DEEPSEEK_API_KEY=
 
 # 可选：自定义网关地址（不填则自动使用官方）
 # OpenAI 默认: https://api.openai.com/v1
 # Gemini 默认: https://generativelanguage.googleapis.com/v1beta
+# DeepSeek 默认: https://api.deepseek.com
 ARES_LLM_BASE_URL=
 
 # 可选：模型名（不填则按 provider 走默认）

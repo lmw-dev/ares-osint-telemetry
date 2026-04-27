@@ -41,7 +41,7 @@ REALITY_GAP_DEFAULTS: Dict[str, Any] = {
 }
 
 ALLOWED_BIAS_TYPES = {"Fame_Trap", "Underestimated", "Aligned"}
-SUPPORTED_LLM_PROVIDERS = {"openai", "gemini"}
+SUPPORTED_LLM_PROVIDERS = {"openai", "gemini", "deepseek"}
 
 
 def load_dotenv_into_env(base_dir: Path) -> None:
@@ -188,6 +188,10 @@ class MatchTelemetryPipeline:
             provider_api_key = str(os.getenv("GEMINI_API_KEY", "")).strip() or str(os.getenv("GOOGLE_API_KEY", "")).strip()
             default_base_url = "https://generativelanguage.googleapis.com/v1beta"
             default_model = "gemini-1.5-flash"
+        elif self.llm_provider == "deepseek":
+            provider_api_key = str(os.getenv("DEEPSEEK_API_KEY", "")).strip()
+            default_base_url = "https://api.deepseek.com"
+            default_model = "deepseek-chat"
         else:
             provider_api_key = str(os.getenv("OPENAI_API_KEY", "")).strip()
             default_base_url = "https://api.openai.com/v1"
@@ -207,6 +211,8 @@ class MatchTelemetryPipeline:
         if self.llm_enabled and not self.llm_api_key:
             if self.llm_provider == "gemini":
                 key_hint = "ARES_LLM_API_KEY/GEMINI_API_KEY"
+            elif self.llm_provider == "deepseek":
+                key_hint = "ARES_LLM_API_KEY/DEEPSEEK_API_KEY"
             else:
                 key_hint = "ARES_LLM_API_KEY/OPENAI_API_KEY"
             logger.warning("ARES_USE_LLM_BACKFILL=1 但未检测到 %s，将回退规则判定。", key_hint)
@@ -669,7 +675,37 @@ class MatchTelemetryPipeline:
                 logger.warning("LLM(OpenAI) 输出无法解析为 JSON，将回退规则判定。")
             return parsed
         except Exception as e:
-            logger.warning("LLM(OpenAI) Reality-Gap 调用失败，将回退规则判定: %s", e)
+            if self.llm_provider == "deepseek":
+                fallback_bases = ["https://api.deepseek.com", "https://api.deepseek.com/v1"]
+                provider_tag = "DeepSeek"
+            else:
+                fallback_bases = ["https://api.openai.com/v1"]
+                provider_tag = "OpenAI"
+
+            for fallback_base in fallback_bases:
+                fallback_endpoint = f"{fallback_base.rstrip('/')}/chat/completions"
+                if endpoint == fallback_endpoint:
+                    continue
+                try:
+                    resp = requests.post(
+                        fallback_endpoint,
+                        headers=headers,
+                        json=request_payload,
+                        timeout=self.llm_timeout_sec,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    parsed = self._extract_json_object(content)
+                    if parsed is None:
+                        logger.warning("LLM(%s) 回退端点输出无法解析为 JSON，将回退规则判定。", provider_tag)
+                        return None
+                    logger.info("LLM(%s) 已自动回退端点成功: %s", provider_tag, fallback_endpoint)
+                    return parsed
+                except Exception as retry_exc:
+                    logger.warning("LLM(%s) 回退端点失败 endpoint=%s: %s", provider_tag, fallback_endpoint, retry_exc)
+
+            logger.warning("LLM(%s) Reality-Gap 调用失败，将回退规则判定: %s", provider_tag, e)
             return None
 
     def _call_reality_gap_llm_gemini(self, *, system_prompt: str, user_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:

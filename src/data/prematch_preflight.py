@@ -94,6 +94,17 @@ def _load_manifest(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _load_gate_snapshot(vault_root: Path, issue: str) -> Dict[str, Any]:
+    gate_path = vault_root / "03_Match_Audits" / str(issue) / "03_Review_Reports" / f"REVIEW-{issue}-Prematch_Input_Gate.json"
+    if not gate_path.exists():
+        return {}
+    try:
+        payload = json.loads(gate_path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
 def _load_rag_team_doc_counts(engine_dir: Path) -> Dict[str, int]:
     chroma_db = engine_dir / "chromadb" / "chroma.sqlite3"
     if not chroma_db.exists():
@@ -400,6 +411,7 @@ def build_preflight_report(
     manifest_path: Path,
 ) -> Dict[str, Any]:
     rag_readiness = _inspect_rag_readiness(engine_dir, manifest)
+    gate_snapshot = _load_gate_snapshot(vault_root, issue)
     rag_team_doc_counts = _load_rag_team_doc_counts(engine_dir) if (engine_dir / "chromadb" / "chroma.sqlite3").exists() else {}
 
     team_records: Dict[str, Dict[str, Any]] = {}
@@ -511,6 +523,17 @@ def build_preflight_report(
         status = "CAUTION"
         recommended_action = "检测到 smoke 锚点，仅可用于流程回归；生产执行前请先替换为真实锚点并重跑 preflight。"
 
+    gate_status = str(gate_snapshot.get("issue_status") or "").strip().upper()
+    gate_selected = int(gate_snapshot.get("selected_matches") or 0) if gate_snapshot else 0
+    gate_filtered = int(gate_snapshot.get("filtered_matches") or 0) if gate_snapshot else 0
+    gate_rows = gate_snapshot.get("rows") if isinstance(gate_snapshot.get("rows"), list) else []
+    if gate_status == "BLOCKED":
+        status = "BLOCKED"
+        recommended_action = "Prematch Input Gate 当前阻断，需先补齐队档/RAG/补强项后再推进。"
+    elif gate_status == "HOLD" and status != "BLOCKED":
+        status = "HOLD"
+        recommended_action = "Prematch Input Gate 当前仅允许部分或暂不建议推进，请先完成最小补料清单。"
+
     summary = [
         f"manifest 已落盘：`{manifest_path}`",
         f"本期共 `{total_matches}` 场，`mapping_source=unmapped` 有 `{unmapped_matches}` 场。",
@@ -521,8 +544,28 @@ def build_preflight_report(
         f"需要补强的球队共 `{enrichment_needed_teams}` 支（含结构缺口、过期时间戳、默认物理值、缺新闻摘要等）。",
         f"其中 resilience_core 缺口球队 `{resilience_gap_teams}` 支，market_behavior_core 缺口球队 `{market_behavior_gap_teams}` 支。",
         f"RAG team metadata 覆盖 `{len(rag_readiness['covered_teams'])}/{len(rag_readiness['issue_teams'])}`，但 `thin_rag_docs` 球队有 `{thin_rag_teams}` 支。",
+        (
+            f"Prematch Input Gate: `{gate_status or 'UNKNOWN'}`，"
+            f"selected `{gate_selected}` / total `{total_matches}` / filtered `{gate_filtered}`。"
+            if gate_snapshot
+            else "Prematch Input Gate: 尚未生成 gate 快照。"
+        ),
         recommended_action,
     ]
+
+    if gate_snapshot and gate_rows:
+        weak_matches = []
+        for row in gate_rows:
+            reasons = row.get("reasons") if isinstance(row.get("reasons"), list) else []
+            if reasons:
+                weak_matches.append(
+                    {
+                        "index": int(row.get("index") or 0),
+                        "english": str(row.get("match") or ""),
+                        "mapping_source": "gate",
+                        "issues": [str(item) for item in reasons],
+                    }
+                )
 
     return {
         "issue": issue,
@@ -533,6 +576,7 @@ def build_preflight_report(
         "engine_dir": str(engine_dir),
         "mapping_counts": dict(sorted(mapping_counts.items())),
         "rag_readiness": rag_readiness,
+        "gate_snapshot": gate_snapshot,
         "summary": summary,
         "matches": matches,
         "weak_matches": weak_matches,

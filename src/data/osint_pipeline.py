@@ -254,6 +254,15 @@ def normalize_vault_path(path_text: str) -> str:
     return str(path_text).replace("\\ ", " ").replace("\\~", "~")
 
 
+def _build_child_env(force_vault: bool = False) -> Dict[str, str]:
+    env = os.environ.copy()
+    if force_vault:
+        vault_path = str(os.getenv("ARES_VAULT_PATH") or "").strip()
+        if vault_path:
+            env["ARES_VAULT_PATH"] = str(Path(normalize_vault_path(vault_path)).expanduser())
+    return env
+
+
 def run_prematch_engine(
     *,
     issue: str,
@@ -283,7 +292,7 @@ def run_prematch_engine(
         result = subprocess.run(
             cmd,
             cwd=engine_dir,
-            env=os.environ.copy(),
+            env=_build_child_env(force_vault=True),
             text=True,
             capture_output=True,
             timeout=timeout_sec,
@@ -402,18 +411,43 @@ def _write_prematch_input_gate_report(
     selected: int,
     total: int,
     min_team_docs: int,
-) -> None:
+) -> Dict[str, Any]:
     review_dir = vault_root / "03_Match_Audits" / str(issue) / "03_Review_Reports"
     review_dir.mkdir(parents=True, exist_ok=True)
-    target = review_dir / f"REVIEW-{issue}-Prematch_Input_Gate.md"
+    md_target = review_dir / f"REVIEW-{issue}-Prematch_Input_Gate.md"
+    json_target = review_dir / f"REVIEW-{issue}-Prematch_Input_Gate.json"
+    filtered = max(0, total - selected)
+    if selected <= 0:
+        issue_status = "BLOCKED"
+    elif filtered > 0:
+        issue_status = "HOLD"
+    else:
+        issue_status = "READY"
+    payload = {
+        "issue": str(issue),
+        "updated_at_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ"),
+        "issue_status": issue_status,
+        "total_matches": int(total),
+        "selected_matches": int(selected),
+        "filtered_matches": int(filtered),
+        "min_team_rag_docs": int(min_team_docs),
+        "selected_match_indices": [
+            int(row.get("index"))
+            for row in rows
+            if str(row.get("ready") or "").strip().lower() == "yes" and row.get("index") is not None
+        ],
+        "rows": rows,
+    }
     lines: List[str] = []
     lines.append(f"# Review {issue} - Prematch Input Gate")
     lines.append("")
-    lines.append(f"- Updated At: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%SZ')}")
+    lines.append(f"- Updated At: {payload['updated_at_utc']}")
+    lines.append(f"- Issue Status: {issue_status}")
     lines.append(f"- Total Matches: {total}")
     lines.append(f"- Selected Matches: {selected}")
-    lines.append(f"- Filtered Matches: {max(0, total - selected)}")
+    lines.append(f"- Filtered Matches: {filtered}")
     lines.append(f"- Min Team RAG Docs: {min_team_docs}")
+    lines.append(f"- Gate JSON: `{json_target.name}`")
     lines.append("")
     lines.append("| # | Match | Quality Tag | Ready | Reasons |")
     lines.append("| --- | --- | --- | --- | --- |")
@@ -422,7 +456,9 @@ def _write_prematch_input_gate_report(
         lines.append(
             f"| {row.get('index')} | {row.get('match')} | `{row.get('quality_tag')}` | `{row.get('ready')}` | {reasons} |"
         )
-    target.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    md_target.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    json_target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return payload
 
 
 def _parse_gate_reason(reason: str) -> Tuple[str, str, Optional[str]]:
@@ -651,7 +687,7 @@ def build_prematch_ready_manifest(
 
     filtered_manifest = dict(manifest)
     filtered_manifest["matches"] = selected_matches
-    _write_prematch_input_gate_report(
+    gate_payload = _write_prematch_input_gate_report(
         vault_root=vault_root,
         issue=issue,
         rows=rows,
@@ -671,6 +707,8 @@ def build_prematch_ready_manifest(
         "total_matches": len(matches),
         "selected_matches": len(selected_matches),
         "filtered_matches": max(0, len(matches) - len(selected_matches)),
+        "issue_status": gate_payload.get("issue_status", "READY"),
+        "gate_payload": gate_payload,
         "rows": rows,
     }
 
@@ -769,7 +807,7 @@ def run_issue_team_archive_backfill(
     result = subprocess.run(
         cmd,
         cwd=base_dir,
-        env=os.environ.copy(),
+        env=_build_child_env(force_vault=True),
         text=True,
         capture_output=True,
     )
@@ -884,7 +922,7 @@ def sync_issue_team_archives_to_rag(
         return subprocess.run(
             cmd,
             cwd=engine_dir,
-            env=os.environ.copy(),
+            env=_build_child_env(force_vault=True),
             text=True,
             capture_output=True,
         )
@@ -1168,7 +1206,8 @@ if __name__ == "__main__":
         )
         prematch_manifest = gate_selection["manifest"]
         logger.info(
-            "Prematch ready-gate 已启用: selected=%s/%s, filtered=%s, min_team_docs=%s",
+            "Prematch ready-gate 已启用: status=%s, selected=%s/%s, filtered=%s, min_team_docs=%s",
+            gate_selection.get("issue_status"),
             gate_selection["selected_matches"],
             gate_selection["total_matches"],
             gate_selection["filtered_matches"],
@@ -1239,6 +1278,19 @@ if __name__ == "__main__":
                         logger.warning("Prematch 已跳过：ready-gate 过滤后没有可执行场次。")
                     else:
                         logger.warning("Prematch 已跳过：当前 manifest 没有可执行场次。")
+                    if router.enabled:
+                        try:
+                            router.write_prematch_blocker_report(
+                                issue=args.issue,
+                                blocker_type="prematch_input_gate_blocked",
+                                summary="Prematch 被输入质量门禁阻断。",
+                                details=[
+                                    "selected_matches=0，当前 issue 不应继续进入 prematch 推演。",
+                                    "请先查看 REVIEW-<issue>-Prematch_Input_Gate.json 与 Team Enrichment Queue。",
+                                ],
+                            )
+                        except Exception as e:
+                            logger.warning("Prematch input gate blocker 写入失败（不影响主流程）: %s", e)
                 else:
                     prematch_summary = run_prematch_engine(
                         issue=args.issue,

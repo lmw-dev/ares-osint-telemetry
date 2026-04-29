@@ -994,6 +994,7 @@ class AuditRouter:
 
     def _write_issue_readme(self, issue: str, issue_dirs: Dict[str, Path], manifest: Optional[Dict[str, Any]]) -> None:
         issue_dir = issue_dirs["issue_dir"]
+        review_dir = issue_dirs["review_dir"]
         prematch_count = sum(1 for _ in issue_dirs["prematch_dir"].glob("*.md"))
         special_count = sum(1 for _ in issue_dirs["special_dir"].glob("*.md"))
         review_count = sum(1 for _ in issue_dirs["review_dir"].glob("*.md"))
@@ -1010,10 +1011,20 @@ class AuditRouter:
                     if m.get("understat_id") or m.get("fbref_url") or m.get("football_data_match_id"):
                         mapped += 1
 
+        warnings_payload = self._load_json_if_exists(review_dir / f"REVIEW-{issue}-Consistency_Warnings.json")
+        warning_count = int(warnings_payload.get("warning_count") or 0)
+        warning_items = warnings_payload.get("warnings") if isinstance(warnings_payload.get("warnings"), list) else []
+        error_count = sum(1 for item in warning_items if str((item or {}).get("severity") or "").strip().lower() == "error")
+        warn_count = sum(1 for item in warning_items if str((item or {}).get("severity") or "").strip().lower() == "warn")
+        consistency_status = "OK" if warning_count == 0 else ("ERROR" if error_count > 0 else "WARN")
+
         content = (
             f"# Audit Issue {issue}\n\n"
             f"- Updated At: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%SZ')}\n"
-            f"- Mapping Progress: {mapped}/{total}\n"
+            f"- Consistency Status: {consistency_status}\n"
+            f"- Consistency Warnings: {warning_count} (error={error_count}, warn={warn_count})\n"
+            f"- Mapping Ready: {mapped}/{total}\n"
+            f"- Postmatch Coverage: {postmatch_count}/{total}\n"
             f"- Postmatch Main Index (`04_Postmatch_Telemetry`): {postmatch_count}\n\n"
             "## Sections\n"
             f"- `01_Prematch_Audits/`: {prematch_count}\n"
@@ -1045,6 +1056,220 @@ class AuditRouter:
 
         target = self.governance_dir / "INDEX - 审计文档导航.md"
         target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _load_json_if_exists(path: Path) -> Dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _extract_labeled_int(text: str, label: str) -> Optional[int]:
+        match = re.search(rf"(?m)^- {re.escape(label)}:\s*`?(\d+)`?\s*$", text)
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _extract_labeled_ratio(text: str, label: str) -> Tuple[Optional[int], Optional[int]]:
+        match = re.search(rf"(?m)^- {re.escape(label)}:\s*(\d+)\s*/\s*(\d+)\s*$", text)
+        if not match:
+            return None, None
+        try:
+            return int(match.group(1)), int(match.group(2))
+        except ValueError:
+            return None, None
+
+    @staticmethod
+    def _extract_audit_status(text: str) -> str:
+        match = re.search(r"\|\s*预检状态\s*\|\s*`?([A-Za-z_]+)`?\s*\|", text)
+        return match.group(1).strip().upper() if match else ""
+
+    def _write_consistency_warnings(self, issue: str, issue_dirs: Dict[str, Path], manifest: Optional[Dict[str, Any]]) -> None:
+        issue_dir = issue_dirs["issue_dir"]
+        review_dir = issue_dirs["review_dir"]
+        special_dir = issue_dirs["special_dir"]
+
+        warnings: List[Dict[str, Any]] = []
+
+        gate_json = self._load_json_if_exists(review_dir / f"REVIEW-{issue}-Prematch_Input_Gate.json")
+        synth_json = self._load_json_if_exists(special_dir / f"FINAL-{issue}-Prematch_Synthesis.json")
+        postmatch_json = self._load_json_if_exists(special_dir / f"FINAL-{issue}-Postmatch_Synthesis.json")
+        audit_path = issue_dir / f"Audit-{issue}.md"
+        outcome_path = review_dir / f"REVIEW-{issue}-Prematch_Outcome.md"
+        readme_path = issue_dir / "README.md"
+
+        audit_text = audit_path.read_text(encoding="utf-8") if audit_path.exists() else ""
+        outcome_text = outcome_path.read_text(encoding="utf-8") if outcome_path.exists() else ""
+        readme_text = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
+
+        audit_status = self._extract_audit_status(audit_text)
+        gate_status = str(gate_json.get("issue_status") or "").strip().upper()
+        gate_selected = int(gate_json.get("selected_matches") or 0) if gate_json else None
+        gate_total = int(gate_json.get("total_matches") or 0) if gate_json else None
+        gate_filtered = int(gate_json.get("filtered_matches") or 0) if gate_json else None
+        gate_rows = gate_json.get("rows") if isinstance(gate_json.get("rows"), list) else []
+
+        if gate_json:
+            ready_rows = sum(1 for row in gate_rows if str((row or {}).get("ready") or "").strip().lower() == "yes")
+            if gate_selected is not None and ready_rows != gate_selected:
+                warnings.append(
+                    {
+                        "code": "gate_selected_rows_mismatch",
+                        "severity": "error",
+                        "message": f"Gate selected_matches={gate_selected} 与 ready=yes 明细数 {ready_rows} 不一致。",
+                    }
+                )
+            if gate_total is not None and gate_filtered is not None and gate_selected is not None:
+                if gate_selected + gate_filtered != gate_total:
+                    warnings.append(
+                        {
+                            "code": "gate_arithmetic_mismatch",
+                            "severity": "error",
+                            "message": f"Gate 计数不守恒：selected({gate_selected}) + filtered({gate_filtered}) != total({gate_total})。",
+                        }
+                    )
+            if audit_status == "READY" and gate_selected == 0:
+                warnings.append(
+                    {
+                        "code": "audit_ready_but_gate_empty",
+                        "severity": "error",
+                        "message": "Audit 标记 READY，但 Prematch Input Gate 没有任何可执行场次。",
+                    }
+                )
+            if audit_status and gate_status and audit_status != gate_status and not (audit_status == "CAUTION" and gate_status == "HOLD"):
+                warnings.append(
+                    {
+                        "code": "audit_gate_status_conflict",
+                        "severity": "warn",
+                        "message": f"Audit 状态 `{audit_status}` 与 Gate 状态 `{gate_status}` 不一致。",
+                    }
+                )
+
+        if synth_json:
+            synth_result = synth_json.get("result") if isinstance(synth_json.get("result"), dict) else {}
+            synth_posture = str(synth_result.get("global_posture") or "").strip().upper()
+            board_summary = synth_result.get("candidate_board", {}).get("summary", {}) if isinstance(synth_result.get("candidate_board"), dict) else {}
+            board_actionable = int(board_summary.get("稳胆", 0)) + int(board_summary.get("博弈", 0))
+            verdicts = synth_result.get("match_verdicts") if isinstance(synth_result.get("match_verdicts"), list) else []
+            non_actionable_count = sum(1 for row in verdicts if bool((row or {}).get("non_actionable")))
+            if synth_posture == "HOLD" and board_actionable > 0:
+                warnings.append(
+                    {
+                        "code": "synthesis_hold_with_actionables",
+                        "severity": "warn",
+                        "message": f"Synthesis 为 HOLD，但候选池仍有 {board_actionable} 场可执行候选。",
+                    }
+                )
+            if verdicts and non_actionable_count == len(verdicts) and board_actionable > 0:
+                warnings.append(
+                    {
+                        "code": "candidate_board_verdict_conflict",
+                        "severity": "error",
+                        "message": "所有 verdict 均标记 non_actionable，但候选池仍存在可执行场次。",
+                    }
+                )
+
+        if outcome_text and synth_json:
+            actionable_picks = self._extract_labeled_int(outcome_text, "Actionable Picks")
+            skipped_picks = self._extract_labeled_int(outcome_text, "Skipped")
+            synth_result = synth_json.get("result") if isinstance(synth_json.get("result"), dict) else {}
+            board_summary = synth_result.get("candidate_board", {}).get("summary", {}) if isinstance(synth_result.get("candidate_board"), dict) else {}
+            board_actionable = int(board_summary.get("稳胆", 0)) + int(board_summary.get("博弈", 0))
+            verdicts = synth_result.get("match_verdicts") if isinstance(synth_result.get("match_verdicts"), list) else []
+            all_skipped = bool(verdicts) and all(str((row or {}).get("final_suggestion") or "").strip().lower() == "skip" for row in verdicts)
+            if actionable_picks is not None and actionable_picks != board_actionable:
+                warnings.append(
+                    {
+                        "code": "outcome_actionable_mismatch",
+                        "severity": "error",
+                        "message": f"Outcome actionable={actionable_picks} 与 Synthesis 候选池 actionable={board_actionable} 不一致。",
+                    }
+                )
+            if all_skipped and actionable_picks not in {None, 0}:
+                warnings.append(
+                    {
+                        "code": "all_skip_but_outcome_actionable",
+                        "severity": "error",
+                        "message": "Synthesis 全部 final_suggestion=skip，但 Outcome 仍统计了 actionable picks。",
+                    }
+                )
+            if all_skipped and skipped_picks is not None and skipped_picks != len(verdicts):
+                warnings.append(
+                    {
+                        "code": "outcome_skip_count_mismatch",
+                        "severity": "warn",
+                        "message": f"Outcome skipped={skipped_picks} 与 Synthesis final skip 数 {len(verdicts)} 不一致。",
+                    }
+                )
+
+        if postmatch_json and readme_text:
+            expected_matches = int(postmatch_json.get("expected_matches") or 0)
+            total_matches = int(postmatch_json.get("total_matches") or 0)
+            mapping_ready_num, mapping_ready_den = self._extract_labeled_ratio(readme_text, "Mapping Ready")
+            coverage_num, coverage_den = self._extract_labeled_ratio(readme_text, "Postmatch Coverage")
+            mapped_from_manifest = 0
+            manifest_total = 0
+            if isinstance(manifest, dict):
+                matches = manifest.get("matches", [])
+                if isinstance(matches, list):
+                    manifest_total = len(matches)
+                    for row in matches:
+                        if row.get("understat_id") or row.get("fbref_url") or row.get("football_data_match_id"):
+                            mapped_from_manifest += 1
+            if coverage_num is not None and coverage_den is not None:
+                if coverage_num != total_matches or coverage_den != expected_matches:
+                    warnings.append(
+                        {
+                            "code": "readme_postmatch_coverage_mismatch",
+                            "severity": "warn",
+                            "message": f"README Postmatch Coverage={coverage_num}/{coverage_den} 与 Postmatch Synthesis={total_matches}/{expected_matches} 不一致。",
+                        }
+                    )
+            if mapping_ready_num is not None and mapping_ready_den is not None and manifest_total:
+                if mapping_ready_num != mapped_from_manifest or mapping_ready_den != manifest_total:
+                    warnings.append(
+                        {
+                            "code": "readme_mapping_ready_mismatch",
+                            "severity": "warn",
+                            "message": f"README Mapping Ready={mapping_ready_num}/{mapping_ready_den} 与 manifest 计算值 {mapped_from_manifest}/{manifest_total} 不一致。",
+                        }
+                    )
+
+        warning_payload = {
+            "issue": str(issue),
+            "updated_at_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ"),
+            "warning_count": len(warnings),
+            "warnings": warnings,
+        }
+        md_path = review_dir / f"REVIEW-{issue}-Consistency_Warnings.md"
+        json_path = review_dir / f"REVIEW-{issue}-Consistency_Warnings.json"
+        lines: List[str] = []
+        lines.append(f"# Review {issue} - Consistency Warnings")
+        lines.append("")
+        lines.append(f"- Updated At: {warning_payload['updated_at_utc']}")
+        lines.append(f"- Warning Count: {len(warnings)}")
+        lines.append(f"- JSON: `{json_path.name}`")
+        lines.append("")
+        if warnings:
+            lines.append("| Severity | Code | Message |")
+            lines.append("| --- | --- | --- |")
+            for item in warnings:
+                lines.append(
+                    f"| `{item.get('severity')}` | `{item.get('code')}` | {item.get('message')} |"
+                )
+        else:
+            lines.append("- None")
+        lines.append("")
+        md_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+        json_path.write_text(json.dumps(warning_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def ensure_issue_governance(
         self,
@@ -1106,6 +1331,8 @@ class AuditRouter:
 
         moved_duplicates = self._sync_duplicate_postmatch(issue, issue_dirs["issue_dir"])
         self._write_review_report(issue, issue_dirs["review_dir"], issue_dirs["prematch_dir"])
+        self._write_issue_readme(issue, issue_dirs, manifest)
+        self._write_consistency_warnings(issue, issue_dirs, manifest)
         self._write_issue_readme(issue, issue_dirs, manifest)
         self._write_global_index()
         logger.info(

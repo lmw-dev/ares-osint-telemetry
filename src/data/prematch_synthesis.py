@@ -108,6 +108,7 @@ class PrematchSynthesis:
             self.vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake" / f"{self.issue}_dispatch_manifest.json"
         )
         self.diagnostics_path = self.issue_root / f"Audit-{self.issue}-team-diagnostics.json"
+        self.gate_json_path = self.review_dir / f"REVIEW-{self.issue}-Prematch_Input_Gate.json"
         self.review_quality_path = self.review_dir / f"REVIEW-{self.issue}-Prematch_Data_Quality.md"
         if output_dir is not None:
             out_root = output_dir.expanduser().resolve()
@@ -169,6 +170,7 @@ class PrematchSynthesis:
             raise FileNotFoundError(f"目录不存在: {self.review_dir}")
         manifest = self._load_json(self.manifest_path) if self.manifest_path.exists() else {}
         diagnostics = self._load_json(self.diagnostics_path) if self.diagnostics_path.exists() else {}
+        gate_snapshot = self._load_json(self.gate_json_path) if self.gate_json_path.exists() else {}
         quality_text = self.review_quality_path.read_text(encoding="utf-8") if self.review_quality_path.exists() else ""
         manifest_matches = manifest.get("matches") if isinstance(manifest.get("matches"), list) else []
         top5_indices: set = set()
@@ -182,38 +184,39 @@ class PrematchSynthesis:
                 if _safe_text(row.get("league")) in top5_leagues:
                     top5_indices.add(idx)
 
-        accepted_files = _extract_section_bullets(quality_text, "Accepted Prematch Reports")
-        low_conf_files = _extract_section_bullets(quality_text, "Low Confidence Reports")
-        insufficient_files = _extract_section_bullets(quality_text, "Insufficient Resilience Data")
+        accepted_files = set(_extract_section_bullets(quality_text, "Accepted Prematch Reports"))
+        low_conf_files = set(_extract_section_bullets(quality_text, "Low Confidence Reports"))
+        insufficient_files = set(_extract_section_bullets(quality_text, "Insufficient Resilience Data"))
 
         if not accepted_files and self.prematch_dir.exists():
-            accepted_files = sorted(path.name for path in self.prematch_dir.glob("Audit-*.md"))
+            accepted_files = {path.name for path in self.prematch_dir.glob("Audit-*.md")}
         if self.top5_only:
             filtered: List[str] = []
-            for filename in accepted_files:
+            for filename in sorted(accepted_files):
                 m = re.search(rf"Audit-{re.escape(self.issue)}-(\d+)-", filename)
                 if not m:
                     continue
                 idx = int(m.group(1))
                 if idx in top5_indices:
                     filtered.append(filename)
-            accepted_files = filtered
-            low_conf_files = [f for f in low_conf_files if f in set(accepted_files)]
-            insufficient_files = [f for f in insufficient_files if f in set(accepted_files)]
+            accepted_files = set(filtered)
+            low_conf_files = {f for f in low_conf_files if f in accepted_files}
+            insufficient_files = {f for f in insufficient_files if f in accepted_files}
 
         match_payloads: List[Dict[str, Any]] = []
-        for filename in accepted_files:
+        for filename in sorted(accepted_files):
             path = self.prematch_dir / filename
             if not path.exists():
                 continue
             parsed = self._parse_prematch_audit(path)
-            parsed["is_low_confidence"] = filename in set(low_conf_files)
-            parsed["is_insufficient_resilience"] = filename in set(insufficient_files)
+            parsed["is_low_confidence"] = filename in low_conf_files
+            parsed["is_insufficient_resilience"] = filename in insufficient_files
             match_payloads.append(parsed)
 
         return {
             "manifest": manifest,
             "diagnostics": diagnostics,
+            "gate_snapshot": gate_snapshot,
             "quality_text": quality_text,
             "matches": match_payloads,
             "low_conf_count": len(low_conf_files),
@@ -463,8 +466,17 @@ class PrematchSynthesis:
             "profile": "ops",
         }
 
+    @staticmethod
+    def _build_ops_watchlist(candidate_board: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not isinstance(candidate_board, dict):
+            return []
+        tiers = candidate_board.get("tiers") if isinstance(candidate_board.get("tiers"), dict) else {}
+        items = tiers.get("博弈") if isinstance(tiers.get("博弈"), list) else []
+        return items[:5]
+
     def _build_rule_based_result(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         diagnostics = inputs.get("diagnostics") or {}
+        gate_snapshot = inputs.get("gate_snapshot") or {}
         matches = inputs.get("matches") or []
         low_conf_count = int(inputs.get("low_conf_count") or 0)
         insufficient_count = int(inputs.get("insufficient_count") or 0)
@@ -609,10 +621,20 @@ class PrematchSynthesis:
             )
 
         preflight_status = _safe_text(diagnostics.get("status")) or "UNKNOWN"
+        gate_status = _safe_text(gate_snapshot.get("issue_status")).upper()
+        gate_selected = int(gate_snapshot.get("selected_matches") or len(matches))
         global_posture = "CAUTION"
-        if preflight_status == "READY" and low_conf_count == 0 and insufficient_count == 0 and smoke_count == 0:
+        if (
+            preflight_status == "READY"
+            and gate_status in {"", "READY"}
+            and low_conf_count == 0
+            and insufficient_count == 0
+            and smoke_count == 0
+        ):
             global_posture = "READY"
-        if preflight_status == "HOLD" or insufficient_count > max(2, len(matches) // 2):
+        if gate_selected <= 0 or gate_status == "BLOCKED":
+            global_posture = "HOLD"
+        elif gate_status == "HOLD" or preflight_status == "HOLD" or insufficient_count > max(2, len(matches) // 2):
             global_posture = "HOLD"
 
         summary = (
@@ -634,6 +656,20 @@ class PrematchSynthesis:
         candidate_board = self._build_candidate_board(verdicts)
         if self.ops_mode:
             candidate_board = self._build_operational_candidate_board(verdicts)
+        tier_by_match = {
+            _safe_text(item.get("match")): tier
+            for tier, items in (candidate_board.get("tiers") or {}).items()
+            if isinstance(items, list)
+            for item in items
+        }
+        for verdict in verdicts:
+            tier = tier_by_match.get(_safe_text(verdict.get("match")), "放弃")
+            analysis_suggestion = _safe_text(verdict.get("suggestion")) or "skip"
+            non_actionable = tier == "放弃"
+            verdict["candidate_tier"] = tier
+            verdict["analysis_suggestion"] = analysis_suggestion
+            verdict["final_suggestion"] = "skip" if non_actionable else analysis_suggestion
+            verdict["non_actionable"] = non_actionable
         return {
             "mode": "rule_only",
             "executive_summary": summary,
@@ -879,6 +915,8 @@ class PrematchSynthesis:
                     "match": match_name,
                     "cn_match": cn_match,
                     "suggestion": suggestion,
+                    "analysis_suggestion": _safe_text(item.get("analysis_suggestion")) or suggestion,
+                    "final_suggestion": _safe_text(item.get("final_suggestion")) or suggestion,
                     "confidence": confidence,
                     "posture": _safe_text(item.get("posture")) or "TACTICAL_STALEMATE / WAIT",
                     "market_decoupling": _safe_text(item.get("market_decoupling")),
@@ -893,6 +931,8 @@ class PrematchSynthesis:
                     "source": _safe_text(item.get("source")) or normalized["mode"],
                     "is_low_confidence": bool(item.get("is_low_confidence")),
                     "is_insufficient_resilience": bool(item.get("is_insufficient_resilience")),
+                    "candidate_tier": _safe_text(item.get("candidate_tier")),
+                    "non_actionable": bool(item.get("non_actionable")),
                     "edge_home": item.get("edge_home"),
                     "edge_away": item.get("edge_away"),
                     "confidence_score": item.get("confidence_score"),
@@ -906,6 +946,8 @@ class PrematchSynthesis:
                         "match": f"{row.get('home_team')} vs {row.get('away_team')}",
                         "cn_match": _safe_text(row.get("cn_match")),
                         "suggestion": "skip",
+                        "analysis_suggestion": "skip",
+                        "final_suggestion": "skip",
                         "confidence": "low",
                         "posture": "TACTICAL_STALEMATE / WAIT",
                         "market_decoupling": "",
@@ -916,10 +958,26 @@ class PrematchSynthesis:
                         "source": "fallback",
                         "is_low_confidence": True,
                         "is_insufficient_resilience": True,
+                        "candidate_tier": "放弃",
+                        "non_actionable": True,
                     }
                 )
         normalized["match_verdicts"] = fixed_verdicts
         normalized["candidate_board"] = PrematchSynthesis._build_candidate_board(fixed_verdicts)
+        tier_by_match = {
+            _safe_text(item.get("match")): tier
+            for tier, items in (normalized["candidate_board"].get("tiers") or {}).items()
+            if isinstance(items, list)
+            for item in items
+        }
+        for verdict in normalized["match_verdicts"]:
+            tier = tier_by_match.get(_safe_text(verdict.get("match")), _safe_text(verdict.get("candidate_tier")) or "放弃")
+            analysis_suggestion = _safe_text(verdict.get("analysis_suggestion") or verdict.get("suggestion") or "skip")
+            non_actionable = bool(verdict.get("non_actionable")) or tier == "放弃"
+            verdict["candidate_tier"] = tier
+            verdict["analysis_suggestion"] = analysis_suggestion
+            verdict["final_suggestion"] = "skip" if non_actionable else (_safe_text(verdict.get("final_suggestion")) or analysis_suggestion)
+            verdict["non_actionable"] = non_actionable
 
         normalized["risk_points"] = [_safe_text(x) for x in normalized["risk_points"] if _safe_text(x)]
         normalized["next_actions"] = [_safe_text(x) for x in normalized["next_actions"] if _safe_text(x)]
@@ -953,6 +1011,9 @@ class PrematchSynthesis:
         lines.append(f"- Scope: `{'Top5 Only' if self.top5_only else 'All Matches'}`")
         lines.append(f"- LLM Enabled: `{'yes' if self._llm_available() else 'no'}`")
         lines.append(f"- Preflight Status: `{_safe_text(diagnostics.get('status')) or 'UNKNOWN'}`")
+        gate_snapshot = inputs.get("gate_snapshot") if isinstance(inputs.get("gate_snapshot"), dict) else {}
+        if gate_snapshot:
+            lines.append(f"- Gate Status: `{_safe_text(gate_snapshot.get('issue_status')) or 'UNKNOWN'}`")
         lines.append(f"- Low Confidence Reports: `{low_conf_count}`")
         lines.append(f"- Insufficient Resilience Reports: `{insufficient_count}`")
         lines.append(f"- Smoke Anchor Matches: `{smoke_count}`")
@@ -1012,7 +1073,7 @@ class PrematchSynthesis:
         for row in synthesis.get("match_verdicts") or []:
             match_name = _safe_text(row.get("match")) or "-"
             cn_match = _safe_text(row.get("cn_match")) or "-"
-            suggestion = _safe_text(row.get("suggestion")) or "skip"
+            suggestion = _safe_text(row.get("final_suggestion")) or "skip"
             confidence = _safe_text(row.get("confidence")) or "low"
             posture = _safe_text(row.get("posture")) or "-"
             lines.append(f"| {match_name} | {cn_match} | `{suggestion}` | `{confidence}` | `{posture}` |")
@@ -1040,11 +1101,14 @@ class PrematchSynthesis:
         for row in synthesis.get("match_verdicts") or []:
             match_name = _safe_text(row.get("match")) or "-"
             cn_match = _safe_text(row.get("cn_match")) or "-"
-            suggestion = _safe_text(row.get("suggestion")) or "skip"
+            suggestion = _safe_text(row.get("final_suggestion")) or "skip"
+            analysis_suggestion = _safe_text(row.get("analysis_suggestion")) or suggestion
             confidence = _safe_text(row.get("confidence")) or "low"
             lines.append(f"### {match_name} ({cn_match or '-'})")
             lines.append(f"- Posture: `{_safe_text(row.get('posture')) or 'TACTICAL_STALEMATE / WAIT'}`")
             lines.append(f"- 决策落点: `{suggestion}` (`{confidence}`)")
+            if analysis_suggestion != suggestion:
+                lines.append(f"- 分析候选: `{analysis_suggestion}`（未进入执行池）")
             lines.append(f"- 市场解耦: {_safe_text(row.get('market_decoupling')) or _safe_text(row.get('reason')) or '-'}")
             lines.append(f"- 物理面: {_safe_text(row.get('physical_edge')) or '-'}")
             lines.append(f"- 执行建议: {_safe_text(row.get('execution_plan')) or '-'}")
@@ -1059,20 +1123,38 @@ class PrematchSynthesis:
         lines.append("## 回避原因分解")
         reason_counter = {"insufficient_resilience": 0, "low_confidence": 0, "ev_negative": 0, "other": 0}
         for row in synthesis.get("match_verdicts") or []:
-            reason = _safe_text(row.get("reason")).lower()
-            if "insufficient resilience" in reason or "韧性" in reason:
+            if not bool(row.get("non_actionable")):
+                continue
+            if row.get("is_insufficient_resilience"):
                 reason_counter["insufficient_resilience"] += 1
-            elif "low confidence" in reason or "低置信" in reason:
+            elif row.get("is_low_confidence"):
                 reason_counter["low_confidence"] += 1
-            elif "ev" in reason or "边际偏差" in reason or "market" in reason or "市场" in reason:
-                reason_counter["ev_negative"] += 1
             else:
-                reason_counter["other"] += 1
+                reason = _safe_text(row.get("reason")).lower()
+                if "ev" in reason or "边际偏差" in reason or "market" in reason or "市场" in reason:
+                    reason_counter["ev_negative"] += 1
+                else:
+                    reason_counter["other"] += 1
         lines.append(f"- `insufficient_resilience`: `{reason_counter['insufficient_resilience']}`")
         lines.append(f"- `low_confidence`: `{reason_counter['low_confidence']}`")
         lines.append(f"- `ev_negative_or_market_gap`: `{reason_counter['ev_negative']}`")
         lines.append(f"- `other`: `{reason_counter['other']}`")
         lines.append("")
+        if self.ops_mode:
+            ops_watchlist = synthesis.get("ops_watchlist") if isinstance(synthesis.get("ops_watchlist"), list) else []
+            lines.append("## Ops 观察候选（不改变主结论）")
+            if ops_watchlist:
+                lines.append("| Match | 中文对阵 | 候选 | 置信度 | 说明 |")
+                lines.append("| --- | --- | --- | --- | --- |")
+                for item in ops_watchlist:
+                    lines.append(
+                        f"| {_safe_text(item.get('match')) or '-'} | {_safe_text(item.get('cn_match')) or '-'} | "
+                        f"`{_safe_text(item.get('suggestion')) or 'skip'}` | `{_safe_text(item.get('confidence')) or 'low'}` | "
+                        f"{_safe_text(item.get('reason')) or '-'} |"
+                    )
+            else:
+                lines.append("- 无。")
+            lines.append("")
         lines.append("## Risk Points")
         risks = synthesis.get("risk_points") or []
         if risks:
@@ -1111,8 +1193,9 @@ class PrematchSynthesis:
         else:
             normalized = normalized_rule
         if self.ops_mode:
-            verdicts_for_ops = normalized_rule.get("match_verdicts") if isinstance(normalized_rule.get("match_verdicts"), list) else normalized.get("match_verdicts", [])
-            normalized["candidate_board"] = self._build_operational_candidate_board(verdicts_for_ops or [])
+            verdicts_for_ops = normalized_rule.get("match_verdicts") if isinstance(normalized_rule.get("match_verdicts"), list) else []
+            ops_board = self._build_operational_candidate_board(verdicts_for_ops or [])
+            normalized["ops_watchlist"] = self._build_ops_watchlist(ops_board)
             normalized["mode"] = f"{_safe_text(normalized.get('mode')) or 'rule_only'}+ops"
         markdown = self._render_markdown(normalized, inputs)
 

@@ -168,7 +168,12 @@ def _fmt_match_line(row: MatchTelemetry) -> str:
     )
 
 
-def build_report(issue: str, rows: List[MatchTelemetry], top5_only: bool) -> Tuple[str, Dict[str, Any]]:
+def build_report(
+    issue: str,
+    rows: List[MatchTelemetry],
+    top5_only: bool,
+    expected_rows: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[str, Dict[str, Any]]:
     total = len(rows)
     variance_rows = [r for r in rows if r.variance_flag]
     aligned_rows = [
@@ -203,11 +208,35 @@ def build_report(issue: str, rows: List[MatchTelemetry], top5_only: bool) -> Tup
     up_teams = sorted([(k, v) for k, v in team_delta.items() if v >= 2.0], key=lambda x: x[1], reverse=True)
     down_teams = sorted([(k, v) for k, v in team_delta.items() if v <= -2.0], key=lambda x: x[1])
 
+    expected_rows = expected_rows or []
+    actual_match_ids = {row.match_id for row in rows}
+    missing_matches: List[Dict[str, Any]] = []
+    for match in expected_rows:
+        understat_id = _safe_text(match.get("understat_id"))
+        if understat_id and understat_id in actual_match_ids:
+            continue
+        mapping_source = _safe_text(match.get("mapping_source")).lower()
+        reason = "result_pending"
+        if not understat_id:
+            if mapping_source == "titan":
+                reason = "titan_only_no_understat_id"
+            else:
+                reason = "no_understat_id"
+        missing_matches.append(
+            {
+                "index": match.get("index"),
+                "english": _safe_text(match.get("english")) or _safe_text(match.get("chinese")) or "Unknown",
+                "reason": reason,
+            }
+        )
+
     summary_json: Dict[str, Any] = {
         "issue": issue,
         "scope": "top5" if top5_only else "all",
         "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ"),
         "total_matches": total,
+        "expected_matches": len(expected_rows),
+        "missing_matches": missing_matches,
         "variance_matches": len(variance_rows),
         "aligned_matches": len(aligned_rows),
         "suspicious_matches": len(suspicious_rows),
@@ -223,8 +252,17 @@ def build_report(issue: str, rows: List[MatchTelemetry], top5_only: bool) -> Tup
     lines.append(f"- Issue: `{issue}`")
     lines.append(f"- Scope: `{'Top5 Only' if top5_only else 'All'}`")
     lines.append(f"- Total Matches: `{total}`")
+    lines.append(f"- Expected Matches: `{len(expected_rows)}`")
     lines.append(f"- Variance Alerts: `{len(variance_rows)}`")
     lines.append(f"- Pass-Dominance But Not Win: `{len(pass_dom_not_win)}`")
+    lines.append("")
+    lines.append("## 0) Coverage")
+    if missing_matches:
+        lines.append(f"- Postmatch 覆盖 `{total}/{len(expected_rows)}`，仍缺 `{len(missing_matches)}` 场。")
+        for item in missing_matches:
+            lines.append(f"- `{item['index']}` `{item['english']}`: `{item['reason']}`")
+    else:
+        lines.append(f"- Postmatch 覆盖 `{total}/{len(expected_rows)}`，本期无缺口。")
     lines.append("")
     lines.append("## ⚙️ 一、系统架构调整评估")
     lines.append("")
@@ -327,7 +365,12 @@ def main() -> int:
     if not rows:
         raise RuntimeError("无可用 postmatch 数据，无法生成综合分析。")
 
-    md_text, payload = build_report(args.issue, rows, args.top5_only)
+    expected_rows = [
+        row
+        for row in (manifest.get("matches") or [])
+        if (not args.top5_only) or _safe_text(row.get("league")) in TOP5_LEAGUES
+    ]
+    md_text, payload = build_report(args.issue, rows, args.top5_only, expected_rows=expected_rows)
     suffix = "-Top5" if args.top5_only else ""
     md_path = analysis_dir / f"FINAL-{args.issue}-Postmatch_Synthesis{suffix}.md"
     json_path = analysis_dir / f"FINAL-{args.issue}-Postmatch_Synthesis{suffix}.json"

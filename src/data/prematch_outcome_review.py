@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import yaml
+
 from audit_router import load_dotenv_into_env, normalize_vault_path
 
 
@@ -57,6 +59,35 @@ def _resolve_result_code(match: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _collect_postmatch_result_by_understat_id(issue_dir: Path, issue: str) -> Dict[str, str]:
+    postmatch_dir = issue_dir / "04_Postmatch_Telemetry"
+    if not postmatch_dir.exists():
+        return {}
+    out: Dict[str, str] = {}
+    for path in sorted(postmatch_dir.glob(f"{issue}_*_postmatch.md")):
+        m = re.search(rf"{re.escape(issue)}_(\d+)_postmatch\.md$", path.name)
+        if not m:
+            continue
+        understat_id = m.group(1)
+        text = path.read_text(encoding="utf-8")
+        if not text.startswith("---"):
+            continue
+        parts = text.split("---", 2)
+        if len(parts) < 3:
+            continue
+        frontmatter_raw = parts[1]
+        frontmatter = yaml.safe_load(frontmatter_raw) or {}
+        score_text = _safe_text((frontmatter.get("result") or {}).get("score"))
+        if not _parse_score(score_text):
+            m_score = re.search(r"(?mi)^\s*score:\s*([0-9]+\s*-\s*[0-9]+)\s*$", frontmatter_raw)
+            if m_score:
+                score_text = _safe_text(m_score.group(1))
+        parsed = _parse_score(score_text)
+        if parsed:
+            out[understat_id] = _outcome_code(parsed[0], parsed[1])
+    return out
+
+
 def _collect_manifest_matches(manifest: Dict[str, Any], top5_only: bool) -> Dict[int, Dict[str, Any]]:
     rows: Dict[int, Dict[str, Any]] = {}
     for row in manifest.get("matches") or []:
@@ -102,6 +133,27 @@ def _parse_synthesis_table(md_text: str) -> List[Dict[str, Any]]:
     return items
 
 
+def _load_synthesis_rows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    rows = result.get("match_verdicts") if isinstance(result.get("match_verdicts"), list) else []
+    normalized: List[Dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        normalized.append(
+            {
+                "match": _safe_text(row.get("match")),
+                "suggestion": _safe_text(row.get("final_suggestion") or row.get("suggestion") or "skip"),
+                "analysis_suggestion": _safe_text(row.get("analysis_suggestion") or row.get("suggestion") or "skip"),
+                "confidence": _safe_text(row.get("confidence") or "low"),
+                "candidate_tier": _safe_text(row.get("candidate_tier") or ""),
+                "non_actionable": bool(row.get("non_actionable")),
+                "match_index": row.get("match_index"),
+            }
+        )
+    return normalized
+
+
 def _idx_from_match_name(match_name: str) -> Optional[int]:
     m = re.search(r"Audit-\d+-(\d+)-", match_name)
     if m:
@@ -131,6 +183,28 @@ def _match_idx(row_match: str, lookup: Dict[str, int]) -> Optional[int]:
     return lookup.get(key)
 
 
+def _normalize_team_key(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", _safe_text(text).lower())
+
+
+def _manifest_pair_lookup(manifest: Dict[str, Any], top5_only: bool) -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    for row in manifest.get("matches") or []:
+        try:
+            idx = int(row.get("index"))
+        except Exception:
+            continue
+        if top5_only and _safe_text(row.get("league")) not in TOP5_LEAGUES:
+            continue
+        english = _safe_text(row.get("english"))
+        if " vs " not in english:
+            continue
+        home, away = [x.strip() for x in english.split(" vs ", 1)]
+        key = f"{_normalize_team_key(home)}vs{_normalize_team_key(away)}"
+        out[key] = idx
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prematch 推演赛后回测（命中率 review）")
     parser.add_argument("--issue", required=True)
@@ -149,28 +223,62 @@ def main() -> int:
     manifest_path = vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake" / f"{args.issue}_dispatch_manifest.json"
 
     suffix = "-Top5" if args.top5_only else ""
-    synthesis_path = analysis_dir / f"FINAL-{args.issue}-Prematch_Synthesis{suffix}.md"
-    if not synthesis_path.exists():
-        raise FileNotFoundError(f"找不到综合文件: {synthesis_path}")
+    synthesis_md_path = analysis_dir / f"FINAL-{args.issue}-Prematch_Synthesis{suffix}.md"
+    synthesis_json_path = analysis_dir / f"FINAL-{args.issue}-Prematch_Synthesis{suffix}.json"
+    if not synthesis_md_path.exists():
+        raise FileNotFoundError(f"找不到综合文件: {synthesis_md_path}")
+    if not synthesis_json_path.exists():
+        raise FileNotFoundError(f"找不到综合 JSON: {synthesis_json_path}")
     if not manifest_path.exists():
         raise FileNotFoundError(f"找不到 manifest: {manifest_path}")
 
-    synthesis_md = synthesis_path.read_text(encoding="utf-8")
+    synthesis_payload = _load_json(synthesis_json_path)
     manifest = _load_json(manifest_path)
-    match_rows = _parse_synthesis_table(synthesis_md)
+    match_rows = _load_synthesis_rows(synthesis_payload)
     manifest_by_idx = _collect_manifest_matches(manifest, top5_only=args.top5_only)
+    pair_lookup = _manifest_pair_lookup(manifest, args.top5_only)
+    manifest_by_understat = {
+        _safe_text(row.get("understat_id")): row
+        for row in (manifest.get("matches") or [])
+        if _safe_text(row.get("understat_id"))
+    }
+    postmatch_results = _collect_postmatch_result_by_understat_id(issue_dir, str(args.issue))
     name_lookup = _build_issue_match_lookup(issue_dir)
 
     resolved: List[Dict[str, Any]] = []
     for row in match_rows:
         idx = _match_idx(row["match"], name_lookup)
+        if idx is None and " vs " in _safe_text(row.get("match")):
+            home, away = [x.strip() for x in _safe_text(row.get("match")).split(" vs ", 1)]
+            key = f"{_normalize_team_key(home)}vs{_normalize_team_key(away)}"
+            idx = pair_lookup.get(key)
         manifest_row = manifest_by_idx.get(idx or -1, {})
         result = _resolve_result_code(manifest_row) if manifest_row else None
-        picks = _suggestion_set(row.get("suggestion"))
-        if row.get("suggestion", "").lower() == "skip":
+        if not result and manifest_row:
+            uid = _safe_text(manifest_row.get("understat_id"))
+            if uid:
+                result = postmatch_results.get(uid)
+        if not result and idx:
+            # 兜底：按 index 去 manifest 找 understat id 再查 postmatch
+            fallback_row = manifest_by_idx.get(idx)
+            uid = _safe_text((fallback_row or {}).get("understat_id"))
+            if uid:
+                result = postmatch_results.get(uid)
+        suggestion = _safe_text(row.get("suggestion")).lower()
+        picks = _suggestion_set(suggestion)
+        is_actionable = (
+            not bool(row.get("non_actionable"))
+            and suggestion != "skip"
+            and _safe_text(row.get("candidate_tier")) in {"稳胆", "博弈"}
+        )
+        if not is_actionable or suggestion == "skip":
             status = "skip"
         elif not result:
-            status = "pending_result"
+            uid = _safe_text((manifest_row or {}).get("understat_id"))
+            if uid and uid not in postmatch_results:
+                status = "missing_postmatch_artifact"
+            else:
+                status = "pending_match_result"
         elif result in picks:
             status = "hit"
         else:
@@ -180,17 +288,20 @@ def main() -> int:
                 "idx": idx,
                 "match": row["match"],
                 "suggestion": row["suggestion"],
+                "analysis_suggestion": row.get("analysis_suggestion") or row["suggestion"],
                 "confidence": row["confidence"],
                 "result": result or "-",
                 "status": status,
+                "candidate_tier": row.get("candidate_tier") or "",
             }
         )
 
     actionable = [r for r in resolved if _safe_text(r["suggestion"]).lower() != "skip"]
+    actionable = [r for r in actionable if r["status"] not in {"skip"}]
     settled = [r for r in actionable if r["status"] in {"hit", "miss"}]
     hits = sum(1 for r in settled if r["status"] == "hit")
     hit_rate = (hits / len(settled) * 100.0) if settled else 0.0
-    pending = sum(1 for r in actionable if r["status"] == "pending_result")
+    pending = sum(1 for r in actionable if r["status"] in {"pending_match_result", "missing_postmatch_artifact"})
     skipped = sum(1 for r in resolved if r["status"] == "skip")
 
     lines: List[str] = []
@@ -198,7 +309,7 @@ def main() -> int:
     lines.append("")
     lines.append(f"- Updated At: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%SZ')}")
     lines.append(f"- Scope: `{'Top5 Only' if args.top5_only else 'All Matches'}`")
-    lines.append(f"- Synthesis Source: `{synthesis_path}`")
+    lines.append(f"- Synthesis Source: `{synthesis_md_path}`")
     lines.append(f"- Total Rows: `{len(resolved)}`")
     lines.append(f"- Actionable Picks: `{len(actionable)}`")
     lines.append(f"- Settled Picks: `{len(settled)}`")
@@ -207,11 +318,45 @@ def main() -> int:
     lines.append(f"- Pending Results: `{pending}`")
     lines.append(f"- Skipped: `{skipped}`")
     lines.append("")
-    lines.append("| # | Match | Suggestion | Confidence | Result | Status |")
-    lines.append("| --- | --- | --- | --- | --- | --- |")
+    lines.append("| # | Match | Suggestion | Confidence | Tier | Result | Status |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- |")
     for row in resolved:
         lines.append(
-            f"| {row.get('idx') or '-'} | {row['match']} | `{row['suggestion']}` | `{row['confidence']}` | `{row['result']}` | `{row['status']}` |"
+            f"| {row.get('idx') or '-'} | {row['match']} | `{row['suggestion']}` | `{row['confidence']}` | `{row['candidate_tier'] or '-'}` | `{row['result']}` | `{row['status']}` |"
+        )
+
+    lines.append("")
+    lines.append("## 错误归因表")
+    lines.append("| # | Match | 归因 | 说明 | 修正动作 |")
+    lines.append("| --- | --- | --- | --- | --- |")
+    for row in resolved:
+        if row["status"] == "hit":
+            cause = "命中"
+            detail = "建议方向覆盖赛果。"
+            action = "保持现有规则。"
+        elif row["status"] == "miss":
+            if _safe_text(row["confidence"]).lower() == "low":
+                cause = "低置信误判"
+                detail = "低置信建议未命中，属于高噪音场次误入。"
+                action = "低置信默认降级为观察，不进入执行池。"
+            else:
+                cause = "方向错误"
+                detail = "建议方向与赛果不一致。"
+                action = "回看该场 xG/盘口偏差阈值，修正边际门槛。"
+        elif row["status"] == "missing_postmatch_artifact":
+            cause = "缺少 postmatch 产物"
+            detail = "比赛可能已结束，但当前 issue 目录下未找到对应 postmatch 落盘。"
+            action = "补跑 postmatch 并重跑 outcome_review。"
+        elif row["status"] == "pending_match_result":
+            cause = "赛果未结算"
+            detail = "暂未匹配到可结算赛果。"
+            action = "待赛果入库后重跑 outcome_review。"
+        else:
+            cause = "主动回避"
+            detail = "策略主动跳过。"
+            action = "无需修正。"
+        lines.append(
+            f"| {row.get('idx') or '-'} | {row['match']} | {cause} | {detail} | {action} |"
         )
 
     review_dir.mkdir(parents=True, exist_ok=True)

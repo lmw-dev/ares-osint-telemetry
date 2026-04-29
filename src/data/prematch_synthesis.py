@@ -86,11 +86,13 @@ class PrematchSynthesis:
         output_dir: Optional[Path] = None,
         stdout_only: bool = False,
         top5_only: bool = False,
+        ops_mode: bool = False,
     ):
         self.issue = str(issue)
         self.force_rule = force_rule
         self.stdout_only = stdout_only
         self.top5_only = top5_only
+        self.ops_mode = ops_mode or (_safe_text(os.getenv("ARES_SYNTHESIS_PROFILE")).lower() == "ops")
         self.repo_root = Path(__file__).resolve().parent.parent.parent
         load_dotenv_into_env(self.repo_root)
 
@@ -387,6 +389,80 @@ class PrematchSynthesis:
             },
         }
 
+    @classmethod
+    def _build_operational_candidate_board(cls, verdicts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        base = cls._build_candidate_board(verdicts)
+        summary = base.get("summary", {}) if isinstance(base.get("summary"), dict) else {}
+        if int(summary.get("稳胆", 0)) + int(summary.get("博弈", 0)) > 0:
+            return base
+
+        tiers = base.get("tiers", {}) if isinstance(base.get("tiers"), dict) else {"稳胆": [], "博弈": [], "放弃": []}
+        tiers.setdefault("稳胆", [])
+        tiers.setdefault("博弈", [])
+        tiers.setdefault("放弃", [])
+
+        all_skip = all(_safe_text(row.get("suggestion")).lower() == "skip" for row in verdicts) if verdicts else False
+        promoted: List[Dict[str, Any]] = []
+        if all_skip:
+            skip_rows: List[Dict[str, Any]] = []
+            for row in verdicts:
+                home_edge = row.get("edge_home")
+                away_edge = row.get("edge_away")
+                if not isinstance(home_edge, (int, float)) or not isinstance(away_edge, (int, float)):
+                    continue
+                best_edge = max(float(home_edge), float(away_edge))
+                pick = "3/1" if float(home_edge) >= float(away_edge) else "1/0"
+                skip_rows.append(
+                    {
+                        "match": _safe_text(row.get("match")),
+                        "cn_match": _safe_text(row.get("cn_match")),
+                        "suggestion": pick,
+                        "confidence": "low",
+                        "score": round(best_edge, 2),
+                        "tier": "博弈",
+                        "reason": f"运营候选：原结论为 skip，按最不差边际兜底（best_edge={best_edge:+.1f}pp）。",
+                    }
+                )
+            skip_rows.sort(key=lambda x: x.get("score", -999), reverse=True)
+            promoted = skip_rows[:3]
+        else:
+            ranked = base.get("ranked", []) if isinstance(base.get("ranked"), list) else []
+            for item in ranked[:3]:
+                promoted.append(
+                    {
+                        "match": _safe_text(item.get("match")),
+                        "cn_match": _safe_text(item.get("cn_match")),
+                        "suggestion": _safe_text(item.get("suggestion")) or "1",
+                        "confidence": _safe_text(item.get("confidence")) or "low",
+                        "score": item.get("score", 0),
+                        "tier": "博弈",
+                        "reason": f"{_safe_text(item.get('reason'))} [ops提升: 综合评分前3]",
+                    }
+                )
+        if not promoted:
+            return base
+
+        tiers["博弈"] = promoted
+
+        promoted_matches = {x.get("match") for x in promoted}
+        new_discard = []
+        for item in tiers.get("放弃", []):
+            if _safe_text(item.get("match")) not in promoted_matches:
+                new_discard.append(item)
+        tiers["放弃"] = new_discard
+
+        ranked = tiers["稳胆"] + tiers["博弈"] + tiers["放弃"]
+        return {
+            "tiers": tiers,
+            "ranked": ranked,
+            "summary": {
+                "稳胆": len(tiers["稳胆"]),
+                "博弈": len(tiers["博弈"]),
+                "放弃": len(tiers["放弃"]),
+            },
+            "profile": "ops",
+        }
+
     def _build_rule_based_result(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         diagnostics = inputs.get("diagnostics") or {}
         matches = inputs.get("matches") or []
@@ -526,6 +602,9 @@ class PrematchSynthesis:
                     "source": "rule",
                     "is_low_confidence": bool(row.get("is_low_confidence")),
                     "is_insufficient_resilience": bool(row.get("is_insufficient_resilience")),
+                    "edge_home": edge_home,
+                    "edge_away": edge_away,
+                    "confidence_score": confidence_score,
                 }
             )
 
@@ -553,6 +632,8 @@ class PrematchSynthesis:
             )
 
         candidate_board = self._build_candidate_board(verdicts)
+        if self.ops_mode:
+            candidate_board = self._build_operational_candidate_board(verdicts)
         return {
             "mode": "rule_only",
             "executive_summary": summary,
@@ -812,6 +893,9 @@ class PrematchSynthesis:
                     "source": _safe_text(item.get("source")) or normalized["mode"],
                     "is_low_confidence": bool(item.get("is_low_confidence")),
                     "is_insufficient_resilience": bool(item.get("is_insufficient_resilience")),
+                    "edge_home": item.get("edge_home"),
+                    "edge_away": item.get("edge_away"),
+                    "confidence_score": item.get("confidence_score"),
                 }
             )
 
@@ -865,6 +949,7 @@ class PrematchSynthesis:
         lines.append(f"- Updated At: {now}")
         lines.append(f"- Issue: `{self.issue}`")
         lines.append(f"- Synthesis Mode: `{synthesis.get('mode')}`")
+        lines.append(f"- Synthesis Profile: `{'ops' if self.ops_mode else 'strict'}`")
         lines.append(f"- Scope: `{'Top5 Only' if self.top5_only else 'All Matches'}`")
         lines.append(f"- LLM Enabled: `{'yes' if self._llm_available() else 'no'}`")
         lines.append(f"- Preflight Status: `{_safe_text(diagnostics.get('status')) or 'UNKNOWN'}`")
@@ -873,18 +958,54 @@ class PrematchSynthesis:
         lines.append(f"- Smoke Anchor Matches: `{smoke_count}`")
         candidate_board = synthesis.get("candidate_board") if isinstance(synthesis.get("candidate_board"), dict) else {}
         candidate_summary = candidate_board.get("summary") if isinstance(candidate_board.get("summary"), dict) else {}
+        stable_count = int(candidate_summary.get("稳胆", 0))
+        value_count = int(candidate_summary.get("博弈", 0))
+        discard_count = int(candidate_summary.get("放弃", 0))
         lines.append(
-            f"- Candidate Board: 稳胆 `{int(candidate_summary.get('稳胆', 0))}` / "
-            f"博弈 `{int(candidate_summary.get('博弈', 0))}` / 放弃 `{int(candidate_summary.get('放弃', 0))}`"
+            f"- Candidate Board: 稳胆 `{stable_count}` / "
+            f"博弈 `{value_count}` / 放弃 `{discard_count}`"
         )
+        lines.append("")
+        lines.append("## A层：执行开关")
+        global_posture = _safe_text(synthesis.get("global_posture")).upper()
+        execution_light = "YELLOW"
+        execution_instruction = "允许小仓位试探，按候选池控制风险。"
+        if global_posture == "HOLD" or (stable_count + value_count == 0):
+            execution_light = "RED"
+            execution_instruction = "暂停实盘，先完成最小补料清单后再重跑。"
+        elif global_posture == "READY" and stable_count > 0:
+            execution_light = "GREEN"
+            execution_instruction = "可按候选池执行，优先稳胆，博弈位严格控仓。"
+        lines.append(f"- 执行灯号: `{execution_light}`")
+        lines.append(f"- Global Posture: `{_safe_text(synthesis.get('global_posture'))}`")
+        lines.append(f"- 一句话指令: {execution_instruction}")
+        lines.append(f"- Recommendation: {_safe_text(synthesis.get('final_recommendation')) or '暂无'}")
         lines.append("")
         lines.append("## Executive Summary")
         lines.append(_safe_text(synthesis.get("executive_summary")) or "暂无总结。")
         lines.append("")
-        lines.append("## Final Verdict")
-        lines.append(f"- Global Posture: `{_safe_text(synthesis.get('global_posture'))}`")
-        lines.append(f"- Recommendation: {_safe_text(synthesis.get('final_recommendation')) or '暂无'}")
-        lines.append("")
+        if execution_light == "RED":
+            lines.append("## 最小补料清单")
+            backlog: List[str] = []
+            for row in synthesis.get("match_verdicts") or []:
+                reason = _safe_text(row.get("reason")).lower()
+                match_name = _safe_text(row.get("match")) or "-"
+                if "insufficient resilience" in reason or "韧性" in reason:
+                    backlog.append(f"{match_name}: 补逆境样本（先丢球/领先保分/70'后抗压）")
+                elif "mapping" in reason or "map" in reason or "titan" in reason:
+                    backlog.append(f"{match_name}: 校验映射与锚点来源（Understat/Titan/FBref）")
+                elif "low confidence" in reason or "置信" in reason:
+                    backlog.append(f"{match_name}: 补伤停与首发信息，并复核盘口异动")
+                if len(backlog) >= 8:
+                    break
+            if not backlog:
+                backlog = [
+                    "先补 Team Archive 的 resilience_core 与 market_behavior_core 关键字段。",
+                    "校验 unmapped/手工锚点后重跑 preflight 与 synthesis。",
+                ]
+            for item in backlog:
+                lines.append(f"- {item}")
+            lines.append("")
         lines.append("## Match Verdicts")
         lines.append("| Match | 中文对阵 | 建议 | 置信度 | Posture |")
         lines.append("| --- | --- | --- | --- | --- |")
@@ -896,7 +1017,7 @@ class PrematchSynthesis:
             posture = _safe_text(row.get("posture")) or "-"
             lines.append(f"| {match_name} | {cn_match} | `{suggestion}` | `{confidence}` | `{posture}` |")
         lines.append("")
-        lines.append("## Candidate Board")
+        lines.append("## B层：候选池")
         tier_map = candidate_board.get("tiers") if isinstance(candidate_board.get("tiers"), dict) else {}
         for tier in ["稳胆", "博弈", "放弃"]:
             lines.append(f"### {tier}")
@@ -935,6 +1056,23 @@ class PrematchSynthesis:
             lines.append(f"- 备注: {_safe_text(row.get('reason')) or '-'}")
             lines.append("")
         lines.append("")
+        lines.append("## 回避原因分解")
+        reason_counter = {"insufficient_resilience": 0, "low_confidence": 0, "ev_negative": 0, "other": 0}
+        for row in synthesis.get("match_verdicts") or []:
+            reason = _safe_text(row.get("reason")).lower()
+            if "insufficient resilience" in reason or "韧性" in reason:
+                reason_counter["insufficient_resilience"] += 1
+            elif "low confidence" in reason or "低置信" in reason:
+                reason_counter["low_confidence"] += 1
+            elif "ev" in reason or "边际偏差" in reason or "market" in reason or "市场" in reason:
+                reason_counter["ev_negative"] += 1
+            else:
+                reason_counter["other"] += 1
+        lines.append(f"- `insufficient_resilience`: `{reason_counter['insufficient_resilience']}`")
+        lines.append(f"- `low_confidence`: `{reason_counter['low_confidence']}`")
+        lines.append(f"- `ev_negative_or_market_gap`: `{reason_counter['ev_negative']}`")
+        lines.append(f"- `other`: `{reason_counter['other']}`")
+        lines.append("")
         lines.append("## Risk Points")
         risks = synthesis.get("risk_points") or []
         if risks:
@@ -972,6 +1110,10 @@ class PrematchSynthesis:
                 normalized = normalized_llm
         else:
             normalized = normalized_rule
+        if self.ops_mode:
+            verdicts_for_ops = normalized_rule.get("match_verdicts") if isinstance(normalized_rule.get("match_verdicts"), list) else normalized.get("match_verdicts", [])
+            normalized["candidate_board"] = self._build_operational_candidate_board(verdicts_for_ops or [])
+            normalized["mode"] = f"{_safe_text(normalized.get('mode')) or 'rule_only'}+ops"
         markdown = self._render_markdown(normalized, inputs)
 
         if not self.stdout_only:
@@ -1014,6 +1156,7 @@ def main() -> int:
     )
     parser.add_argument("--stdout-only", action="store_true", help="仅打印结果，不落盘文件")
     parser.add_argument("--top5-only", action="store_true", help="仅汇总五大联赛场次（EPL/LaLiga/Bundesliga/SerieA/Ligue1）")
+    parser.add_argument("--ops-mode", action="store_true", help="运营模式：在严格结论外提供博弈候选池兜底排序")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir).expanduser() if _safe_text(args.output_dir) else None
@@ -1023,6 +1166,7 @@ def main() -> int:
         output_dir=output_dir,
         stdout_only=args.stdout_only,
         top5_only=args.top5_only,
+        ops_mode=args.ops_mode,
     )
     summary = runner.run()
     print("[summary]")

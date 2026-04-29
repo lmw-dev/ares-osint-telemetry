@@ -31,6 +31,16 @@ PLACEHOLDER_MARKERS = (
 )
 
 TACTICAL_LOGIC_KEYS = ("P", "Space", "F", "H", "Set_Piece")
+RESILIENCE_CORE_KEYS = (
+    "concede_first_comeback_rate",
+    "lead_protection_rate",
+    "late_phase_resilience",
+)
+MARKET_BEHAVIOR_CORE_KEYS = (
+    "opening_to_live_direction",
+    "water_level_slope",
+    "bookmaker_divergence_index",
+)
 DEFAULT_PHYSICAL_PROFILE = {
     "avg_xG_last_5": 1.0,
     "conversion_efficiency": 0.05,
@@ -143,6 +153,10 @@ def _collect_archive_gaps(frontmatter: Dict[str, Any], body_text: str) -> Dict[s
     tactical_logic = tactical_logic if isinstance(tactical_logic, dict) else {}
     physical_reality = frontmatter.get("physical_reality")
     physical_reality = physical_reality if isinstance(physical_reality, dict) else {}
+    resilience_core = frontmatter.get("resilience_core")
+    resilience_core = resilience_core if isinstance(resilience_core, dict) else {}
+    market_behavior_core = frontmatter.get("market_behavior_core")
+    market_behavior_core = market_behavior_core if isinstance(market_behavior_core, dict) else {}
 
     manager_doctrine = str(intel_base.get("manager_doctrine") or "").strip()
     if not manager_doctrine or manager_doctrine.lower() == "unknown":
@@ -174,6 +188,28 @@ def _collect_archive_gaps(frontmatter: Dict[str, Any], body_text: str) -> Dict[s
     if len(default_physical_fields) == len(DEFAULT_PHYSICAL_PROFILE):
         gaps.append("default_physical_profile")
 
+    missing_resilience_keys: List[str] = []
+    for key in RESILIENCE_CORE_KEYS:
+        value = resilience_core.get(key)
+        text_value = str(value or "").strip().lower()
+        if value in (None, "") or text_value in {"unknown", "n/a", "na", "null"}:
+            missing_resilience_keys.append(key)
+    if not resilience_core:
+        gaps.append("missing_resilience_core")
+    elif missing_resilience_keys:
+        gaps.append("incomplete_resilience_core")
+
+    missing_market_behavior_keys: List[str] = []
+    for key in MARKET_BEHAVIOR_CORE_KEYS:
+        value = market_behavior_core.get(key)
+        text_value = str(value or "").strip().lower()
+        if value in (None, "") or text_value in {"unknown", "n/a", "na", "null"}:
+            missing_market_behavior_keys.append(key)
+    if not market_behavior_core:
+        gaps.append("missing_market_behavior_core")
+    elif missing_market_behavior_keys:
+        gaps.append("incomplete_market_behavior_core")
+
     archive_quality = str(frontmatter.get("archive_quality") or "").strip().lower()
     if not archive_quality:
         gaps.append("missing_archive_quality")
@@ -195,6 +231,8 @@ def _collect_archive_gaps(frontmatter: Dict[str, Any], body_text: str) -> Dict[s
         "gaps": gaps,
         "missing_tactical_keys": missing_tactical_keys,
         "default_physical_fields": default_physical_fields,
+        "missing_resilience_keys": missing_resilience_keys,
+        "missing_market_behavior_keys": missing_market_behavior_keys,
         "stale_days": stale_days,
         "needs_enrichment": bool(gaps),
     }
@@ -212,6 +250,8 @@ def _inspect_team_archive_content(path: Path) -> Dict[str, Any]:
         "frontmatter": {},
         "gaps": [],
         "missing_tactical_keys": [],
+        "missing_resilience_keys": [],
+        "missing_market_behavior_keys": [],
         "default_physical_fields": [],
         "needs_enrichment": False,
         "stale_days": None,
@@ -266,6 +306,8 @@ def _inspect_team_archive_content(path: Path) -> Dict[str, Any]:
     gap_diagnostics = _collect_archive_gaps(diagnostics["frontmatter"], text)
     diagnostics["gaps"] = gap_diagnostics["gaps"]
     diagnostics["missing_tactical_keys"] = gap_diagnostics["missing_tactical_keys"]
+    diagnostics["missing_resilience_keys"] = gap_diagnostics["missing_resilience_keys"]
+    diagnostics["missing_market_behavior_keys"] = gap_diagnostics["missing_market_behavior_keys"]
     diagnostics["default_physical_fields"] = gap_diagnostics["default_physical_fields"]
     diagnostics["needs_enrichment"] = gap_diagnostics["needs_enrichment"] or diagnostics["placeholder"]
     diagnostics["stale_days"] = gap_diagnostics["stale_days"]
@@ -436,6 +478,8 @@ def build_preflight_report(
     low_quality_teams = placeholder_teams + placeholder_backfilled_teams
     thin_rag_teams = sum(1 for record in team_records.values() if record["rag_doc_count"] <= 1)
     enrichment_needed_teams = sum(1 for record in team_records.values() if record.get("needs_enrichment"))
+    resilience_gap_teams = sum(1 for record in team_records.values() if record.get("missing_resilience_keys"))
+    market_behavior_gap_teams = sum(1 for record in team_records.values() if record.get("missing_market_behavior_keys"))
     total_matches = len(matches)
     total_teams = len(team_records)
     unmapped_matches = mapping_counts.get("unmapped", 0)
@@ -475,6 +519,7 @@ def build_preflight_report(
         f"本期球队共 `{total_teams}` 支：usable `{usable_teams}`、placeholder `{placeholder_teams}`、placeholder_backfilled `{placeholder_backfilled_teams}`、missing `{missing_teams}`。",
         f"低质量模板队档（placeholder + placeholder_backfilled）共 `{low_quality_teams}` 支。",
         f"需要补强的球队共 `{enrichment_needed_teams}` 支（含结构缺口、过期时间戳、默认物理值、缺新闻摘要等）。",
+        f"其中 resilience_core 缺口球队 `{resilience_gap_teams}` 支，market_behavior_core 缺口球队 `{market_behavior_gap_teams}` 支。",
         f"RAG team metadata 覆盖 `{len(rag_readiness['covered_teams'])}/{len(rag_readiness['issue_teams'])}`，但 `thin_rag_docs` 球队有 `{thin_rag_teams}` 支。",
         recommended_action,
     ]
@@ -497,6 +542,8 @@ def build_preflight_report(
         "placeholder_backfilled_team_archives": placeholder_backfilled_teams,
         "low_quality_team_archives": low_quality_teams,
         "enrichment_needed_teams": enrichment_needed_teams,
+        "resilience_gap_teams": resilience_gap_teams,
+        "market_behavior_gap_teams": market_behavior_gap_teams,
         "missing_team_archives": missing_teams,
         "thin_rag_teams": thin_rag_teams,
         "unmapped_matches": unmapped_matches,
@@ -563,6 +610,8 @@ def render_markdown(report: Dict[str, Any]) -> str:
     lines.append(f"| Placeholder Backfilled 队档 | `{report['placeholder_backfilled_team_archives']}` |")
     lines.append(f"| 低质量模板队档 | `{report['low_quality_team_archives']}` |")
     lines.append(f"| 需要补强球队 | `{report['enrichment_needed_teams']}` |")
+    lines.append(f"| Resilience Core 缺口球队 | `{report.get('resilience_gap_teams', 0)}` |")
+    lines.append(f"| Market Behavior Core 缺口球队 | `{report.get('market_behavior_gap_teams', 0)}` |")
     lines.append(f"| 缺失队档 | `{report['missing_team_archives']}` |")
     lines.append(f"| Thin RAG Docs 球队 | `{report['thin_rag_teams']}` |")
     lines.append("")
@@ -718,6 +767,8 @@ def write_team_diagnostics(vault_root: Path, issue: str, report: Dict[str, Any])
                 "needs_enrichment": team.get("needs_enrichment", False),
                 "gaps": team.get("gaps", []),
                 "markers": team.get("markers", []),
+                "missing_resilience_keys": team.get("missing_resilience_keys", []),
+                "missing_market_behavior_keys": team.get("missing_market_behavior_keys", []),
                 "stale_days": team.get("stale_days"),
                 "rag_doc_count": team.get("rag_doc_count", 0),
             }
@@ -732,6 +783,10 @@ def _extract_team_intel_snapshot(team: Dict[str, Any]) -> Dict[str, Any]:
     frontmatter = team.get("frontmatter") or {}
     intel_base = frontmatter.get("intel_base") if isinstance(frontmatter.get("intel_base"), dict) else {}
     market_osint = frontmatter.get("market_osint") if isinstance(frontmatter.get("market_osint"), dict) else {}
+    resilience_core = frontmatter.get("resilience_core") if isinstance(frontmatter.get("resilience_core"), dict) else {}
+    market_behavior_core = (
+        frontmatter.get("market_behavior_core") if isinstance(frontmatter.get("market_behavior_core"), dict) else {}
+    )
     tactical_logic = frontmatter.get("tactical_logic") if isinstance(frontmatter.get("tactical_logic"), dict) else {}
     physical_reality = (
         frontmatter.get("physical_reality") if isinstance(frontmatter.get("physical_reality"), dict) else {}
@@ -746,12 +801,16 @@ def _extract_team_intel_snapshot(team: Dict[str, Any]) -> Dict[str, Any]:
         "archive_path": team.get("archive_path"),
         "gaps": team.get("gaps", []),
         "markers": team.get("markers", []),
+        "missing_resilience_keys": team.get("missing_resilience_keys", []),
+        "missing_market_behavior_keys": team.get("missing_market_behavior_keys", []),
         "rag_doc_count": team.get("rag_doc_count", 0),
         "manager_doctrine": str(intel_base.get("manager_doctrine") or "").strip(),
         "market_sentiment": str(intel_base.get("market_sentiment") or "").strip(),
         "recent_news_summary": str(intel_base.get("recent_news_summary") or "").strip(),
         "key_node_dependency": intel_base.get("key_node_dependency") if isinstance(intel_base.get("key_node_dependency"), list) else [],
         "tactical_logic": tactical_logic,
+        "resilience_core": resilience_core,
+        "market_behavior_core": market_behavior_core,
         "avg_xG_last_5": physical_reality.get("avg_xG_last_5"),
         "conversion_efficiency": physical_reality.get("conversion_efficiency"),
         "defensive_leakage": physical_reality.get("defensive_leakage"),

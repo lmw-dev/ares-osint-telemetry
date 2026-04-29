@@ -278,7 +278,7 @@ def run_prematch_engine(
     if limit is not None and limit > 0:
         cmd.extend(["--limit", str(limit)])
     logger.info("==> 一键流程 Prematch 推演: %s", " ".join(cmd))
-    timeout_sec = _env_int("ARES_PREMATCH_ENGINE_TIMEOUT_SEC", 600)
+    timeout_sec = _env_int("ARES_PREMATCH_ENGINE_TIMEOUT_SEC", 1800)
     try:
         result = subprocess.run(
             cmd,

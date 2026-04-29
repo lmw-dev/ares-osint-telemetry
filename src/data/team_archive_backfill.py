@@ -49,6 +49,16 @@ DEFAULT_PHYSICAL_PROFILE = {
     "defensive_leakage": 0.5,
     "actual_tactical_entropy": 0.4,
 }
+DEFAULT_RESILIENCE_CORE = {
+    "concede_first_comeback_rate": None,
+    "lead_protection_rate": None,
+    "late_phase_resilience": None,
+}
+DEFAULT_MARKET_BEHAVIOR_CORE = {
+    "opening_to_live_direction": "",
+    "water_level_slope": None,
+    "bookmaker_divergence_index": None,
+}
 
 
 def _split_match_english(english: str) -> Tuple[str, str]:
@@ -208,6 +218,29 @@ def _normalize_intel_payload(payload: Any) -> Dict[str, Any]:
         value = _normalize_float(payload.get(key))
         if value is not None:
             normalized[key] = value
+
+    resilience_core = payload.get("resilience_core")
+    if isinstance(resilience_core, dict):
+        normalized_core: Dict[str, Any] = {}
+        for key in DEFAULT_RESILIENCE_CORE:
+            value = _normalize_float(resilience_core.get(key))
+            if value is not None:
+                normalized_core[key] = value
+        if normalized_core:
+            normalized["resilience_core"] = normalized_core
+
+    market_behavior_core = payload.get("market_behavior_core")
+    if isinstance(market_behavior_core, dict):
+        normalized_market: Dict[str, Any] = {}
+        direction = str(market_behavior_core.get("opening_to_live_direction") or "").strip()
+        if direction:
+            normalized_market["opening_to_live_direction"] = direction
+        for key in ("water_level_slope", "bookmaker_divergence_index"):
+            value = _normalize_float(market_behavior_core.get(key))
+            if value is not None:
+                normalized_market[key] = value
+        if normalized_market:
+            normalized["market_behavior_core"] = normalized_market
     return normalized
 
 
@@ -287,6 +320,18 @@ def _has_substantive_intel(intel: Dict[str, Any]) -> bool:
         return True
     if _is_meaningful_tactical_logic(intel.get("tactical_logic")):
         return True
+    if isinstance(intel.get("resilience_core"), dict) and any(
+        _normalize_float(v) is not None for v in intel.get("resilience_core", {}).values()
+    ):
+        return True
+    if isinstance(intel.get("market_behavior_core"), dict):
+        market_core = intel.get("market_behavior_core", {})
+        if _is_meaningful_text(market_core.get("opening_to_live_direction")):
+            return True
+        if _normalize_float(market_core.get("water_level_slope")) is not None:
+            return True
+        if _normalize_float(market_core.get("bookmaker_divergence_index")) is not None:
+            return True
     for key in ["avg_xG_last_5", "conversion_efficiency", "defensive_leakage", "actual_tactical_entropy"]:
         if key in intel:
             value = _normalize_float(intel.get(key))
@@ -340,6 +385,27 @@ def _merge_intel_into_frontmatter(frontmatter: Dict[str, Any], intel: Dict[str, 
         tactical_logic.update(intel["tactical_logic"])
     if tactical_logic:
         merged_frontmatter["tactical_logic"] = tactical_logic
+
+    resilience_core = dict(merged_frontmatter.get("resilience_core") or {})
+    resilience_core = merge_frontmatter_defaults(resilience_core, DEFAULT_RESILIENCE_CORE)
+    if isinstance(intel.get("resilience_core"), dict):
+        for key in DEFAULT_RESILIENCE_CORE:
+            value = _normalize_float(intel["resilience_core"].get(key))
+            if value is not None:
+                resilience_core[key] = value
+    merged_frontmatter["resilience_core"] = resilience_core
+
+    market_behavior_core = dict(merged_frontmatter.get("market_behavior_core") or {})
+    market_behavior_core = merge_frontmatter_defaults(market_behavior_core, DEFAULT_MARKET_BEHAVIOR_CORE)
+    if isinstance(intel.get("market_behavior_core"), dict):
+        direction = str(intel["market_behavior_core"].get("opening_to_live_direction") or "").strip()
+        if direction:
+            market_behavior_core["opening_to_live_direction"] = direction
+        for key in ("water_level_slope", "bookmaker_divergence_index"):
+            value = _normalize_float(intel["market_behavior_core"].get(key))
+            if value is not None:
+                market_behavior_core[key] = value
+    merged_frontmatter["market_behavior_core"] = market_behavior_core
 
     return merged_frontmatter
 

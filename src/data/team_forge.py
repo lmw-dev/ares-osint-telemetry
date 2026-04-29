@@ -40,6 +40,16 @@ DEFAULT_FRONTMATTER: Dict[str, Any] = {
         "bias_type": "Aligned",
         "S_dynamic_modifier": 0.0,
     },
+    "resilience_core": {
+        "concede_first_comeback_rate": None,
+        "lead_protection_rate": None,
+        "late_phase_resilience": None,
+    },
+    "market_behavior_core": {
+        "opening_to_live_direction": "",
+        "water_level_slope": None,
+        "bookmaker_divergence_index": None,
+    },
 }
 
 

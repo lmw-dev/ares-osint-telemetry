@@ -163,8 +163,16 @@ python src/data/osint_pipeline.py --issue 24040 --no-prematch-ready-gate
 # 跳过 prematch 前 Team Archive 回填（默认会自动执行）
 python src/data/osint_pipeline.py --issue 24040 --skip-team-backfill
 
+# 跳过 prematch 前 Team Forge（避免覆盖已手工补强的队档）
+python src/data/osint_pipeline.py --issue 24040 --skip-team-forge
+
 # 指定 prematch 前回填使用的 TEAM-INTEL 文件
 python src/data/osint_pipeline.py --issue 24040 --team-intel-file /path/to/TEAM-INTEL-24040.json
+```
+
+Prematch 引擎超时可通过环境变量覆盖（默认 `1800` 秒）：
+```bash
+export ARES_PREMATCH_ENGINE_TIMEOUT_SEC=1800
 ```
 
 ### 1.6 Prematch 预检总揽（推荐先跑）
@@ -251,6 +259,9 @@ python src/data/prematch_synthesis.py --issue 24040
 
 # 如需禁用 LLM，走规则兜底
 python src/data/prematch_synthesis.py --issue 24040 --force-rule
+
+# 运营模式：在严格结论外提供“博弈候选池”兜底排序
+python src/data/prematch_synthesis.py --issue 24040 --ops-mode --force-rule
 ```
 产出物：
 - `$ARES_VAULT_PATH/03_Match_Audits/{issue}/02_Special_Analyses/FINAL-{issue}-Prematch_Synthesis.md`
@@ -356,6 +367,9 @@ python src/data/osint_postmatch.py --issue 24040 --match-id 22064 --official-sco
 * **Prematch Preflight Overview**：`prematch_preflight.py` 会单独生成 `Audit-{issue}.md`，并区分 `usable / placeholder / placeholder_backfilled / missing` 四类 Team Archive 状态；总览页中的摘要统计、比赛看板、球队诊断、风险场次会保持一致，作为 agent 是否继续主流程的前置判断。
 * **Prematch Immediate Closeout**：`osint_pipeline.py` 在 `20-engine audit-issue` 完成后，会立刻再次执行 `audit_router` 收口，不再等 postmatch 收尾后才搬运低质量 prematch。
 * **Prematch Archive Refresh**：`osint_pipeline.py` 在 prematch 前会自动执行一次 Team Archive 刷新链路（`team_forge -> team_archive_backfill -> issue team RAG sync`）；可用 `--skip-team-backfill` 关闭回填步骤，或用 `--team-intel-file` 注入指定情报文件。
+* **Prematch Archive Refresh Guard**：若你已完成手工补强并不希望被 Team Forge 重写，可加 `--skip-team-forge`。
+* **Prematch Engine Timeout**：`20-engine audit-issue` 默认超时为 `1800s`，可通过 `ARES_PREMATCH_ENGINE_TIMEOUT_SEC` 调整。
+* **Prematch Ops Profile**：`prematch_synthesis.py --ops-mode` 会在严格模式之外提供运营候选池兜底（不篡改原审计结论）。
 * **Engine Direct-Run Safety Net**：`20-ares-v4-engine/main.py audit-issue` 在直跑写入 prematch 后，也会尝试回调同目录下的 `21-ares-osint-telemetry/src/data/audit_router.py`，避免 direct-run 绕过质量闸门。
 * **Postmatch Official-Score Gate**：`osint_pipeline.py --issue <issue>` 只有在 dispatch manifest 已具备足够的 `official_score/result_score` 后才会继续 batch postmatch；若官方比分尚未入库，则直接跳过 postmatch，避免把赛前/串期映射误落到 `04_Postmatch_Telemetry/`。
 * **批量模式命名规则**：每场单独输出为 `{issue}_{match_id}_postmatch.md`，避免 14 场互相覆盖。

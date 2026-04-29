@@ -1116,6 +1116,7 @@ if __name__ == "__main__":
     base_dir = Path(__file__).resolve().parent.parent.parent
     load_dotenv_into_env(base_dir)
     run_id = args.issue if args.issue else f"DATE-{args.date}-{str(args.scope or 'top5').strip().lower()}"
+    is_date_mode = bool(args.date)
     engine_dir: Optional[Path] = None
     if (not args.skip_prematch) or args.sync_team_rag_only:
         engine_dir = _resolve_engine_dir(args.engine_dir)
@@ -1139,6 +1140,10 @@ if __name__ == "__main__":
         raise SystemExit(1)
 
     manifest = load_manifest(manifest_path)
+    manifest_matches = manifest.get("matches", []) if isinstance(manifest.get("matches"), list) else []
+    if is_date_mode and not manifest_matches:
+        logger.info("Date 模式当日无可分析比赛，流程结束。run_id=%s", run_id)
+        raise SystemExit(0)
     normalize_manifest_team_names(
         manifest=manifest,
         manifest_path=manifest_path,
@@ -1230,7 +1235,10 @@ if __name__ == "__main__":
             prematch_manifest_path = prematch_temp_manifest_path
             logger.info("Prematch ready-gate 将使用过滤 manifest: %s", prematch_manifest_path)
         else:
-            logger.warning("Prematch ready-gate 下无可执行场次（输入质量不达标）。")
+            if is_date_mode and gate_selection["total_matches"] == 0:
+                logger.info("Prematch ready-gate: date 模式无比赛日，selected=0。")
+            else:
+                logger.warning("Prematch ready-gate 下无可执行场次（输入质量不达标）。")
 
     prematch_summary = {"success": 0, "failed": 0}
     if not args.skip_prematch:

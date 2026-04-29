@@ -1640,6 +1640,8 @@ class AresOsintCrawler:
             )
 
         manifest_path = self._manifest_path()
+        if not output_manifest["matches"]:
+            output_manifest["mapping_status"] = "EMPTY_DATE_FIXTURES"
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(output_manifest, f, ensure_ascii=False, indent=2)
         logger.info("[Date 模式] 战术派发单已落盘 -> %s (matches=%s)", manifest_path, len(output_manifest["matches"]))

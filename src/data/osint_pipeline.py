@@ -758,8 +758,11 @@ def normalize_manifest_team_names(
                 updated += 1
 
     if updated:
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-        logger.info("Manifest 队名/联赛归一化完成: updated_fields=%s -> %s", updated, manifest_path)
+        try:
+            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.info("Manifest 队名/联赛归一化完成: updated_fields=%s -> %s", updated, manifest_path)
+        except OSError as exc:
+            logger.warning("Manifest 回写失败（保留内存态继续执行）: %s", exc)
     return {"updated_fields": updated}
 
 
@@ -1117,6 +1120,22 @@ if __name__ == "__main__":
     load_dotenv_into_env(base_dir)
     run_id = args.issue if args.issue else f"DATE-{args.date}-{str(args.scope or 'top5').strip().lower()}"
     is_date_mode = bool(args.date)
+    if is_date_mode:
+        if args.sync_team_rag_only:
+            logger.warning("date 模式不支持 --sync-team-rag-only，已忽略。")
+            args.sync_team_rag_only = False
+        if not args.skip_prematch:
+            logger.info("date 模式 v1 暂不执行 prematch，已自动启用 --skip-prematch。")
+            args.skip_prematch = True
+        if not args.skip_postmatch:
+            logger.info("date 模式 v1 暂不执行 postmatch，已自动启用 --skip-postmatch。")
+            args.skip_postmatch = True
+        if not args.skip_team_forge:
+            logger.info("date 模式 v1 暂不执行 Team Forge，已自动启用 --skip-team-forge。")
+            args.skip_team_forge = True
+        if not args.skip_team_backfill:
+            logger.info("date 模式 v1 暂不执行 Team Archive backfill，已自动启用 --skip-team-backfill。")
+            args.skip_team_backfill = True
     engine_dir: Optional[Path] = None
     if (not args.skip_prematch) or args.sync_team_rag_only:
         engine_dir = _resolve_engine_dir(args.engine_dir)

@@ -80,11 +80,11 @@ def _resolve_engine_dir(explicit_engine_dir: Optional[str], base_dir: Path) -> P
     return Path(raw_path).expanduser().resolve()
 
 
-def _resolve_manifest_path(vault_root: Path, issue: str, base_dir: Path) -> Path:
-    primary = vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake" / f"{issue}_dispatch_manifest.json"
+def _resolve_manifest_path(vault_root: Path, run_id: str, base_dir: Path) -> Path:
+    primary = vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake" / f"{run_id}_dispatch_manifest.json"
     if primary.exists():
         return primary
-    fallback = base_dir / "raw_reports" / f"{issue}_dispatch_manifest.json"
+    fallback = base_dir / "raw_reports" / f"{run_id}_dispatch_manifest.json"
     if fallback.exists():
         return fallback
     raise FileNotFoundError(f"找不到 dispatch manifest: {primary}")
@@ -925,7 +925,10 @@ def write_unmapped_anchor_skeleton(vault_root: Path, issue: str, report: Dict[st
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Ares Prematch Preflight Overview")
-    parser.add_argument("--issue", required=True, help="中国体彩期号，如 26066")
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument("--issue", help="中国体彩期号，如 26066")
+    mode_group.add_argument("--date", help="按日期分析，格式 YYYYMMDD，如 20260502")
+    parser.add_argument("--scope", default="top5", help="date 模式范围，当前支持 top5")
     parser.add_argument("--engine-dir", required=False, help="显式指定 20-engine 仓库路径")
     args = parser.parse_args()
 
@@ -938,26 +941,27 @@ def main() -> int:
 
     vault_root = Path(normalize_vault_path(vault_env)).expanduser()
     engine_dir = _resolve_engine_dir(args.engine_dir, base_dir)
-    manifest_path = _resolve_manifest_path(vault_root, args.issue, base_dir)
+    run_id = args.issue if args.issue else f"DATE-{args.date}-{str(args.scope or 'top5').strip().lower()}"
+    manifest_path = _resolve_manifest_path(vault_root, run_id, base_dir)
     manifest = _load_manifest(manifest_path)
 
     report = build_preflight_report(
-        issue=args.issue,
+        issue=run_id,
         base_dir=base_dir,
         vault_root=vault_root,
         engine_dir=engine_dir,
         manifest=manifest,
         manifest_path=manifest_path,
     )
-    target = write_report(vault_root, args.issue, render_markdown(report))
-    diagnostics_target = write_team_diagnostics(vault_root, args.issue, report)
-    intel_skeleton_target = write_generated_intel_skeleton(vault_root, args.issue, report)
-    unmapped_skeleton_target = write_unmapped_anchor_skeleton(vault_root, args.issue, report)
+    target = write_report(vault_root, run_id, render_markdown(report))
+    diagnostics_target = write_team_diagnostics(vault_root, run_id, report)
+    intel_skeleton_target = write_generated_intel_skeleton(vault_root, run_id, report)
+    unmapped_skeleton_target = write_unmapped_anchor_skeleton(vault_root, run_id, report)
     logger.info("Prematch preflight 总揽已写入 -> %s", target)
     logger.info("Prematch preflight 诊断已写入 -> %s", diagnostics_target)
     logger.info("Prematch preflight intel skeleton 已写入 -> %s", intel_skeleton_target)
     logger.info("Prematch preflight unmapped skeleton 已写入 -> %s", unmapped_skeleton_target)
-    logger.info("Issue=%s status=%s action=%s", args.issue, report["status"], report["recommended_action"])
+    logger.info("Issue=%s status=%s action=%s", run_id, report["status"], report["recommended_action"])
     return 0
 
 

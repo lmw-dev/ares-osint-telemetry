@@ -332,14 +332,14 @@ def run_prematch_engine(
     return summary
 
 
-def resolve_manifest_path(base_dir: Path, issue: str) -> Path:
+def resolve_manifest_path(base_dir: Path, run_id: str) -> Path:
     vault_path = os.getenv("ARES_VAULT_PATH")
     if vault_path:
         normalized = MatchTelemetryPipeline._normalize_vault_path(vault_path)
-        primary = Path(normalized) / "04_RAG_Raw_Data" / "Cold_Data_Lake" / f"{issue}_dispatch_manifest.json"
+        primary = Path(normalized) / "04_RAG_Raw_Data" / "Cold_Data_Lake" / f"{run_id}_dispatch_manifest.json"
         if primary.exists():
             return primary
-    return base_dir / "raw_reports" / f"{issue}_dispatch_manifest.json"
+    return base_dir / "raw_reports" / f"{run_id}_dispatch_manifest.json"
 
 
 def load_manifest(path: Path) -> Dict[str, Any]:
@@ -1075,7 +1075,10 @@ def inspect_postmatch_readiness(manifest: Dict[str, Any]) -> Dict[str, Any]:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ares One-Command OSINT Pipeline")
-    parser.add_argument("--issue", type=str, required=True, help="中国体彩期号，如 26064")
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument("--issue", type=str, help="中国体彩期号，如 26064")
+    mode_group.add_argument("--date", type=str, help="按日期分析，格式 YYYYMMDD，如 20260502")
+    parser.add_argument("--scope", type=str, default="top5", help="date 模式范围，当前支持 top5")
     parser.add_argument(
         "--source",
         type=str,
@@ -1112,6 +1115,7 @@ if __name__ == "__main__":
 
     base_dir = Path(__file__).resolve().parent.parent.parent
     load_dotenv_into_env(base_dir)
+    run_id = args.issue if args.issue else f"DATE-{args.date}-{str(args.scope or 'top5').strip().lower()}"
     engine_dir: Optional[Path] = None
     if (not args.skip_prematch) or args.sync_team_rag_only:
         engine_dir = _resolve_engine_dir(args.engine_dir)
@@ -1125,10 +1129,10 @@ if __name__ == "__main__":
     manifest_path: Optional[Path] = None
 
     if not args.skip_crawler:
-        crawler = AresOsintCrawler(issue=args.issue)
+        crawler = AresOsintCrawler(issue=args.issue, analysis_date=args.date, scope=args.scope)
         manifest_path = crawler.scan_and_map()
     else:
-        manifest_path = resolve_manifest_path(base_dir, args.issue)
+        manifest_path = resolve_manifest_path(base_dir, run_id)
 
     if not manifest_path or not manifest_path.exists():
         logger.error("找不到 dispatch_manifest: %s", manifest_path)
@@ -1143,13 +1147,13 @@ if __name__ == "__main__":
 
     if not args.skip_team_forge:
         try:
-            run_issue_team_forge(issue=args.issue, base_dir=base_dir)
+            run_issue_team_forge(issue=run_id, base_dir=base_dir)
         except Exception as e:
             logger.warning("Team Forge 批量补档失败（不影响主流程）: %s", e)
     if not args.skip_team_backfill and ((not args.skip_prematch) or args.sync_team_rag_only):
         try:
             run_issue_team_archive_backfill(
-                issue=args.issue,
+                issue=run_id,
                 base_dir=base_dir,
                 intel_file=args.team_intel_file,
             )
@@ -1158,7 +1162,7 @@ if __name__ == "__main__":
     if ((not args.skip_prematch) or args.sync_team_rag_only) and engine_dir is not None:
         try:
             sync_issue_team_archives_to_rag(
-                issue=args.issue,
+                issue=run_id,
                 base_dir=base_dir,
                 engine_dir=engine_dir,
             )
@@ -1188,7 +1192,7 @@ if __name__ == "__main__":
                 except Exception:
                     pass
             prematch_temp_manifest_path = write_temp_manifest(
-                issue=args.issue,
+                issue=run_id,
                 manifest=prematch_manifest,
             )
             prematch_manifest_path = prematch_temp_manifest_path
@@ -1199,7 +1203,7 @@ if __name__ == "__main__":
     if not args.no_prematch_ready_gate:
         min_team_docs = max(1, _env_int("ARES_PREMATCH_READY_MIN_TEAM_DOCS", 3))
         gate_selection = build_prematch_ready_manifest(
-            issue=args.issue,
+            issue=run_id,
             manifest=prematch_manifest,
             base_dir=base_dir,
             min_team_docs=min_team_docs,
@@ -1220,7 +1224,7 @@ if __name__ == "__main__":
                 except Exception:
                     pass
             prematch_temp_manifest_path = write_temp_manifest(
-                issue=args.issue,
+                issue=run_id,
                 manifest=prematch_manifest,
             )
             prematch_manifest_path = prematch_temp_manifest_path
@@ -1233,13 +1237,13 @@ if __name__ == "__main__":
         rag_readiness = inspect_rag_readiness(engine_dir, prematch_manifest)
         if router.enabled and rag_readiness["ok"]:
             try:
-                router.clear_prematch_blocker_report(args.issue)
+                router.clear_prematch_blocker_report(run_id)
             except Exception as e:
                 logger.warning("Prematch blocker 清理失败（不影响主流程）: %s", e)
         if router.enabled:
             try:
                 router.ensure_issue_governance(
-                    issue=args.issue,
+                    issue=run_id,
                     manifest=manifest,
                     create_prematch_stubs=rag_readiness["ok"] and not args.no_prematch_stubs,
                 )
@@ -1253,13 +1257,13 @@ if __name__ == "__main__":
             if router.enabled:
                 try:
                     router.write_prematch_blocker_report(
-                        issue=args.issue,
+                        issue=run_id,
                         blocker_type=str(rag_readiness.get("blocker_type") or "unknown"),
                         summary=str(rag_readiness.get("summary") or "Prematch blocked"),
                         details=[str(item) for item in rag_readiness.get("details", [])],
                     )
                     router.ensure_issue_governance(
-                        issue=args.issue,
+                        issue=run_id,
                         manifest=manifest,
                         create_prematch_stubs=False,
                     )
@@ -1281,7 +1285,7 @@ if __name__ == "__main__":
                     if router.enabled:
                         try:
                             router.write_prematch_blocker_report(
-                                issue=args.issue,
+                                issue=run_id,
                                 blocker_type="prematch_input_gate_blocked",
                                 summary="Prematch 被输入质量门禁阻断。",
                                 details=[
@@ -1293,7 +1297,7 @@ if __name__ == "__main__":
                             logger.warning("Prematch input gate blocker 写入失败（不影响主流程）: %s", e)
                 else:
                     prematch_summary = run_prematch_engine(
-                        issue=args.issue,
+                        issue=run_id,
                         manifest_path=prematch_manifest_path,
                         engine_dir=engine_dir,
                         limit=args.prematch_limit,
@@ -1301,7 +1305,7 @@ if __name__ == "__main__":
                 if router.enabled:
                     try:
                         router.ensure_issue_governance(
-                            issue=args.issue,
+                            issue=run_id,
                             manifest=manifest,
                             create_prematch_stubs=False,
                         )
@@ -1313,7 +1317,7 @@ if __name__ == "__main__":
     elif router.enabled:
         try:
             router.ensure_issue_governance(
-                issue=args.issue,
+                issue=run_id,
                 manifest=manifest,
                 create_prematch_stubs=not args.no_prematch_stubs,
             )
@@ -1324,7 +1328,7 @@ if __name__ == "__main__":
         if router.enabled:
             try:
                 router.ensure_issue_governance(
-                    issue=args.issue,
+                    issue=run_id,
                     manifest=manifest,
                     create_prematch_stubs=False,
                 )
@@ -1332,7 +1336,7 @@ if __name__ == "__main__":
                 logger.warning("AuditRouter 收尾失败（不影响主流程）: %s", e)
         logger.info(
             "一键流程结束（已跳过赛后复盘） issue=%s, prematch_success=%s, prematch_failed=%s",
-            args.issue,
+            run_id,
             prematch_summary["success"],
             prematch_summary["failed"],
         )
@@ -1350,7 +1354,7 @@ if __name__ == "__main__":
             logger.warning("Postmatch 熔断详情: %s", detail)
         if router.enabled:
             try:
-                cleanup_summary = cleanup_issue_postmatch(args.issue, vault_path=str(router.vault_root))
+                cleanup_summary = cleanup_issue_postmatch(run_id, vault_path=str(router.vault_root))
                 logger.info(
                     "Postmatch 存量清理完成: before=%s, after=%s, new_stale=%s, new_pending=%s, report=%s",
                     len(cleanup_summary["before_main"]),
@@ -1368,7 +1372,7 @@ if __name__ == "__main__":
         }
     else:
         summary = run_batch_postmatch(
-            issue=args.issue,
+            issue=run_id,
             manifest=manifest,
             source=args.source,
             league=args.league,
@@ -1377,7 +1381,7 @@ if __name__ == "__main__":
     if router.enabled:
         try:
             router.ensure_issue_governance(
-                issue=args.issue,
+                issue=run_id,
                 manifest=manifest,
                 create_prematch_stubs=False,
             )
@@ -1386,7 +1390,7 @@ if __name__ == "__main__":
 
     logger.info(
         "一键流程完成 issue=%s, prematch_success=%s, prematch_failed=%s, postmatch_success=%s, postmatch_skipped=%s, postmatch_failed=%s",
-        args.issue,
+        run_id,
         prematch_summary["success"],
         prematch_summary["failed"],
         summary["success"],

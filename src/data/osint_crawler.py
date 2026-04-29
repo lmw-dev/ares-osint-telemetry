@@ -89,8 +89,14 @@ def load_dotenv_into_env(base_dir: Path) -> None:
 class AresOsintCrawler:
     _dotenv_loaded = False
 
-    def __init__(self, issue: str):
-        self.issue = issue
+    def __init__(self, issue: Optional[str] = None, analysis_date: Optional[str] = None, scope: str = "top5"):
+        if bool(issue) == bool(analysis_date):
+            raise ValueError("必须二选一提供 issue 或 analysis_date")
+        self.mode = "issue" if issue else "date"
+        self.issue = str(issue or "").strip()
+        self.analysis_date = str(analysis_date or "").strip()
+        self.scope = str(scope or "top5").strip().lower() or "top5"
+        self.run_id = self.issue if self.mode == "issue" else f"DATE-{self.analysis_date}-{self.scope}"
         self.base_dir = Path(__file__).resolve().parent.parent.parent
         self._load_project_env_file()
         self.vault_path = os.getenv("ARES_VAULT_PATH")
@@ -103,7 +109,16 @@ class AresOsintCrawler:
             self.raw_reports_dir = vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake"
         else:
             self.raw_reports_dir = self.base_dir / "raw_reports"
-        self.raw_reports_dir.mkdir(parents=True, exist_ok=True)
+        fallback_dir = self.base_dir / "raw_reports"
+        try:
+            self.raw_reports_dir.mkdir(parents=True, exist_ok=True)
+            probe = self.raw_reports_dir / ".ares_write_probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+        except Exception as exc:
+            fallback_dir.mkdir(parents=True, exist_ok=True)
+            logger.warning("cold data 目录不可写，回退到本地 raw_reports: %s (%s)", fallback_dir, exc)
+            self.raw_reports_dir = fallback_dir
 
         self.audit_router = AuditRouter(base_dir=self.base_dir, vault_path=self.vault_path)
         self.last_500_cold_refs = []
@@ -124,6 +139,14 @@ class AresOsintCrawler:
         except Exception as e:
             logger.warning(f"无法加载字典 {e}")
             self.team_alias = {}
+
+    def _manifest_path(self) -> Path:
+        return self.raw_reports_dir / f"{self.run_id}_dispatch_manifest.json"
+
+    def _parse_analysis_date(self) -> datetime:
+        if not re.fullmatch(r"\d{8}", self.analysis_date):
+            raise ValueError(f"analysis_date 格式错误，需 YYYYMMDD，当前={self.analysis_date}")
+        return datetime.strptime(self.analysis_date, "%Y%m%d")
 
     def _load_project_env_file(self) -> None:
         if AresOsintCrawler._dotenv_loaded:
@@ -219,7 +242,7 @@ class AresOsintCrawler:
             resp = requests.get(url, headers=headers, timeout=20)
             status_code = resp.status_code
             text, encoding_used = self._decode_html_bytes(resp.content)
-            raw_path = self.raw_reports_dir / f"{self.issue}_titan_{match_id}_{page_key}.html"
+            raw_path = self.raw_reports_dir / f"{self.run_id}_titan_{match_id}_{page_key}.html"
             raw_path.write_text(text, encoding="utf-8")
             raw_ref = str(raw_path)
             soup = BeautifulSoup(text, "html.parser")
@@ -369,8 +392,8 @@ class AresOsintCrawler:
             return []
 
         fetch_time = datetime.utcnow().isoformat() + "Z"
-        html_raw_path = self.raw_reports_dir / f"{self.issue}_500_raw.html"
-        json_raw_path = self.raw_reports_dir / f"{self.issue}_500_raw.json"
+        html_raw_path = self.raw_reports_dir / f"{self.run_id}_500_raw.html"
+        json_raw_path = self.raw_reports_dir / f"{self.run_id}_500_raw.json"
         try:
             html_raw_path.write_text(resp.text, encoding="utf-8")
         except Exception as e:
@@ -442,7 +465,7 @@ class AresOsintCrawler:
             with open(json_raw_path, "w", encoding="utf-8") as f:
                 json.dump(
                     {
-                        "issue": self.issue,
+                        "issue": self.run_id,
                         "source": "500.com",
                         "source_ref": url,
                         "fetched_at": fetch_time,
@@ -777,12 +800,12 @@ class AresOsintCrawler:
             logger.warning("football-data 抓取异常 %s(%s): %s", league_name, competition_code, e)
             return []
 
-        cold_path = self.raw_reports_dir / f"{self.issue}_football_data_{competition_code}_raw.json"
+        cold_path = self.raw_reports_dir / f"{self.run_id}_football_data_{competition_code}_raw.json"
         try:
             with open(cold_path, "w", encoding="utf-8") as f:
                 json.dump(
                     {
-                        "issue": self.issue,
+                        "issue": self.run_id,
                         "source": "football-data.org",
                         "source_ref": url,
                         "fetched_at": datetime.utcnow().isoformat() + "Z",
@@ -932,12 +955,12 @@ class AresOsintCrawler:
             return []
 
         cold_name = self._sanitize_segment(sport_key, "sport")
-        cold_path = self.raw_reports_dir / f"{self.issue}_the_odds_{cold_name}_raw.json"
+        cold_path = self.raw_reports_dir / f"{self.run_id}_the_odds_{cold_name}_raw.json"
         try:
             with open(cold_path, "w", encoding="utf-8") as f:
                 json.dump(
                     {
-                        "issue": self.issue,
+                        "issue": self.run_id,
                         "source": "the-odds-api.com",
                         "source_ref": url,
                         "fetched_at": datetime.utcnow().isoformat() + "Z",
@@ -1134,13 +1157,13 @@ class AresOsintCrawler:
 
         return best.get("fbref_url"), best.get("date"), gap_days, best.get("league")
 
-    def scan_and_map(self):
+    def _scan_and_map_issue(self):
         # 1. Fetch Chinese matches & odds
         cn_matches = self.fetch_500_lottery()
         if not cn_matches:
             return
             
-        manifest_path = self.raw_reports_dir / f"{self.issue}_dispatch_manifest.json"
+        manifest_path = self._manifest_path()
         
         # 2. Check if we already mapped these to save API calls
         output_manifest = None
@@ -1154,7 +1177,10 @@ class AresOsintCrawler:
                 
         if not output_manifest or "matches" not in output_manifest or not output_manifest["matches"]:
             output_manifest = {
-                "issue": self.issue,
+                "issue": self.run_id,
+                "mode": self.mode,
+                "analysis_date": self.analysis_date or None,
+                "scope": self.scope,
                 "mapping_status": "OK",
                 "cold_data_refs": self.last_500_cold_refs,
                 "matches": []
@@ -1532,7 +1558,7 @@ class AresOsintCrawler:
         )
         
         # 保存派发单
-        manifest_path = self.raw_reports_dir / f"{self.issue}_dispatch_manifest.json"
+        manifest_path = self._manifest_path()
         try:
             with open(manifest_path, "w", encoding='utf-8') as f:
                 json.dump(output_manifest, f, ensure_ascii=False, indent=2)
@@ -1543,7 +1569,7 @@ class AresOsintCrawler:
         if self.audit_router.enabled:
             try:
                 self.audit_router.ensure_issue_governance(
-                    issue=self.issue,
+                    issue=self.run_id,
                     manifest=output_manifest,
                     create_prematch_stubs=True,
                 )
@@ -1552,11 +1578,86 @@ class AresOsintCrawler:
 
         return manifest_path
 
+    def _scan_and_map_by_date(self):
+        anchor_dt = self._parse_analysis_date()
+        date_key = anchor_dt.strftime("%Y-%m-%d")
+        logger.info("[Date 模式] 分析日期=%s, scope=%s", date_key, self.scope)
+        if self.scope != "top5":
+            logger.warning("当前仅实现 top5 scope，收到=%s，已按 top5 执行。", self.scope)
+
+        top5_codes = {"PL", "PD", "BL1", "SA", "FL1"}
+        db_matches = []
+        for code, league_name in FOOTBALL_DATA_COMPETITIONS.items():
+            if code not in top5_codes:
+                continue
+            comp_matches = self._fetch_football_data_comp_matches(
+                competition_code=code,
+                league_name=league_name,
+                date_from=date_key,
+                date_to=date_key,
+            )
+            db_matches.extend(comp_matches)
+            time.sleep(0.12)
+
+        output_manifest = {
+            "issue": self.run_id,
+            "mode": self.mode,
+            "analysis_date": self.analysis_date,
+            "scope": self.scope,
+            "mapping_status": "OK",
+            "cold_data_refs": list(dict.fromkeys(self._football_data_cold_refs)),
+            "matches": [],
+        }
+        for i, match in enumerate(db_matches, start=1):
+            home = str(match.get("home_en") or "").strip()
+            away = str(match.get("away_en") or "").strip()
+            if not home or not away:
+                continue
+            output_manifest["matches"].append(
+                {
+                    "index": i,
+                    "chinese": f"{home} vs {away}",
+                    "english": f"{home} vs {away}",
+                    "cn_match_id": None,
+                    "understat_id": None,
+                    "understat_date": None,
+                    "understat_gap_days": None,
+                    "fbref_url": None,
+                    "fbref_date": None,
+                    "fbref_gap_days": None,
+                    "football_data_match_id": match.get("id"),
+                    "football_data_date": match.get("date"),
+                    "football_data_gap_days": 0,
+                    "football_data_competition": match.get("competition_code"),
+                    "mapping_source": "football-data",
+                    "league": match.get("league"),
+                    "manual_anchor_applied": False,
+                    "manual_anchor_mode": None,
+                    "manual_anchor_notes": None,
+                    "manual_anchor_source": None,
+                    "market_odds_history": [],
+                }
+            )
+
+        manifest_path = self._manifest_path()
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(output_manifest, f, ensure_ascii=False, indent=2)
+        logger.info("[Date 模式] 战术派发单已落盘 -> %s (matches=%s)", manifest_path, len(output_manifest["matches"]))
+        return manifest_path
+
+    def scan_and_map(self):
+        if self.mode == "date":
+            return self._scan_and_map_by_date()
+        return self._scan_and_map_issue()
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ares OSINT Telemetry - PREMATCH Crawler Mapping")
-    parser.add_argument("--issue", type=str, required=True, help="中国体彩 足彩期号，如 24040")
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument("--issue", type=str, help="中国体彩 足彩期号，如 24040")
+    mode_group.add_argument("--date", type=str, help="按日期分析，格式 YYYYMMDD，如 20260502")
+    parser.add_argument("--scope", type=str, default="top5", help="date 模式范围，当前支持 top5")
     args = parser.parse_args()
-    
+
     load_dotenv_into_env(Path(__file__).resolve().parent.parent.parent)
-    crawler = AresOsintCrawler(issue=args.issue)
+    crawler = AresOsintCrawler(issue=args.issue, analysis_date=args.date, scope=args.scope)
     crawler.scan_and_map()

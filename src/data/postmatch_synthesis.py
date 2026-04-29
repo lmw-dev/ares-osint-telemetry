@@ -89,12 +89,19 @@ def _parse_postmatch_file(path: Path, league: str) -> Optional[MatchTelemetry]:
     if len(parts) < 3:
         return None
 
-    frontmatter = yaml.safe_load(parts[1]) or {}
+    frontmatter_raw = parts[1]
+    frontmatter = yaml.safe_load(frontmatter_raw) or {}
     match_id = _safe_text(frontmatter.get("match_id") or "")
     match_name = _safe_text(frontmatter.get("match_name") or path.stem)
     home_team, away_team = _split_match_name(match_name)
 
     score_text = _safe_text(frontmatter.get("result", {}).get("score"))
+    if not _parse_score(score_text):
+        # 兼容 YAML 将 `1-1` 这类未加引号比分误解析为日期对象的情况：
+        # 优先回退到 frontmatter 原文直接抽取 score 行。
+        m_score = re.search(r"(?mi)^\s*score:\s*([0-9]+\s*-\s*[0-9]+)\s*$", frontmatter_raw)
+        if m_score:
+            score_text = _safe_text(m_score.group(1))
     score = _parse_score(score_text)
     if not score:
         return None

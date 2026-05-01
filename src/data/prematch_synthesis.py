@@ -93,6 +93,12 @@ def _build_gate_lookup(gate_snapshot: Dict[str, Any]) -> Dict[str, Dict[str, Any
     return lookup
 
 
+def _safe_gap(edge_a: Any, edge_b: Any) -> Optional[float]:
+    if not isinstance(edge_a, (int, float)) or not isinstance(edge_b, (int, float)):
+        return None
+    return abs(float(edge_a) - float(edge_b))
+
+
 class PrematchSynthesis:
     def __init__(
         self,
@@ -437,6 +443,28 @@ class PrematchSynthesis:
 
         return round(score, 2)
 
+    @staticmethod
+    def _watchlist_upgrade_reason(verdict: Dict[str, Any]) -> Optional[str]:
+        suggestion = _safe_text(verdict.get("suggestion")).lower()
+        readiness_level = _safe_text(verdict.get("readiness_level")).upper() or "READY"
+        if readiness_level != "READY":
+            return None
+        if bool(verdict.get("is_low_confidence")) or bool(verdict.get("is_insufficient_resilience")):
+            return None
+        best_edge = verdict.get("best_edge")
+        edge_home = verdict.get("edge_home")
+        edge_away = verdict.get("edge_away")
+        edge_gap = _safe_gap(edge_home, edge_away)
+        if not isinstance(best_edge, (int, float)) or not isinstance(edge_gap, (int, float)):
+            return None
+        if best_edge < -9.0:
+            return None
+        if suggestion not in {"1/0", "3/1"}:
+            return None
+        if edge_gap < 4.5:
+            return None
+        return f"观察升级：best_edge={float(best_edge):+.1f}pp，主客差={float(edge_gap):.1f}pp，允许低仓位试探。"
+
     @classmethod
     def _candidate_tier(cls, verdict: Dict[str, Any]) -> str:
         suggestion = _safe_text(verdict.get("suggestion")).lower()
@@ -449,6 +477,8 @@ class PrematchSynthesis:
         if suggestion in {"3", "0"} and score >= 4.0 and readiness_level == "READY" and not is_low_conf and not is_insufficient:
             return "稳胆"
         if suggestion != "skip" and score >= 1.5 and readiness_level == "READY" and best_edge is not None and best_edge >= 0:
+            return "博弈"
+        if cls._watchlist_upgrade_reason(verdict):
             return "博弈"
         if suggestion != "skip" and readiness_level in {"READY", "HOLD"}:
             return "观察"
@@ -622,6 +652,7 @@ class PrematchSynthesis:
             confidence = "low"
             reason = "缺少可计算的市场/模型偏差，暂归为观望。"
             confidence_score = 1.0
+            upgrade_reason = None
 
             if isinstance(edge_home, (int, float)) and isinstance(edge_away, (int, float)):
                 # 仅基于主客两侧边际，避免“1 - (主+客)”带来的平局伪信号。
@@ -658,6 +689,18 @@ class PrematchSynthesis:
                     confidence_score -= 2.0
                 if readiness_level == "HOLD":
                     confidence_score -= 1.0
+                provisional_verdict = {
+                    "suggestion": suggestion,
+                    "readiness_level": readiness_level,
+                    "is_low_confidence": bool(row.get("is_low_confidence")),
+                    "is_insufficient_resilience": bool(row.get("is_insufficient_resilience")),
+                    "best_edge": best_edge,
+                    "edge_home": edge_home,
+                    "edge_away": edge_away,
+                }
+                upgrade_reason = self._watchlist_upgrade_reason(provisional_verdict)
+                if upgrade_reason:
+                    confidence_score = max(confidence_score, 2.6)
                 if confidence_score >= 5.0:
                     confidence = "high"
                 elif confidence_score >= 2.5:
@@ -671,6 +714,8 @@ class PrematchSynthesis:
                 )
                 if edge_home < 0 and edge_away < 0:
                     reason += " 双侧均为负边际，仅保留观察价值。"
+                if upgrade_reason:
+                    reason += f" {upgrade_reason}"
                 if row.get("is_low_confidence") or row.get("is_insufficient_resilience"):
                     reason += " 已施加质量折扣。"
                 if suggestion == "skip":
@@ -679,6 +724,8 @@ class PrematchSynthesis:
             posture = "TACTICAL_STALEMATE / WAIT"
             if suggestion in {"3", "0"} and confidence in {"medium", "high"}:
                 posture = "TRUE_FAVORITE / EXECUTABLE"
+            elif upgrade_reason:
+                posture = "WATCHLIST_UPGRADED / PROBE_EXECUTION"
             elif readiness_level == "HOLD":
                 posture = "DATA_WEAK / WATCHLIST"
             elif suggestion in {"3/1", "1/0", "3/0", "1"}:
@@ -701,6 +748,8 @@ class PrematchSynthesis:
             execution_plan = "回避，等待赛前新增阵容/伤停/战术证据。"
             if suggestion in {"3", "0"} and confidence in {"medium", "high"}:
                 execution_plan = f"主执行 `{suggestion}`，低仓位保守跟随。"
+            elif upgrade_reason:
+                execution_plan = f"允许 `{suggestion}` 低仓位试探，严格临场二次确认。"
             elif suggestion in {"3/1", "1/0", "3/0", "1"}:
                 execution_plan = f"仅可做 `{suggestion}` 对冲单，不做单边重仓。"
 
@@ -726,6 +775,7 @@ class PrematchSynthesis:
                     "reason": reason,
                     "source": "rule",
                     "readiness_level": readiness_level,
+                    "upgrade_reason": upgrade_reason,
                     "is_low_confidence": bool(row.get("is_low_confidence")),
                     "is_insufficient_resilience": bool(row.get("is_insufficient_resilience")),
                     "edge_home": edge_home,
@@ -1045,6 +1095,7 @@ class PrematchSynthesis:
                     "reason": _safe_text(item.get("reason")),
                     "source": _safe_text(item.get("source")) or normalized["mode"],
                     "readiness_level": _safe_text(item.get("readiness_level")) or _safe_text((source_row or {}).get("readiness_level")) or "READY",
+                    "upgrade_reason": _safe_text(item.get("upgrade_reason")),
                     "is_low_confidence": bool(item.get("is_low_confidence")),
                     "is_insufficient_resilience": bool(item.get("is_insufficient_resilience")),
                     "candidate_tier": _safe_text(item.get("candidate_tier")),
@@ -1074,6 +1125,7 @@ class PrematchSynthesis:
                         "reason": "无有效综合结论，默认回避。",
                         "source": "fallback",
                         "readiness_level": "BLOCKED",
+                        "upgrade_reason": "",
                         "is_low_confidence": True,
                         "is_insufficient_resilience": True,
                         "candidate_tier": "放弃",
@@ -1231,6 +1283,8 @@ class PrematchSynthesis:
             lines.append(f"- 市场解耦: {_safe_text(row.get('market_decoupling')) or _safe_text(row.get('reason')) or '-'}")
             lines.append(f"- 物理面: {_safe_text(row.get('physical_edge')) or '-'}")
             lines.append(f"- 执行建议: {_safe_text(row.get('execution_plan')) or '-'}")
+            if _safe_text(row.get("upgrade_reason")):
+                lines.append(f"- 升级依据: {_safe_text(row.get('upgrade_reason'))}")
             invalidation = row.get("invalidation_conditions") if isinstance(row.get("invalidation_conditions"), list) else []
             if invalidation:
                 lines.append("- 反证条件:")

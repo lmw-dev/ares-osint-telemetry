@@ -345,6 +345,19 @@ def _has_substantive_intel(intel: Dict[str, Any]) -> bool:
     return False
 
 
+def _derive_archive_quality(intel: Dict[str, Any], substantive_intel: bool) -> str:
+    if not substantive_intel:
+        return "placeholder_backfilled"
+    resilience_core = intel.get("resilience_core") if isinstance(intel.get("resilience_core"), dict) else {}
+    market_behavior_core = intel.get("market_behavior_core") if isinstance(intel.get("market_behavior_core"), dict) else {}
+    resilience_ready = all(_normalize_float(resilience_core.get(key)) is not None for key in DEFAULT_RESILIENCE_CORE)
+    market_ready = bool(str(market_behavior_core.get("opening_to_live_direction") or "").strip()) and all(
+        _normalize_float(market_behavior_core.get(key)) is not None
+        for key in ("water_level_slope", "bookmaker_divergence_index")
+    )
+    return "usable_strong" if resilience_ready and market_ready else "usable_weak"
+
+
 def _merge_intel_into_frontmatter(frontmatter: Dict[str, Any], intel: Dict[str, Any]) -> Dict[str, Any]:
     merged_frontmatter = merge_frontmatter_defaults(frontmatter, DEFAULT_FRONTMATTER)
 
@@ -413,7 +426,7 @@ def _merge_intel_into_frontmatter(frontmatter: Dict[str, Any], intel: Dict[str, 
 def _render_body(team: str, league: str, issue: str, matches: List[Dict[str, Any]], intel: Optional[Dict[str, Any]] = None) -> str:
     intel = intel or {}
     substantive = _has_substantive_intel(intel)
-    archive_quality = "usable" if substantive else "placeholder_backfilled"
+    archive_quality = _derive_archive_quality(intel, substantive)
     manager_doctrine = str(intel.get("manager_doctrine") or "Unknown")
     market_sentiment = str(intel.get("market_sentiment") or "Neutral")
     recent_news_summary = str(intel.get("recent_news_summary") or "待补充")
@@ -574,7 +587,7 @@ def _backfill_one_team(
     merged_frontmatter["project"] = merged_frontmatter.get("project", "Ares-Matrix-DB")
     merged_frontmatter["owner"] = merged_frontmatter.get("owner", "Ares")
     merged_frontmatter["current_league"] = merged_frontmatter.get("current_league", league)
-    merged_frontmatter["archive_quality"] = "usable" if substantive_intel else "placeholder_backfilled"
+    merged_frontmatter["archive_quality"] = _derive_archive_quality(intel or {}, substantive_intel)
     merged_frontmatter["last_modified_date"] = datetime.utcnow().strftime("%Y-%m-%d")
     merged_frontmatter["backfill_context"] = {
         "issue": issue,

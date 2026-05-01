@@ -245,6 +245,7 @@ class PrematchSynthesis:
             if gate_row is None and _safe_text(parsed.get("match")):
                 gate_row = gate_lookup.get(f"match:{_safe_text(parsed.get('match'))}")
             parsed["gate_row"] = gate_row
+            parsed["readiness_level"] = _safe_text((gate_row or {}).get("prematch_readiness_level")).upper() or "READY"
             parsed["is_low_confidence"] = (
                 bool((gate_row or {}).get("soft_blockers"))
                 or _safe_text((gate_row or {}).get("quality_tag")) == "DATA_WEAK"
@@ -403,6 +404,9 @@ class PrematchSynthesis:
         confidence = _safe_text(verdict.get("confidence")).lower()
         is_low_conf = bool(verdict.get("is_low_confidence"))
         is_insufficient = bool(verdict.get("is_insufficient_resilience"))
+        readiness_level = _safe_text(verdict.get("readiness_level")).upper() or "READY"
+        best_edge = verdict.get("best_edge")
+        best_edge = float(best_edge) if isinstance(best_edge, (int, float)) else None
 
         score = 0.0
         if suggestion in {"3", "0"}:
@@ -424,6 +428,12 @@ class PrematchSynthesis:
             score -= 2.2
         if is_low_conf:
             score -= 1.5
+        if readiness_level == "HOLD":
+            score -= 1.2
+        elif readiness_level == "BLOCKED":
+            score -= 2.5
+        if best_edge is not None and best_edge < 0:
+            score -= 1.0
 
         return round(score, 2)
 
@@ -433,15 +443,20 @@ class PrematchSynthesis:
         score = cls._candidate_score(verdict)
         is_low_conf = bool(verdict.get("is_low_confidence"))
         is_insufficient = bool(verdict.get("is_insufficient_resilience"))
-        if suggestion in {"3", "0"} and score >= 4.0 and not is_low_conf and not is_insufficient:
+        readiness_level = _safe_text(verdict.get("readiness_level")).upper() or "READY"
+        best_edge = verdict.get("best_edge")
+        best_edge = float(best_edge) if isinstance(best_edge, (int, float)) else None
+        if suggestion in {"3", "0"} and score >= 4.0 and readiness_level == "READY" and not is_low_conf and not is_insufficient:
             return "稳胆"
-        if suggestion != "skip" and score >= 1.0:
+        if suggestion != "skip" and score >= 1.5 and readiness_level == "READY" and best_edge is not None and best_edge >= 0:
             return "博弈"
+        if suggestion != "skip" and readiness_level in {"READY", "HOLD"}:
+            return "观察"
         return "放弃"
 
     @classmethod
     def _build_candidate_board(cls, verdicts: List[Dict[str, Any]]) -> Dict[str, Any]:
-        tiers: Dict[str, List[Dict[str, Any]]] = {"稳胆": [], "博弈": [], "放弃": []}
+        tiers: Dict[str, List[Dict[str, Any]]] = {"稳胆": [], "博弈": [], "观察": [], "放弃": []}
         ranked_items: List[Dict[str, Any]] = []
         for row in verdicts:
             score = cls._candidate_score(row)
@@ -467,6 +482,7 @@ class PrematchSynthesis:
             "summary": {
                 "稳胆": len(tiers["稳胆"]),
                 "博弈": len(tiers["博弈"]),
+                "观察": len(tiers["观察"]),
                 "放弃": len(tiers["放弃"]),
             },
         }
@@ -478,9 +494,10 @@ class PrematchSynthesis:
         if int(summary.get("稳胆", 0)) + int(summary.get("博弈", 0)) > 0:
             return base
 
-        tiers = base.get("tiers", {}) if isinstance(base.get("tiers"), dict) else {"稳胆": [], "博弈": [], "放弃": []}
+        tiers = base.get("tiers", {}) if isinstance(base.get("tiers"), dict) else {"稳胆": [], "博弈": [], "观察": [], "放弃": []}
         tiers.setdefault("稳胆", [])
         tiers.setdefault("博弈", [])
+        tiers.setdefault("观察", [])
         tiers.setdefault("放弃", [])
 
         all_skip = all(_safe_text(row.get("suggestion")).lower() == "skip" for row in verdicts) if verdicts else False
@@ -533,13 +550,14 @@ class PrematchSynthesis:
                 new_discard.append(item)
         tiers["放弃"] = new_discard
 
-        ranked = tiers["稳胆"] + tiers["博弈"] + tiers["放弃"]
+        ranked = tiers["稳胆"] + tiers["博弈"] + tiers["观察"] + tiers["放弃"]
         return {
             "tiers": tiers,
             "ranked": ranked,
             "summary": {
                 "稳胆": len(tiers["稳胆"]),
                 "博弈": len(tiers["博弈"]),
+                "观察": len(tiers["观察"]),
                 "放弃": len(tiers["放弃"]),
             },
             "profile": "ops",
@@ -551,6 +569,8 @@ class PrematchSynthesis:
             return []
         tiers = candidate_board.get("tiers") if isinstance(candidate_board.get("tiers"), dict) else {}
         items = tiers.get("博弈") if isinstance(tiers.get("博弈"), list) else []
+        if not items:
+            items = tiers.get("观察") if isinstance(tiers.get("观察"), list) else []
         return items[:5]
 
     def _build_rule_based_result(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -589,6 +609,14 @@ class PrematchSynthesis:
                 edge_home = float(home_model) - float(home_market)
             if isinstance(away_model, (int, float)) and isinstance(away_market, (int, float)):
                 edge_away = float(away_model) - float(away_market)
+            best_edge = None
+            if isinstance(edge_home, (int, float)) and isinstance(edge_away, (int, float)):
+                best_edge = max(float(edge_home), float(edge_away))
+            elif isinstance(edge_home, (int, float)):
+                best_edge = float(edge_home)
+            elif isinstance(edge_away, (int, float)):
+                best_edge = float(edge_away)
+            readiness_level = _safe_text(row.get("readiness_level")).upper() or "READY"
 
             suggestion = "skip"
             confidence = "low"
@@ -620,14 +648,16 @@ class PrematchSynthesis:
                     confidence_score = max(0.0, positive_edge)
                 elif suggestion == "3/0":
                     confidence_score = max(0.0, positive_edge - 0.5)
-                elif suggestion in {"1", "3/1", "1/0"}:
+                elif suggestion in {"1", "3/1", "1/0"} and (edge_home >= 0 or edge_away >= 0):
                     confidence_score = 2.5
                 else:
-                    confidence_score = 1.0
+                    confidence_score = 0.8
                 if row.get("is_low_confidence"):
                     confidence_score -= 1.5
                 if row.get("is_insufficient_resilience"):
                     confidence_score -= 2.0
+                if readiness_level == "HOLD":
+                    confidence_score -= 1.0
                 if confidence_score >= 5.0:
                     confidence = "high"
                 elif confidence_score >= 2.5:
@@ -639,6 +669,8 @@ class PrematchSynthesis:
                     f"边际偏差: 主胜{edge_home if edge_home is not None else 0:+.1f}pp / "
                     f"客胜{edge_away if edge_away is not None else 0:+.1f}pp。"
                 )
+                if edge_home < 0 and edge_away < 0:
+                    reason += " 双侧均为负边际，仅保留观察价值。"
                 if row.get("is_low_confidence") or row.get("is_insufficient_resilience"):
                     reason += " 已施加质量折扣。"
                 if suggestion == "skip":
@@ -647,6 +679,8 @@ class PrematchSynthesis:
             posture = "TACTICAL_STALEMATE / WAIT"
             if suggestion in {"3", "0"} and confidence in {"medium", "high"}:
                 posture = "TRUE_FAVORITE / EXECUTABLE"
+            elif readiness_level == "HOLD":
+                posture = "DATA_WEAK / WATCHLIST"
             elif suggestion in {"3/1", "1/0", "3/0", "1"}:
                 posture = "HIGH_VARIANCE / HEDGE_REQUIRED"
             elif row.get("is_insufficient_resilience"):
@@ -691,10 +725,12 @@ class PrematchSynthesis:
                     "invalidation_conditions": invalidation,
                     "reason": reason,
                     "source": "rule",
+                    "readiness_level": readiness_level,
                     "is_low_confidence": bool(row.get("is_low_confidence")),
                     "is_insufficient_resilience": bool(row.get("is_insufficient_resilience")),
                     "edge_home": edge_home,
                     "edge_away": edge_away,
+                    "best_edge": best_edge,
                     "confidence_score": confidence_score,
                 }
             )
@@ -744,7 +780,7 @@ class PrematchSynthesis:
         for verdict in verdicts:
             tier = tier_by_match.get(_safe_text(verdict.get("match")), "放弃")
             analysis_suggestion = _safe_text(verdict.get("suggestion")) or "skip"
-            non_actionable = tier == "放弃"
+            non_actionable = tier in {"观察", "放弃"}
             verdict["candidate_tier"] = tier
             verdict["analysis_suggestion"] = analysis_suggestion
             verdict["final_suggestion"] = "skip" if non_actionable else analysis_suggestion
@@ -1008,12 +1044,14 @@ class PrematchSynthesis:
                     ],
                     "reason": _safe_text(item.get("reason")),
                     "source": _safe_text(item.get("source")) or normalized["mode"],
+                    "readiness_level": _safe_text(item.get("readiness_level")) or _safe_text((source_row or {}).get("readiness_level")) or "READY",
                     "is_low_confidence": bool(item.get("is_low_confidence")),
                     "is_insufficient_resilience": bool(item.get("is_insufficient_resilience")),
                     "candidate_tier": _safe_text(item.get("candidate_tier")),
                     "non_actionable": bool(item.get("non_actionable")),
                     "edge_home": item.get("edge_home"),
                     "edge_away": item.get("edge_away"),
+                    "best_edge": item.get("best_edge"),
                     "confidence_score": item.get("confidence_score"),
                 }
             )
@@ -1035,6 +1073,7 @@ class PrematchSynthesis:
                         "invalidation_conditions": [],
                         "reason": "无有效综合结论，默认回避。",
                         "source": "fallback",
+                        "readiness_level": "BLOCKED",
                         "is_low_confidence": True,
                         "is_insufficient_resilience": True,
                         "candidate_tier": "放弃",
@@ -1052,7 +1091,7 @@ class PrematchSynthesis:
         for verdict in normalized["match_verdicts"]:
             tier = tier_by_match.get(_safe_text(verdict.get("match")), _safe_text(verdict.get("candidate_tier")) or "放弃")
             analysis_suggestion = _safe_text(verdict.get("analysis_suggestion") or verdict.get("suggestion") or "skip")
-            non_actionable = bool(verdict.get("non_actionable")) or tier == "放弃"
+            non_actionable = bool(verdict.get("non_actionable")) or tier in {"观察", "放弃"}
             verdict["candidate_tier"] = tier
             verdict["analysis_suggestion"] = analysis_suggestion
             verdict["final_suggestion"] = "skip" if non_actionable else (_safe_text(verdict.get("final_suggestion")) or analysis_suggestion)
@@ -1100,10 +1139,11 @@ class PrematchSynthesis:
         candidate_summary = candidate_board.get("summary") if isinstance(candidate_board.get("summary"), dict) else {}
         stable_count = int(candidate_summary.get("稳胆", 0))
         value_count = int(candidate_summary.get("博弈", 0))
+        watch_count = int(candidate_summary.get("观察", 0))
         discard_count = int(candidate_summary.get("放弃", 0))
         lines.append(
             f"- Candidate Board: 稳胆 `{stable_count}` / "
-            f"博弈 `{value_count}` / 放弃 `{discard_count}`"
+            f"博弈 `{value_count}` / 观察 `{watch_count}` / 放弃 `{discard_count}`"
         )
         lines.append("")
         lines.append("## A层：执行开关")
@@ -1159,7 +1199,7 @@ class PrematchSynthesis:
         lines.append("")
         lines.append("## B层：候选池")
         tier_map = candidate_board.get("tiers") if isinstance(candidate_board.get("tiers"), dict) else {}
-        for tier in ["稳胆", "博弈", "放弃"]:
+        for tier in ["稳胆", "博弈", "观察", "放弃"]:
             lines.append(f"### {tier}")
             lines.append("| Match | 中文对阵 | 建议 | 置信度 | 评分 |")
             lines.append("| --- | --- | --- | --- | --- |")

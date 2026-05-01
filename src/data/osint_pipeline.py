@@ -648,6 +648,9 @@ def build_prematch_ready_manifest(
     matches = manifest.get("matches", []) if isinstance(manifest.get("matches"), list) else []
     selected_matches: List[Dict[str, Any]] = []
     rows: List[Dict[str, Any]] = []
+    strong_statuses = {"usable", "usable_strong"}
+    weak_statuses = {"usable_weak"}
+    blocked_statuses = {"missing", "placeholder", "placeholder_backfilled"}
     for match in matches:
         english = str(match.get("english") or "").strip()
         home, away = _split_match_english(english)
@@ -672,10 +675,18 @@ def build_prematch_ready_manifest(
             missing_market_behavior_keys = [
                 str(item) for item in (row.get("missing_market_behavior_keys") or []) if str(item).strip()
             ]
-            if archive_status != "usable":
+            if archive_status in blocked_statuses or not archive_status:
                 marker = f"non_usable_archive:{side_name}:{archive_status or 'unknown'}"
                 reasons.append(marker)
                 hard_blockers.append(marker)
+            elif archive_status in weak_statuses:
+                marker = f"weak_archive:{side_name}:{archive_status}"
+                reasons.append(marker)
+                soft_blockers.append(marker)
+            elif archive_status not in strong_statuses:
+                marker = f"non_usable_archive:{side_name}:{archive_status or 'unknown'}"
+                reasons.append(marker)
+                soft_blockers.append(marker)
             if rag_docs < min_team_docs:
                 marker = f"low_rag_docs:{side_name}:{rag_docs}"
                 reasons.append(marker)
@@ -703,13 +714,20 @@ def build_prematch_ready_manifest(
                 }
             )
 
+        if hard_blockers:
+            readiness_level = "BLOCKED"
+        elif soft_blockers:
+            readiness_level = "HOLD"
+        else:
+            readiness_level = "READY"
+
         if not reasons:
             quality_tag = "ACTIONABLE"
         elif hard_blockers:
             quality_tag = "HALT_DRIVEN"
         else:
             quality_tag = "DATA_WEAK"
-        ready = not (hard_blockers or soft_blockers)
+        ready = readiness_level == "READY"
         if ready:
             selected_matches.append(match)
         has_resilience_gap = any(bool(item.get("missing_resilience_keys")) for item in team_checks)
@@ -719,6 +737,7 @@ def build_prematch_ready_manifest(
                 "index": match.get("index"),
                 "match": english or str(match.get("chinese") or "Unknown"),
                 "ready": "yes" if ready else "no",
+                "prematch_readiness_level": readiness_level,
                 "quality_tag": quality_tag,
                 "reasons": reasons,
                 "hard_blockers": hard_blockers,
@@ -733,6 +752,7 @@ def build_prematch_ready_manifest(
             "quality_tag": quality_tag,
             "reasons": reasons,
             "ready": ready,
+            "prematch_readiness_level": readiness_level,
             "hard_blockers": hard_blockers,
             "soft_blockers": soft_blockers,
             "has_resilience_gap": has_resilience_gap,

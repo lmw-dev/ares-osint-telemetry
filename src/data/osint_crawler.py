@@ -89,13 +89,20 @@ def load_dotenv_into_env(base_dir: Path) -> None:
 class AresOsintCrawler:
     _dotenv_loaded = False
 
-    def __init__(self, issue: Optional[str] = None, analysis_date: Optional[str] = None, scope: str = "top5"):
+    def __init__(
+        self,
+        issue: Optional[str] = None,
+        analysis_date: Optional[str] = None,
+        scope: str = "top5",
+        date_source: str = "understat",
+    ):
         if bool(issue) == bool(analysis_date):
             raise ValueError("必须二选一提供 issue 或 analysis_date")
         self.mode = "issue" if issue else "date"
         self.issue = str(issue or "").strip()
         self.analysis_date = str(analysis_date or "").strip()
         self.scope = str(scope or "top5").strip().lower() or "top5"
+        self.date_source = str(date_source or "understat").strip().lower() or "understat"
         self.run_id = self.issue if self.mode == "issue" else f"DATE-{self.analysis_date}-{self.scope}"
         self.base_dir = Path(__file__).resolve().parent.parent.parent
         self._load_project_env_file()
@@ -1581,29 +1588,73 @@ class AresOsintCrawler:
     def _scan_and_map_by_date(self):
         anchor_dt = self._parse_analysis_date()
         date_key = anchor_dt.strftime("%Y-%m-%d")
-        logger.info("[Date 模式] 分析日期=%s, scope=%s", date_key, self.scope)
+        logger.info("[Date 模式] 分析日期=%s, scope=%s, source=%s", date_key, self.scope, self.date_source)
         if self.scope != "top5":
             logger.warning("当前仅实现 top5 scope，收到=%s，已按 top5 执行。", self.scope)
 
-        top5_codes = {"PL", "PD", "BL1", "SA", "FL1"}
-        db_matches = []
-        for code, league_name in FOOTBALL_DATA_COMPETITIONS.items():
-            if code not in top5_codes:
-                continue
-            comp_matches = self._fetch_football_data_comp_matches(
-                competition_code=code,
-                league_name=league_name,
-                date_from=date_key,
-                date_to=date_key,
-            )
-            db_matches.extend(comp_matches)
-            time.sleep(0.12)
+        top5_understat = {"EPL", "La_liga", "Bundesliga", "Serie_A", "Ligue_1"}
+        db_matches: List[Dict[str, Any]] = []
+        if self.date_source == "football-data":
+            top5_codes = {"PL", "PD", "BL1", "SA", "FL1"}
+            for code, league_name in FOOTBALL_DATA_COMPETITIONS.items():
+                if code not in top5_codes:
+                    continue
+                comp_matches = self._fetch_football_data_comp_matches(
+                    competition_code=code,
+                    league_name=league_name,
+                    date_from=date_key,
+                    date_to=date_key,
+                )
+                db_matches.extend(comp_matches)
+                time.sleep(0.12)
+        else:
+            understat_db: List[Dict[str, Any]] = []
+            for year in self._get_target_understat_years():
+                season_rows = self.build_understat_db(year=year)
+                if season_rows:
+                    understat_db.extend(season_rows)
+            seen = set()
+            for match in understat_db:
+                league = str(match.get("league") or "").strip()
+                raw_date = str(match.get("date") or "").strip()
+                if league not in top5_understat or not raw_date.startswith(date_key):
+                    continue
+                home = str(match.get("home_en") or "").strip()
+                away = str(match.get("away_en") or "").strip()
+                if not home or not away:
+                    continue
+                dedup_key = (league, home.lower(), away.lower(), raw_date[:10])
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+                db_matches.append(
+                    {
+                        "id": match.get("id"),
+                        "home_en": home,
+                        "away_en": away,
+                        "date": raw_date,
+                        "competition_code": None,
+                        "league": league,
+                        "source": "understat",
+                    }
+                )
+
+        football_data_index: Dict[str, List[Dict[str, Any]]] = {}
+        if self.football_data_api_key:
+            try:
+                football_data_db = self.build_football_data_db(anchor_dt=anchor_dt)
+                for row in football_data_db:
+                    key = f"{self._normalize_team_name(row.get('home_en'))}vs{self._normalize_team_name(row.get('away_en'))}"
+                    football_data_index.setdefault(key, []).append(row)
+            except Exception as exc:
+                logger.warning("[Date 模式] football-data 映射补充失败: %s", exc)
 
         output_manifest = {
             "issue": self.run_id,
             "mode": self.mode,
             "analysis_date": self.analysis_date,
             "scope": self.scope,
+            "date_source": self.date_source,
             "mapping_status": "OK",
             "cold_data_refs": list(dict.fromkeys(self._football_data_cold_refs)),
             "matches": [],
@@ -1613,23 +1664,40 @@ class AresOsintCrawler:
             away = str(match.get("away_en") or "").strip()
             if not home or not away:
                 continue
+            understat_id = match.get("id") if self.date_source != "football-data" else None
+            understat_date = match.get("date") if self.date_source != "football-data" else None
+            understat_gap_days = 0 if understat_date else None
+            football_data_match_id = match.get("id") if self.date_source == "football-data" else None
+            football_data_date = match.get("date") if self.date_source == "football-data" else None
+            football_data_gap_days = 0 if self.date_source == "football-data" else None
+            football_data_competition = match.get("competition_code") if self.date_source == "football-data" else None
+            if self.date_source != "football-data" and football_data_index:
+                lookup_key = f"{self._normalize_team_name(home)}vs{self._normalize_team_name(away)}"
+                fd_candidates = football_data_index.get(lookup_key, [])
+                (
+                    football_data_match_id,
+                    football_data_date,
+                    football_data_gap_days,
+                    _football_data_league,
+                    football_data_competition,
+                ) = self._pick_football_data_match_by_time(fd_candidates, anchor_dt, max_gap_days=self.mapping_max_gap_days)
             output_manifest["matches"].append(
                 {
                     "index": i,
                     "chinese": f"{home} vs {away}",
                     "english": f"{home} vs {away}",
                     "cn_match_id": None,
-                    "understat_id": None,
-                    "understat_date": None,
-                    "understat_gap_days": None,
+                    "understat_id": understat_id,
+                    "understat_date": understat_date,
+                    "understat_gap_days": understat_gap_days,
                     "fbref_url": None,
                     "fbref_date": None,
                     "fbref_gap_days": None,
-                    "football_data_match_id": match.get("id"),
-                    "football_data_date": match.get("date"),
-                    "football_data_gap_days": 0,
-                    "football_data_competition": match.get("competition_code"),
-                    "mapping_source": "football-data",
+                    "football_data_match_id": football_data_match_id,
+                    "football_data_date": football_data_date,
+                    "football_data_gap_days": football_data_gap_days,
+                    "football_data_competition": football_data_competition,
+                    "mapping_source": "football-data" if self.date_source == "football-data" else "understat",
                     "league": match.get("league"),
                     "manual_anchor_applied": False,
                     "manual_anchor_mode": None,
@@ -1658,8 +1726,20 @@ if __name__ == "__main__":
     mode_group.add_argument("--issue", type=str, help="中国体彩 足彩期号，如 24040")
     mode_group.add_argument("--date", type=str, help="按日期分析，格式 YYYYMMDD，如 20260502")
     parser.add_argument("--scope", type=str, default="top5", help="date 模式范围，当前支持 top5")
+    parser.add_argument(
+        "--date-source",
+        type=str,
+        default="understat",
+        choices=["understat", "football-data"],
+        help="date 模式赛程口径来源，默认 understat（严格按 understat 比赛日）。",
+    )
     args = parser.parse_args()
 
     load_dotenv_into_env(Path(__file__).resolve().parent.parent.parent)
-    crawler = AresOsintCrawler(issue=args.issue, analysis_date=args.date, scope=args.scope)
+    crawler = AresOsintCrawler(
+        issue=args.issue,
+        analysis_date=args.date,
+        scope=args.scope,
+        date_source=args.date_source,
+    )
     crawler.scan_and_map()

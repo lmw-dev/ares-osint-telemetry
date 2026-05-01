@@ -78,6 +78,21 @@ def _parse_first_float(text: str) -> Optional[float]:
         return None
 
 
+def _build_gate_lookup(gate_snapshot: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    lookup: Dict[str, Dict[str, Any]] = {}
+    rows = gate_snapshot.get("rows") if isinstance(gate_snapshot.get("rows"), list) else []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        index = row.get("index")
+        match_name = _safe_text(row.get("match"))
+        if index is not None:
+            lookup[f"idx:{index}"] = row
+        if match_name:
+            lookup[f"match:{match_name}"] = row
+    return lookup
+
+
 class PrematchSynthesis:
     def __init__(
         self,
@@ -172,6 +187,13 @@ class PrematchSynthesis:
         diagnostics = self._load_json(self.diagnostics_path) if self.diagnostics_path.exists() else {}
         gate_snapshot = self._load_json(self.gate_json_path) if self.gate_json_path.exists() else {}
         quality_text = self.review_quality_path.read_text(encoding="utf-8") if self.review_quality_path.exists() else ""
+        gate_lookup = _build_gate_lookup(gate_snapshot)
+        gate_rows = gate_snapshot.get("rows") if isinstance(gate_snapshot.get("rows"), list) else []
+        selected_gate_indices = {
+            int(idx)
+            for idx in (gate_snapshot.get("selected_match_indices") or [])
+            if isinstance(idx, int) or (isinstance(idx, str) and idx.isdigit())
+        }
         manifest_matches = manifest.get("matches") if isinstance(manifest.get("matches"), list) else []
         top5_indices: set = set()
         if self.top5_only:
@@ -188,6 +210,14 @@ class PrematchSynthesis:
         low_conf_files = set(_extract_section_bullets(quality_text, "Low Confidence Reports"))
         insufficient_files = set(_extract_section_bullets(quality_text, "Insufficient Resilience Data"))
 
+        if selected_gate_indices:
+            gate_files = set()
+            for idx in sorted(selected_gate_indices):
+                matched = sorted(self.prematch_dir.glob(f"Audit-{self.issue}-{idx:02d}-*.md"))
+                if matched:
+                    gate_files.add(matched[0].name)
+            if gate_files:
+                accepted_files = gate_files
         if not accepted_files and self.prematch_dir.exists():
             accepted_files = {path.name for path in self.prematch_dir.glob("Audit-*.md")}
         if self.top5_only:
@@ -209,9 +239,54 @@ class PrematchSynthesis:
             if not path.exists():
                 continue
             parsed = self._parse_prematch_audit(path)
-            parsed["is_low_confidence"] = filename in low_conf_files
-            parsed["is_insufficient_resilience"] = filename in insufficient_files
+            gate_row = None
+            if parsed.get("match_index") is not None:
+                gate_row = gate_lookup.get(f"idx:{parsed.get('match_index')}")
+            if gate_row is None and _safe_text(parsed.get("match")):
+                gate_row = gate_lookup.get(f"match:{_safe_text(parsed.get('match'))}")
+            parsed["gate_row"] = gate_row
+            parsed["is_low_confidence"] = (
+                bool((gate_row or {}).get("soft_blockers"))
+                or _safe_text((gate_row or {}).get("quality_tag")) == "DATA_WEAK"
+                or (filename in low_conf_files and gate_row is None)
+            )
+            parsed["is_insufficient_resilience"] = bool((gate_row or {}).get("has_resilience_gap")) or (
+                filename in insufficient_files and gate_row is None
+            )
+            parsed["is_structural_data_gap"] = bool((gate_row or {}).get("has_structural_data_gap"))
             match_payloads.append(parsed)
+
+        if gate_rows:
+            def _row_in_scope(row: Dict[str, Any]) -> bool:
+                try:
+                    row_index = int(row.get("index"))
+                except Exception:
+                    return not self.top5_only
+                if self.top5_only and row_index not in top5_indices:
+                    return False
+                return _safe_text(row.get("ready")).lower() == "yes"
+
+            low_conf_count = sum(
+                1
+                for row in gate_rows
+                if isinstance(row, dict)
+                and _row_in_scope(row)
+                and (
+                    _safe_text(row.get("quality_tag")) == "DATA_WEAK"
+                    or bool(row.get("soft_blockers"))
+                    or bool(row.get("has_structural_data_gap"))
+                )
+            )
+            insufficient_count = sum(
+                1
+                for row in gate_rows
+                if isinstance(row, dict)
+                and _row_in_scope(row)
+                and bool(row.get("has_resilience_gap"))
+            )
+        else:
+            low_conf_count = len(low_conf_files)
+            insufficient_count = len(insufficient_files)
 
         return {
             "manifest": manifest,
@@ -219,8 +294,8 @@ class PrematchSynthesis:
             "gate_snapshot": gate_snapshot,
             "quality_text": quality_text,
             "matches": match_payloads,
-            "low_conf_count": len(low_conf_files),
-            "insufficient_count": len(insufficient_files),
+            "low_conf_count": low_conf_count,
+            "insufficient_count": insufficient_count,
             "top5_mode": self.top5_only,
         }
 
@@ -263,44 +338,48 @@ class PrematchSynthesis:
             }
 
         team_sections: List[Dict[str, Any]] = []
-        for block in re.finditer(r"## (Home|Away) - ([^\n]+)\n(.*?)(?=\n## |\Z)", text, flags=re.S):
-            side = _safe_text(block.group(1))
-            team_name = _safe_text(block.group(2))
-            body = block.group(3)
-            s_dynamic = None
-            m_sd = re.search(r"- S_dynamic:\s*`([^`]+)`", body)
-            if m_sd:
-                s_dynamic = _parse_first_float(m_sd.group(1))
-            conclusion = ""
-            m_con = re.search(r"- Prematch 结论:\s*`([^`]+)`", body)
-            if m_con:
-                conclusion = _safe_text(m_con.group(1))
-            decision = ""
-            m_decision = re.search(r"- 决策:\s*(.+)", body)
-            if m_decision:
-                decision = _safe_text(m_decision.group(1))
-            market_prob = None
-            model_prob = None
-            m_ev = re.search(r"- EV:\s*`[^`]*`\s*\|\s*市场\s*`([^`]+)`\s*/\s*模型\s*`([^`]+)`", body)
-            if m_ev:
-                market_prob = _parse_first_float(m_ev.group(1))
-                model_prob = _parse_first_float(m_ev.group(2))
-
-            team_sections.append(
-                {
-                    "side": side,
-                    "team": team_name,
-                    "s_dynamic": s_dynamic,
-                    "conclusion": conclusion,
-                    "decision": decision,
-                    "market_prob": market_prob,
-                    "model_prob": model_prob,
+        current_team: Optional[Dict[str, Any]] = None
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            m_header = re.match(r"## (Home|Away) - ([^\n]+)$", line)
+            if m_header:
+                if current_team:
+                    team_sections.append(current_team)
+                current_team = {
+                    "side": _safe_text(m_header.group(1)),
+                    "team": _safe_text(m_header.group(2)),
+                    "s_dynamic": None,
+                    "conclusion": "",
+                    "decision": "",
+                    "market_prob": None,
+                    "model_prob": None,
                 }
-            )
+                continue
+            if not current_team or not line.startswith("- "):
+                continue
+            m_sd = re.match(r"- S_dynamic:\s*`([^`]+)`", line)
+            if m_sd:
+                current_team["s_dynamic"] = _parse_first_float(m_sd.group(1))
+                continue
+            m_con = re.match(r"- Prematch 结论:\s*`([^`]+)`", line)
+            if m_con:
+                current_team["conclusion"] = _safe_text(m_con.group(1))
+                continue
+            m_decision = re.match(r"- 决策:\s*(.+)", line)
+            if m_decision:
+                current_team["decision"] = _safe_text(m_decision.group(1))
+                continue
+            m_ev = re.match(r"- EV:\s*`[^`]*`\s*\|\s*市场\s*`([^`]+)`\s*/\s*模型\s*`([^`]+)`", line)
+            if m_ev:
+                current_team["market_prob"] = _parse_first_float(m_ev.group(1))
+                current_team["model_prob"] = _parse_first_float(m_ev.group(2))
+        if current_team:
+            team_sections.append(current_team)
 
         return {
             "file": path.name,
             "match_index": match_index,
+            "match": f"{home_team} vs {away_team}" if home_team and away_team else "",
             "home_team": home_team,
             "away_team": away_team,
             "cn_match": cn_match,

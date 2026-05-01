@@ -656,24 +656,64 @@ def build_prematch_ready_manifest(
         home_row = team_map.get(_normalize_team_key(resolved_home))
         away_row = team_map.get(_normalize_team_key(resolved_away))
         reasons: List[str] = []
+        hard_blockers: List[str] = []
+        soft_blockers: List[str] = []
+        team_checks: List[Dict[str, Any]] = []
         for side_name, row in ((resolved_home, home_row), (resolved_away, away_row)):
             if not isinstance(row, dict):
-                reasons.append(f"missing_team_diagnostics:{side_name}")
+                marker = f"missing_team_diagnostics:{side_name}"
+                reasons.append(marker)
+                hard_blockers.append(marker)
                 continue
             archive_status = str(row.get("archive_status") or "").strip().lower()
             rag_docs = int(row.get("rag_doc_count") or 0)
             needs_enrichment = bool(row.get("needs_enrichment"))
+            missing_resilience_keys = [str(item) for item in (row.get("missing_resilience_keys") or []) if str(item).strip()]
+            missing_market_behavior_keys = [
+                str(item) for item in (row.get("missing_market_behavior_keys") or []) if str(item).strip()
+            ]
             if archive_status != "usable":
-                reasons.append(f"non_usable_archive:{side_name}:{archive_status or 'unknown'}")
+                marker = f"non_usable_archive:{side_name}:{archive_status or 'unknown'}"
+                reasons.append(marker)
+                hard_blockers.append(marker)
             if rag_docs < min_team_docs:
-                reasons.append(f"low_rag_docs:{side_name}:{rag_docs}")
+                marker = f"low_rag_docs:{side_name}:{rag_docs}"
+                reasons.append(marker)
+                hard_blockers.append(marker)
             if needs_enrichment:
-                reasons.append(f"needs_enrichment:{side_name}")
+                marker = f"needs_enrichment:{side_name}"
+                reasons.append(marker)
+                soft_blockers.append(marker)
+            if missing_resilience_keys:
+                marker = f"missing_resilience_core:{side_name}:{','.join(missing_resilience_keys)}"
+                reasons.append(marker)
+                soft_blockers.append(marker)
+            if missing_market_behavior_keys:
+                marker = f"missing_market_behavior_core:{side_name}:{','.join(missing_market_behavior_keys)}"
+                reasons.append(marker)
+                soft_blockers.append(marker)
+            team_checks.append(
+                {
+                    "team": side_name,
+                    "archive_status": archive_status,
+                    "rag_doc_count": rag_docs,
+                    "needs_enrichment": needs_enrichment,
+                    "missing_resilience_keys": missing_resilience_keys,
+                    "missing_market_behavior_keys": missing_market_behavior_keys,
+                }
+            )
 
-        quality_tag = "ACTIONABLE" if not reasons else ("HALT_DRIVEN" if any("low_rag_docs" in x for x in reasons) else "DATA_WEAK")
-        ready = not reasons
+        if not reasons:
+            quality_tag = "ACTIONABLE"
+        elif hard_blockers:
+            quality_tag = "HALT_DRIVEN"
+        else:
+            quality_tag = "DATA_WEAK"
+        ready = not (hard_blockers or soft_blockers)
         if ready:
             selected_matches.append(match)
+        has_resilience_gap = any(bool(item.get("missing_resilience_keys")) for item in team_checks)
+        has_market_behavior_gap = any(bool(item.get("missing_market_behavior_keys")) for item in team_checks)
         rows.append(
             {
                 "index": match.get("index"),
@@ -681,9 +721,24 @@ def build_prematch_ready_manifest(
                 "ready": "yes" if ready else "no",
                 "quality_tag": quality_tag,
                 "reasons": reasons,
+                "hard_blockers": hard_blockers,
+                "soft_blockers": soft_blockers,
+                "team_checks": team_checks,
+                "has_resilience_gap": has_resilience_gap,
+                "has_market_behavior_gap": has_market_behavior_gap,
+                "has_structural_data_gap": bool(has_resilience_gap or has_market_behavior_gap),
             }
         )
-        match["prematch_input_quality"] = {"quality_tag": quality_tag, "reasons": reasons, "ready": ready}
+        match["prematch_input_quality"] = {
+            "quality_tag": quality_tag,
+            "reasons": reasons,
+            "ready": ready,
+            "hard_blockers": hard_blockers,
+            "soft_blockers": soft_blockers,
+            "has_resilience_gap": has_resilience_gap,
+            "has_market_behavior_gap": has_market_behavior_gap,
+            "has_structural_data_gap": bool(has_resilience_gap or has_market_behavior_gap),
+        }
 
     filtered_manifest = dict(manifest)
     filtered_manifest["matches"] = selected_matches

@@ -438,19 +438,62 @@ class AuditRouter:
                     continue
         return scores
 
+    @staticmethod
+    def _build_gate_lookup(gate_snapshot: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        lookup: Dict[str, Dict[str, Any]] = {}
+        if not isinstance(gate_snapshot, dict):
+            return lookup
+        rows = gate_snapshot.get("rows")
+        if not isinstance(rows, list):
+            return lookup
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            index = row.get("index")
+            match_name = str(row.get("match") or "").strip()
+            if index is not None:
+                lookup[f"idx:{index}"] = row
+            if match_name:
+                lookup[f"match:{match_name}"] = row
+        return lookup
+
+    @staticmethod
+    def _resolve_gate_row(
+        identity: Dict[str, Any],
+        gate_lookup: Optional[Dict[str, Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(gate_lookup, dict) or not gate_lookup:
+            return None
+        match_index = identity.get("match_index")
+        if match_index is not None:
+            row = gate_lookup.get(f"idx:{match_index}")
+            if isinstance(row, dict):
+                return row
+        match_name = str(identity.get("match_name") or "").strip()
+        if match_name:
+            row = gate_lookup.get(f"match:{match_name}")
+            if isinstance(row, dict):
+                return row
+        return None
+
     def _assess_report_text(
         self,
         issue: str,
         path: Path,
         text: str,
         manifest_lookup: Optional[Dict[int, Dict[str, Any]]] = None,
+        gate_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         identity = self._resolve_report_identity(issue, path, text, manifest_lookup)
         reasons: List[str] = []
         if self._is_generated_prematch_stub_text(text):
             reasons.append("draft_stub")
 
-        if self._has_insufficient_resilience_data(text):
+        gate_row = self._resolve_gate_row(identity, gate_lookup)
+        structured_resilience_gap = bool((gate_row or {}).get("has_resilience_gap"))
+        structured_market_gap = bool((gate_row or {}).get("has_market_behavior_gap"))
+
+        if structured_resilience_gap or self._has_insufficient_resilience_data(text):
             reasons.append("insufficient_resilience_data")
 
         overall_resilience = self._extract_numeric_marker(text, "整体韧性评分")
@@ -459,11 +502,19 @@ class AuditRouter:
         confidence_scores = self._extract_confidence_scores(text)
         explicit_low_confidence = any(score < self.prematch_min_confidence for score in confidence_scores)
         resilience_low_confidence = (
-            overall_resilience == 0.0
-            and (
-                "insufficient_resilience_data" in reasons
-                or "[HALT]" in text
-                or "[Unknown: Insufficient Resilience Data]" in text
+            structured_resilience_gap
+            or structured_market_gap
+            or overall_resilience == 0.0
+        ) and (
+            structured_resilience_gap
+            or structured_market_gap
+            or (
+                overall_resilience == 0.0
+                and (
+                    "insufficient_resilience_data" in reasons
+                    or "[HALT]" in text
+                    or "[Unknown: Insufficient Resilience Data]" in text
+                )
             )
         )
         if explicit_low_confidence or resilience_low_confidence:
@@ -481,6 +532,7 @@ class AuditRouter:
             "contaminated_teams": contaminated_teams,
             "overall_resilience": overall_resilience,
             "confidence_scores": confidence_scores,
+            "gate_row": gate_row,
             **identity,
         }
 
@@ -489,6 +541,7 @@ class AuditRouter:
         issue: str,
         path: Path,
         manifest_lookup: Optional[Dict[int, Dict[str, Any]]] = None,
+        gate_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         try:
             text = path.read_text(encoding="utf-8")
@@ -501,7 +554,7 @@ class AuditRouter:
                 "text": "",
                 **identity,
             }
-        return self._assess_report_text(issue, path, text, manifest_lookup)
+        return self._assess_report_text(issue, path, text, manifest_lookup, gate_lookup)
 
     @staticmethod
     def _reason_label(reason: str) -> str:
@@ -820,7 +873,7 @@ class AuditRouter:
                     deduped += 1
         return deduped
 
-    def _build_quality_findings(self, prematch_dir: Path, review_dir: Path) -> Dict[str, List[str]]:
+    def _build_quality_findings(self, issue: str, prematch_dir: Path, review_dir: Path) -> Dict[str, List[str]]:
         findings = {
             "accepted": [],
             "rejected": [],
@@ -829,9 +882,12 @@ class AuditRouter:
             "insufficient_resilience_data": [],
             "cross_team_contamination": [],
         }
+        gate_lookup = self._build_gate_lookup(
+            self._load_json_if_exists(review_dir / f"REVIEW-{issue}-Prematch_Input_Gate.json")
+        )
         for path in sorted(prematch_dir.glob("Audit-*.md")):
             findings["accepted"].append(path.name)
-            assessment = self._assess_report_quality("", path)
+            assessment = self._assess_report_quality(issue, path, gate_lookup=gate_lookup)
             if "draft_stub" in assessment.get("reasons", []):
                 findings["drafts"].append(path.name)
             if "low_confidence" in assessment.get("reasons", []):
@@ -866,7 +922,7 @@ class AuditRouter:
         return findings
 
     def _write_review_report(self, issue: str, review_dir: Path, prematch_dir: Path) -> None:
-        findings = self._build_quality_findings(prematch_dir, review_dir)
+        findings = self._build_quality_findings(issue, prematch_dir, review_dir)
         blocker_path = review_dir / f"REVIEW-{issue}-Prematch_Blocker.md"
         lines: List[str] = []
         lines.append(f"# Review {issue} - Prematch Data Quality")

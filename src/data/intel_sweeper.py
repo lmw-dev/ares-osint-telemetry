@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Tuple
 import requests
 import yaml
 from bs4 import BeautifulSoup
+from team_archive_paths import league_archive_dir
 
 
 logging.basicConfig(
@@ -219,7 +220,8 @@ def main() -> int:
     raw_dir = vault_root / "04_RAG_Raw_Data"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    archive_path = vault_root / "02_Team_Archives" / league / f"{team}.md"
+    archive_root = vault_root / "02_Team_Archives"
+    archive_path = league_archive_dir(archive_root, league) / f"{team}.md"
 
     articles: List[Dict[str, str]] = []
 

@@ -3,14 +3,23 @@ from pathlib import Path
 from typing import Dict, List
 
 
+def normalize_league_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value).strip().lower())
+
+
 LEAGUE_ARCHIVE_DIRS: Dict[str, str] = {
-    "EPL": "1_Top_Five_Europe/ENG_England",
-    "Championship": "1_Top_Five_Europe/ENG_England",
-    "La_liga": "1_Top_Five_Europe/ESP_Spain",
-    "Bundesliga": "1_Top_Five_Europe/GER_Germany",
-    "Serie_A": "1_Top_Five_Europe/ITA_Italy",
-    "Ligue_1": "1_Top_Five_Europe/FRA_France",
-    "Eredivisie": "2_Other_Europe/NED_Netherlands",
+    normalize_league_key("EPL"): "1_Top_Five_Europe/ENG_England",
+    normalize_league_key("Championship"): "1_Top_Five_Europe/ENG_England",
+    normalize_league_key("FA_Cup"): "1_Top_Five_Europe/ENG_England",
+    normalize_league_key("La_liga"): "1_Top_Five_Europe/ESP_Spain",
+    normalize_league_key("Bundesliga"): "1_Top_Five_Europe/GER_Germany",
+    normalize_league_key("Bundesliga_2"): "1_Top_Five_Europe/GER_Germany",
+    normalize_league_key("Serie_A"): "1_Top_Five_Europe/ITA_Italy",
+    normalize_league_key("Ligue_1"): "1_Top_Five_Europe/FRA_France",
+    normalize_league_key("Ligue_2"): "1_Top_Five_Europe/FRA_France",
+    normalize_league_key("Eredivisie"): "2_Other_Europe/NED_Netherlands",
+    normalize_league_key("Eerste_Divisie"): "2_Other_Europe/NED_Netherlands",
+    normalize_league_key("Primeira_Liga"): "2_Other_Europe/POR_Portugal",
 }
 
 
@@ -83,7 +92,7 @@ def canonical_team_filename(team_name: str) -> str:
 
 
 def league_archive_dir(root: Path, league: str) -> Path:
-    relative = LEAGUE_ARCHIVE_DIRS.get(str(league).strip())
+    relative = LEAGUE_ARCHIVE_DIRS.get(normalize_league_key(league))
     if relative:
         return root / relative
     return root / str(league).strip()

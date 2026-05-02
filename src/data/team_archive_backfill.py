@@ -11,8 +11,8 @@ import yaml
 from audit_router import AuditRouter, load_dotenv_into_env, normalize_vault_path
 from team_forge import (
     DEFAULT_FRONTMATTER,
-    build_archive_path,
     build_markdown,
+    ensure_team_archive,
     iter_issue_teams,
     merge_frontmatter_defaults,
     read_existing_content,
@@ -816,7 +816,9 @@ def _backfill_one_team(
     preflight_diagnostics: Optional[Dict[str, Any]],
     force: bool = False,
 ) -> Dict[str, Any]:
-    archive_path = build_archive_path(vault_root, team=team, league=league)
+    # Always target canonical team path under the league directory to avoid
+    # updating only an alias copy in 99_Alias_Archive.
+    archive_path = ensure_team_archive(vault_root, team=team, league=league)
     if not archive_path.exists():
         merged_frontmatter = merge_frontmatter_defaults({}, DEFAULT_FRONTMATTER)
         content = build_markdown(

@@ -52,6 +52,7 @@ TEAM_FILENAME_ALIASES: Dict[str, List[str]] = {
     "westham": ["West_Ham_United", "West Ham"],
     "wolfsburg": ["Wolfsburg"],
     "wolverhampton": ["Wolverhampton", "Wolverhampton Wanderers"],
+    "wolverhamptonwanderers": ["Wolverhampton", "Wolverhampton Wanderers"],
     "inter": ["Inter_Milan", "Inter"],
     "leeds": ["Leeds_United", "Leeds"],
     "manchestercity": ["Manchester_City", "Manchester City"],

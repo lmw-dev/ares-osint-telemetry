@@ -358,6 +358,158 @@ def _derive_archive_quality(intel: Dict[str, Any], substantive_intel: bool) -> s
     return "usable_strong" if resilience_ready and market_ready else "usable_weak"
 
 
+def _frontmatter_text(frontmatter: Dict[str, Any], key: str, fallback: str = "") -> str:
+    value = str(frontmatter.get(key) or "").strip()
+    return value or fallback
+
+
+def _frontmatter_list(frontmatter: Dict[str, Any], key: str) -> List[str]:
+    value = frontmatter.get(key)
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _fmt_float(value: Any, digits: int = 2) -> str:
+    numeric = _normalize_float(value)
+    if numeric is None:
+        return "unknown"
+    return f"{numeric:.{digits}f}"
+
+
+def _physical_signal_text(avg_xg: Any, conversion: Any, leakage: Any, entropy: Any) -> str:
+    avg_xg_num = _normalize_float(avg_xg)
+    conversion_num = _normalize_float(conversion)
+    leakage_num = _normalize_float(leakage)
+    entropy_num = _normalize_float(entropy)
+
+    phrases: List[str] = []
+    if avg_xg_num is not None:
+        if avg_xg_num >= 1.6:
+            phrases.append("进攻产量偏强")
+        elif avg_xg_num >= 1.2:
+            phrases.append("进攻产量中上")
+        else:
+            phrases.append("进攻产量偏保守")
+    if conversion_num is not None:
+        if conversion_num >= 1.1:
+            phrases.append("终结效率偏热")
+        elif conversion_num <= 0.9:
+            phrases.append("终结效率偏冷")
+    if leakage_num is not None:
+        if leakage_num <= 0.4:
+            phrases.append("防守泄漏控制较稳")
+        elif leakage_num >= 0.65:
+            phrases.append("防守泄漏偏高")
+    if entropy_num is not None:
+        if entropy_num >= 0.6:
+            phrases.append("比赛波动较大")
+        elif entropy_num <= 0.4:
+            phrases.append("结构相对稳定")
+    return "，".join(phrases) if phrases else "物理面仍偏基础占位"
+
+
+def _build_prematch_summary(
+    *,
+    team: str,
+    coach: str,
+    base_formation: str,
+    tactical_style: str,
+    manager_doctrine: str,
+    market_sentiment: str,
+    recent_news_summary: str,
+    key_nodes: List[str],
+    tactical_logic: Dict[str, str],
+    avg_xg: Any,
+    conversion: Any,
+    leakage: Any,
+    entropy: Any,
+    bias_type: str,
+    matches: List[Dict[str, Any]],
+) -> Dict[str, List[str]]:
+    profile_lines: List[str] = []
+    risk_lines: List[str] = []
+    action_lines: List[str] = []
+
+    identity_parts: List[str] = []
+    if coach != "待补充":
+        identity_parts.append(f"主帅为 `{coach}`")
+    if base_formation != "待补充":
+        identity_parts.append(f"常用阵型 `{base_formation}`")
+    if tactical_style != "待补充":
+        identity_parts.append(f"风格偏 `{tactical_style}`")
+    elif manager_doctrine != "Unknown":
+        identity_parts.append(f"战术画像为 `{manager_doctrine}`")
+    if identity_parts:
+        profile_lines.append("球队基础画像：" + "，".join(identity_parts) + "。")
+
+    physical_sentence = _physical_signal_text(avg_xg, conversion, leakage, entropy)
+    profile_lines.append(
+        "物理面速读："
+        f"`xG={_fmt_float(avg_xg)}`、`conv={_fmt_float(conversion)}`、`leakage={_fmt_float(leakage)}`、`entropy={_fmt_float(entropy)}`，{physical_sentence}。"
+    )
+
+    if key_nodes:
+        focus_nodes = "、".join(key_nodes[:3])
+        action_lines.append(f"赛前首先盯防/确认的核心节点：{focus_nodes}。")
+    else:
+        action_lines.append("当前缺少结构化核心节点名单，赛前需先确认首发核心、定位球主罚者和后防出球点。")
+
+    tactical_parts: List[str] = []
+    for key in ["P", "Space", "F", "H", "Set_Piece"]:
+        value = str(tactical_logic.get(key) or "").strip()
+        if value and value.lower() != "unknown":
+            tactical_parts.append(f"{key}={value}")
+    if tactical_parts:
+        profile_lines.append("战术矩阵可直接作为对阵切入口：" + "，".join(tactical_parts) + "。")
+    else:
+        risk_lines.append("战术矩阵尚不完整，当前对空间利用、节奏控制和定位球路径的判断仍偏粗。")
+
+    if recent_news_summary != "待补充":
+        profile_lines.append(f"近期情报摘要：{recent_news_summary}")
+    else:
+        risk_lines.append("近期情报仍为空，赛前容易漏掉伤停、轮换、赛程密度和主帅表态带来的方向偏移。")
+
+    if str(market_sentiment).strip() and market_sentiment != "Neutral":
+        risk_lines.append(f"市场侧初步判断：{market_sentiment}")
+    elif bias_type != "Aligned":
+        risk_lines.append(f"市场偏差标签为 `{bias_type}`，可优先检查盘口是否存在系统性高估/低估。")
+    else:
+        risk_lines.append("市场侧暂未形成明确偏差标签，当前更适合作为基础底稿而非直接给强方向。")
+
+    if isinstance(matches, list) and matches:
+        opponents = " / ".join(str(match.get("english") or "").strip() for match in matches[:2] if str(match.get("english") or "").strip())
+        if opponents:
+            action_lines.append(f"本期关联场次：{opponents}。可直接把以上画像投射到该对阵。")
+
+    avg_xg_num = _normalize_float(avg_xg)
+    leakage_num = _normalize_float(leakage)
+    conversion_num = _normalize_float(conversion)
+    if avg_xg_num is not None and leakage_num is not None:
+        if avg_xg_num >= 1.4 and leakage_num <= 0.45:
+            risk_lines.append("这类球队在 prematch 上更怕被市场高估稳定性，尤其在强势题材下容易低估临场波动。")
+        elif avg_xg_num < 1.1 and leakage_num >= 0.55:
+            risk_lines.append("当前物理面偏脆，若赛前再出现伤停或轮换，比赛下限会明显被拉低。")
+    if conversion_num is not None and conversion_num >= 1.25:
+        risk_lines.append("近期终结效率偏热，赛前要警惕市场把短样本火力当作长期稳定输出。")
+    elif conversion_num is not None and conversion_num <= 0.8:
+        risk_lines.append("近期终结效率偏冷，若盘口明显下修，需分辨是运气回归还是进攻质量真实转弱。")
+
+    action_lines.append("赛前操作上优先把这支队和 `最新伤停 + 临场盘口行为 + 对手风格克制关系` 交叉读取，再决定是否给方向。")
+
+    if not profile_lines:
+        profile_lines.append("当前仍以基础骨架为主，但已具备最小队伍画像，可先用于赛程锚定和对阵背景理解。")
+    if not risk_lines:
+        risk_lines.append("目前最大的不确定性仍来自赛前增量情报缺口，而不是基础画像缺失。")
+    return {
+        "profile": profile_lines,
+        "risk": risk_lines,
+        "action": action_lines,
+    }
+
+
 def _merge_intel_into_frontmatter(frontmatter: Dict[str, Any], intel: Dict[str, Any]) -> Dict[str, Any]:
     merged_frontmatter = merge_frontmatter_defaults(frontmatter, DEFAULT_FRONTMATTER)
 
@@ -423,24 +575,62 @@ def _merge_intel_into_frontmatter(frontmatter: Dict[str, Any], intel: Dict[str, 
     return merged_frontmatter
 
 
-def _render_body(team: str, league: str, issue: str, matches: List[Dict[str, Any]], intel: Optional[Dict[str, Any]] = None) -> str:
+def _render_body(
+    team: str,
+    league: str,
+    issue: str,
+    matches: List[Dict[str, Any]],
+    intel: Optional[Dict[str, Any]] = None,
+    frontmatter: Optional[Dict[str, Any]] = None,
+) -> str:
     intel = intel or {}
+    frontmatter = frontmatter or {}
     substantive = _has_substantive_intel(intel)
     archive_quality = _derive_archive_quality(intel, substantive)
-    manager_doctrine = str(intel.get("manager_doctrine") or "Unknown")
-    market_sentiment = str(intel.get("market_sentiment") or "Neutral")
-    recent_news_summary = str(intel.get("recent_news_summary") or "待补充")
-    key_nodes = _normalize_string_list(intel.get("key_node_dependency"))
+    coach = _frontmatter_text(frontmatter, "coach", "待补充")
+    base_formation = _frontmatter_text(frontmatter, "base_formation", "待补充")
+    tactical_style = _frontmatter_text(frontmatter, "tactical_style", "待补充")
+    manager_doctrine = str(
+        intel.get("manager_doctrine")
+        or ((frontmatter.get("intel_base") or {}).get("manager_doctrine"))
+        or "Unknown"
+    )
+    market_sentiment = str(
+        intel.get("market_sentiment")
+        or ((frontmatter.get("intel_base") or {}).get("market_sentiment"))
+        or "Neutral"
+    )
+    recent_news_summary = str(
+        intel.get("recent_news_summary")
+        or ((frontmatter.get("intel_base") or {}).get("recent_news_summary"))
+        or "待补充"
+    )
+    key_nodes = _normalize_string_list(intel.get("key_node_dependency")) or _frontmatter_list(frontmatter, "key_node_dependency")
     prematch_focus_items = _normalize_string_list(intel.get("prematch_focus_items"))
     prematch_focus = str(intel.get("prematch_focus") or "")
     market_external_notes = _normalize_string_list(intel.get("market_external_notes"))
     youtube_tactical_briefs = _normalize_string_list(intel.get("youtube_tactical_briefs"))
-    tactical_logic = _normalize_tactical_logic(intel.get("tactical_logic"))
-    bias_type = str(intel.get("bias_type") or "Aligned")
-    avg_xg = intel.get("avg_xG_last_5", "默认占位")
-    conversion = intel.get("conversion_efficiency", "默认占位")
-    leakage = intel.get("defensive_leakage", "默认占位")
-    entropy = intel.get("actual_tactical_entropy", "默认占位")
+    tactical_logic = _normalize_tactical_logic(intel.get("tactical_logic")) or _normalize_tactical_logic(frontmatter.get("tactical_logic"))
+    bias_type = str(intel.get("bias_type") or ((frontmatter.get("reality_gap") or {}).get("bias_type")) or "Aligned")
+    physical_reality = frontmatter.get("physical_reality") if isinstance(frontmatter.get("physical_reality"), dict) else {}
+    avg_xg = intel.get("avg_xG_last_5", physical_reality.get("avg_xG_last_5", "默认占位"))
+    conversion = intel.get("conversion_efficiency", physical_reality.get("conversion_efficiency", "默认占位"))
+    leakage = intel.get("defensive_leakage", physical_reality.get("defensive_leakage", "默认占位"))
+    entropy = intel.get("actual_tactical_entropy", physical_reality.get("actual_tactical_entropy", "默认占位"))
+    resilience_core = frontmatter.get("resilience_core") if isinstance(frontmatter.get("resilience_core"), dict) else {}
+    market_behavior_core = frontmatter.get("market_behavior_core") if isinstance(frontmatter.get("market_behavior_core"), dict) else {}
+    known_signals = 0
+    for value in [coach, base_formation, tactical_style]:
+        if value != "待补充":
+            known_signals += 1
+    if manager_doctrine != "Unknown":
+        known_signals += 1
+    if key_nodes:
+        known_signals += 1
+    if recent_news_summary != "待补充":
+        known_signals += 1
+    if tactical_logic:
+        known_signals += 1
 
     lines: List[str] = []
     lines.append(f"# {team}")
@@ -450,20 +640,72 @@ def _render_body(team: str, league: str, issue: str, matches: List[Dict[str, Any
     lines.append(f"- 当前状态：`{archive_quality}`")
     lines.append(f"- 回填来源：`team_archive_backfill.py --issue {issue}`")
     lines.append(f"- 所属联赛：`{league}`")
+    lines.append(f"- 当前可用层级：`{'基础可用' if known_signals >= 4 else '低样本可用'}`")
     lines.append("")
 
-    lines.append("## 2. 基础信息待补")
+    lines.append("## 2. 当前已知信息")
+    lines.append("")
+    lines.append(f"- 主教练：`{coach}`")
+    lines.append(f"- 常用阵型：`{base_formation}`")
+    lines.append(f"- 风格标签：`{tactical_style}`")
+    lines.append(f"- Manager Doctrine：`{manager_doctrine}`")
+    lines.append(f"- 市场情绪：`{market_sentiment}`")
+    lines.append("")
+
+    summary_sections = _build_prematch_summary(
+        team=team,
+        coach=coach,
+        base_formation=base_formation,
+        tactical_style=tactical_style,
+        manager_doctrine=manager_doctrine,
+        market_sentiment=market_sentiment,
+        recent_news_summary=recent_news_summary,
+        key_nodes=key_nodes,
+        tactical_logic=tactical_logic,
+        avg_xg=avg_xg,
+        conversion=conversion,
+        leakage=leakage,
+        entropy=entropy,
+        bias_type=bias_type,
+        matches=matches,
+    )
+    lines.append("## 3. Prematch 摘要")
+    lines.append("")
+    lines.append("### 3.1 本队画像")
+    lines.append("")
+    for bullet in summary_sections["profile"]:
+        lines.append(f"- {bullet}")
+    lines.append("")
+    lines.append("### 3.2 本场风险点")
+    lines.append("")
+    for bullet in summary_sections["risk"]:
+        lines.append(f"- {bullet}")
+    lines.append("")
+    lines.append("### 3.3 赛前操作提示")
+    lines.append("")
+    for bullet in summary_sections["action"]:
+        lines.append(f"- {bullet}")
+    lines.append("")
+
+    lines.append("## 4. Prematch 快照")
     lines.append("")
     lines.append("| 维度 | 当前值 | 说明 |")
     lines.append("| --- | --- | --- |")
-    lines.append(f"| 主教练风格 | `{manager_doctrine}` | {'已补充' if manager_doctrine != 'Unknown' else '需要补充 manager doctrine / 节奏偏好 / 轮换习惯'} |")
-    lines.append(f"| 核心节点依赖 | `{json.dumps(key_nodes, ensure_ascii=False)}` | {'已补充' if key_nodes else '需要补充 key players / dependency'} |")
-    lines.append(f"| 市场情绪 | `{market_sentiment}` | {'已补充近期新闻方向' if recent_news_summary != '待补充' else '需要补充近期新闻与舆论方向'} |")
-    lines.append(f"| 物理指标 | `xG={avg_xg}, conv={conversion}, leakage={leakage}, entropy={entropy}` | {'已补充核心物理指标' if substantive and 'avg_xG_last_5' in intel else '需要补充近 5 场 xG、转化率、防守泄漏'} |")
-    lines.append(f"| Reality Gap | `{bias_type}` | {'已补充市场偏差方向' if 'bias_type' in intel else '需要补充常见高估/低估偏差'} |")
+    lines.append(f"| 核心节点依赖 | `{json.dumps(key_nodes, ensure_ascii=False)}` | {'可用于赛前关注' if key_nodes else '仍需补充关键人员依赖'} |")
+    lines.append(f"| 近期新闻与舆论 | `{recent_news_summary}` | {'已有基础摘要' if recent_news_summary != '待补充' else '尚缺赛前新闻摘要'} |")
+    lines.append(f"| 物理指标 | `xG={avg_xg}, conv={conversion}, leakage={leakage}, entropy={entropy}` | {'已有基础物理面' if str(avg_xg) != '默认占位' else '仍缺近 5 场核心物理指标'} |")
+    lines.append(f"| Reality Gap | `{bias_type}` | {'可作为市场偏差起点' if bias_type != 'Aligned' else '尚未识别明显市场偏差'} |")
+    lines.append(
+        f"| 韧性三件套 | `comeback={resilience_core.get('concede_first_comeback_rate')}, lead={resilience_core.get('lead_protection_rate')}, late={resilience_core.get('late_phase_resilience')}` | "
+        + ("结构完整 |" if all(_normalize_float(resilience_core.get(key)) is not None for key in DEFAULT_RESILIENCE_CORE) else "仍缺赛果韧性结构化数据 |")
+    )
+    lines.append(
+        f"| 市场行为三件套 | `dir={market_behavior_core.get('opening_to_live_direction')}, slope={market_behavior_core.get('water_level_slope')}, div={market_behavior_core.get('bookmaker_divergence_index')}` | "
+        + ("结构完整 |" if str(market_behavior_core.get('opening_to_live_direction') or '').strip() and all(_normalize_float(market_behavior_core.get(key)) is not None for key in ('water_level_slope', 'bookmaker_divergence_index')) else "仍缺盘口行为结构化数据 |")
+    )
     lines.append("")
 
-    lines.append("## 3. 本期关联比赛")
+    lines.append("## 5. 本期关联比赛")
     lines.append("")
     if matches:
         lines.append("| Issue 场次 | 对阵 | Mapping Source |")
@@ -476,7 +718,7 @@ def _render_body(team: str, league: str, issue: str, matches: List[Dict[str, Any
         lines.append("- 本期 manifest 未找到该队关联比赛。")
     lines.append("")
 
-    lines.append("## 4. Prematch 关注项")
+    lines.append("## 6. Prematch 关注项")
     lines.append("")
     lines.append(f"- 伤停与核心节点：{', '.join(key_nodes) if key_nodes else '待补充'}")
     if tactical_logic:
@@ -500,17 +742,39 @@ def _render_body(team: str, league: str, issue: str, matches: List[Dict[str, Any
         lines.append("- 市场常见误判点：待补充")
     lines.append("")
 
-    lines.append("## 5. 数据缺口")
+    lines.append("## 7. 可用性判断")
     lines.append("")
     if substantive:
         lines.append("- 已具备最小实质情报，可进入下一轮 RAG 同步与 prematch 验证。")
         lines.append("- 仍建议继续补充更细的伤停、轮换、战术细节，避免样本过薄。")
     else:
-        lines.append("- 缺少可直接用于 prematch 的实质情报内容。")
-        lines.append("- 当前档案仍不应视为高质量 RAG 样本。")
+        lines.append("- 当前队档可作为 `基础底稿` 使用，适合做赛程锚定、队伍画像和初步风险提醒。")
+        lines.append("- 现阶段主要缺的是 `赛前增量情报`，而不是整份档案完全不可用。")
+        lines.append("- 在没有补入新闻、伤停、盘口行为、韧性样本前，应按 `低样本 RAG` 理解，避免直接下强结论。")
     lines.append("")
 
-    lines.append("## 6. 市面深度情报（外部观点）")
+    lines.append("## 8. 优先补强项")
+    lines.append("")
+    if not key_nodes:
+        lines.append("- 优先补 `核心节点依赖`：首发核心、定位球主罚者、后防出球点。")
+    if recent_news_summary == "待补充":
+        lines.append("- 优先补 `赛前新闻摘要`：伤停、轮换、赛程密度、主帅表态。")
+    if str(avg_xg) == "默认占位":
+        lines.append("- 优先补 `近 5 场物理指标`：xG、转化率、防守泄漏、节奏变化。")
+    if not tactical_logic:
+        lines.append("- 优先补 `战术矩阵`：P / Space / F / H / Set Piece。")
+    if not any(_normalize_float(resilience_core.get(key)) is not None for key in DEFAULT_RESILIENCE_CORE):
+        lines.append("- 优先补 `韧性结构`：先丢球回追率、领先守成率、末段抗压。")
+    if not str(market_behavior_core.get("opening_to_live_direction") or "").strip():
+        lines.append("- 优先补 `盘口行为`：开盘到临场方向、水位斜率、分歧度。")
+    if lines[-1] == "":
+        lines.pop()
+    if lines[-1] == "## 8. 优先补强项":
+        lines.append("- 当前基础骨架完整，下一步优先补充赛前增量情报。")
+    if lines[-1] != "":
+        lines.append("")
+
+    lines.append("## 9. 市面深度情报（外部观点）")
     lines.append("")
     lines.append("- 用途：沉淀盘口观点、媒体观点、以及后续 YouTube 大V 的技战术解析。")
     if market_external_notes:
@@ -550,11 +814,15 @@ def _backfill_one_team(
     team_matches: List[Dict[str, Any]],
     intel: Optional[Dict[str, Any]],
     preflight_diagnostics: Optional[Dict[str, Any]],
+    force: bool = False,
 ) -> Dict[str, Any]:
     archive_path = build_archive_path(vault_root, team=team, league=league)
     if not archive_path.exists():
         merged_frontmatter = merge_frontmatter_defaults({}, DEFAULT_FRONTMATTER)
-        content = build_markdown(merged_frontmatter, _render_body(team=team, league=league, issue=issue, matches=team_matches))
+        content = build_markdown(
+            merged_frontmatter,
+            _render_body(team=team, league=league, issue=issue, matches=team_matches, frontmatter=merged_frontmatter),
+        )
         write_markdown_safely(archive_path, content)
     frontmatter, body = read_existing_content(archive_path)
     original_text = build_markdown(frontmatter, body)
@@ -563,7 +831,7 @@ def _backfill_one_team(
     needs_enrichment = bool(preflight_diagnostics.get("needs_enrichment"))
 
     substantive_intel = _has_substantive_intel(intel or {})
-    if not diagnostics["placeholder"] and needs_enrichment and not substantive_intel:
+    if (not force) and (not diagnostics["placeholder"]) and needs_enrichment and not substantive_intel:
         return {
             "team": team,
             "league": league,
@@ -571,7 +839,7 @@ def _backfill_one_team(
             "status": "flagged_needs_enrichment",
             "markers": sorted(set(diagnostics["markers"] + list(preflight_diagnostics.get("markers", [])))),
         }
-    if not diagnostics["placeholder"] and not needs_enrichment and not substantive_intel:
+    if (not force) and (not diagnostics["placeholder"]) and (not needs_enrichment) and (not substantive_intel):
         return {
             "team": team,
             "league": league,
@@ -600,7 +868,14 @@ def _backfill_one_team(
 
     content = build_markdown(
         merged_frontmatter,
-        _render_body(team=team, league=league, issue=issue, matches=team_matches, intel=intel),
+        _render_body(
+            team=team,
+            league=league,
+            issue=issue,
+            matches=team_matches,
+            intel=intel,
+            frontmatter=merged_frontmatter,
+        ),
     )
     write_markdown_safely(archive_path, content)
     return {
@@ -642,6 +917,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Backfill placeholder Team Archives for an issue.")
     parser.add_argument("--issue", required=True, help="中国体彩期号，如 26066")
     parser.add_argument("--intel-file", required=False, help="结构化批量情报 JSON 文件；不传时自动尝试 issue 目录下的 TEAM-INTEL-<issue>.json")
+    parser.add_argument("--force", action="store_true", help="强制回填所有本期球队档案（即使当前已判定 usable）。")
     args = parser.parse_args()
 
     base_dir = Path(__file__).resolve().parent.parent.parent
@@ -666,6 +942,7 @@ def main() -> int:
             team_matches=team_match_lookup.get(team, []),
             intel=intel_lookup.get(team),
             preflight_diagnostics=preflight_lookup.get(team),
+            force=args.force,
         )
         results.append(result)
 

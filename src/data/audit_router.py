@@ -141,7 +141,7 @@ class AuditRouter:
 
     @staticmethod
     def _extract_issue_and_match_index(path: Path) -> Tuple[Optional[str], Optional[int]]:
-        match = re.match(r"^Audit-(\d+)-(\d+)-", path.name.replace("REJECTED-", "", 1))
+        match = re.match(r"^Audit-(.+)-(\d{2})-", path.name.replace("REJECTED-", "", 1))
         if not match:
             return None, None
         try:
@@ -304,15 +304,15 @@ class AuditRouter:
         return stem
 
     def _infer_report_pair(self, path: Path, text: str) -> Tuple[str, str]:
-        filename_match = re.match(r"^Audit-\d+-\d+-(.+)-vs-(.+?)(?:_Host)?$", path.stem.replace("REJECTED-", "", 1))
+        filename_match = re.match(r"^Audit-(.+)-(\d{2})-(.+)-vs-(.+?)(?:_Host)?$", path.stem.replace("REJECTED-", "", 1))
         if filename_match:
-            return filename_match.group(1), filename_match.group(2)
+            return filename_match.group(3), filename_match.group(4)
 
         english_match = re.search(r'english:\s*"([^"]+)"', text)
         if english_match:
             return self._split_pair_text(english_match.group(1))
 
-        title_match = re.search(r"^# Ares Prematch Audit - Issue \d+ - (.+)$", text, flags=re.MULTILINE)
+        title_match = re.search(r"^# Ares Prematch Audit - Issue .+? - (.+)$", text, flags=re.MULTILINE)
         if title_match:
             return self._split_match_english(title_match.group(1))
 
@@ -362,10 +362,10 @@ class AuditRouter:
     def _parse_expected_teams(self, path: Path, text: str) -> Set[str]:
         expected: Set[str] = set()
 
-        filename_match = re.match(r"^Audit-\d+-\d+-(.+)-vs-(.+?)(?:_Host)?$", path.stem)
+        filename_match = re.match(r"^Audit-(.+)-(\d{2})-(.+)-vs-(.+?)(?:_Host)?$", path.stem)
         if filename_match:
-            expected.add(self._canonical_team_name(filename_match.group(1)))
-            expected.add(self._canonical_team_name(filename_match.group(2)))
+            expected.add(self._canonical_team_name(filename_match.group(3)))
+            expected.add(self._canonical_team_name(filename_match.group(4)))
 
         english_match = re.search(r'english:\s*"([^"]+)"', text)
         if english_match:
@@ -373,7 +373,7 @@ class AuditRouter:
             expected.add(self._canonical_team_name(home))
             expected.add(self._canonical_team_name(away))
 
-        title_match = re.search(r"^# Ares Prematch Audit - Issue \d+ - (.+)$", text, flags=re.MULTILINE)
+        title_match = re.search(r"^# Ares Prematch Audit - Issue .+? - (.+)$", text, flags=re.MULTILINE)
         if title_match:
             home, away = self._split_match_english(title_match.group(1))
             expected.add(self._canonical_team_name(home))

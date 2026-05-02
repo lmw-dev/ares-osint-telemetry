@@ -347,6 +347,108 @@ def load_manifest(path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
+def _extract_markdown_section(text: str, heading: str) -> str:
+    pattern = rf"^{re.escape(heading)}\n+(.*?)(?=^## |\Z)"
+    match = re.search(pattern, text, flags=re.MULTILINE | re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+
+def _extract_markdown_subsection(text: str, heading: str) -> List[str]:
+    pattern = rf"^{re.escape(heading)}\n+(.*?)(?=^### |\Z)"
+    match = re.search(pattern, text, flags=re.MULTILINE | re.DOTALL)
+    if not match:
+        return []
+    lines: List[str] = []
+    for raw in match.group(1).splitlines():
+        line = raw.strip()
+        if line.startswith("- "):
+            lines.append(line[2:].strip())
+    return lines
+
+
+def _parse_team_archive_context(archive_path: Path) -> Dict[str, Any]:
+    try:
+        text = archive_path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+
+    archive_quality_match = re.search(r"^archive_quality:\s*([^\n]+)$", text, flags=re.MULTILINE)
+    usable_level_match = re.search(r"- 当前可用层级：`([^`]+)`", text)
+    summary_section = _extract_markdown_section(text, "## 3. Prematch 摘要")
+    profile_lines = _extract_markdown_subsection(summary_section, "### 3.1 本队画像")
+    risk_lines = _extract_markdown_subsection(summary_section, "### 3.2 本场风险点")
+    action_lines = _extract_markdown_subsection(summary_section, "### 3.3 赛前操作提示")
+
+    summary_text_parts: List[str] = []
+    for block in [profile_lines, risk_lines, action_lines]:
+        if block:
+            summary_text_parts.append(" ".join(block))
+
+    return {
+        "archive_path": str(archive_path),
+        "archive_quality": (archive_quality_match.group(1).strip().strip("'\"") if archive_quality_match else ""),
+        "usable_level": usable_level_match.group(1).strip() if usable_level_match else "",
+        "prematch_summary": {
+            "profile": profile_lines,
+            "risk": risk_lines,
+            "action": action_lines,
+        },
+        "prematch_summary_text": " ".join(part for part in summary_text_parts if part).strip(),
+    }
+
+
+def enrich_manifest_with_team_archive_context(
+    *,
+    manifest: Dict[str, Any],
+    manifest_path: Path,
+    base_dir: Path,
+    vault_root: Path,
+) -> Dict[str, int]:
+    alias_map = load_team_alias_map(base_dir)
+    updated_matches = 0
+    cache: Dict[str, Dict[str, Any]] = {}
+
+    matches = manifest.get("matches", [])
+    if not isinstance(matches, list):
+        return {"updated_matches": 0}
+
+    for match in matches:
+        english = str(match.get("english") or "").strip()
+        home, away = _split_match_english(english)
+        if not home or not away:
+            continue
+        resolved_home = resolve_team_name(home, alias_map)
+        resolved_away = resolve_team_name(away, alias_map)
+        league = str(match.get("league") or infer_league(resolved_home, resolved_away) or "").strip()
+        if not league:
+            continue
+
+        side_contexts: Dict[str, Any] = {}
+        for side, team_name in (("home", resolved_home), ("away", resolved_away)):
+            cache_key = f"{league}:{team_name}"
+            if cache_key not in cache:
+                archive_path = build_archive_path(vault_root, team=team_name, league=league)
+                cache[cache_key] = _parse_team_archive_context(archive_path) if archive_path.exists() else {}
+            side_contexts[side] = cache.get(cache_key) or {}
+
+        compact_context = {
+            "home_summary": ((side_contexts.get("home") or {}).get("prematch_summary_text") or "").strip(),
+            "away_summary": ((side_contexts.get("away") or {}).get("prematch_summary_text") or "").strip(),
+        }
+
+        match["team_archive_context"] = side_contexts
+        match["prematch_context"] = compact_context
+        updated_matches += 1
+
+    if updated_matches:
+        try:
+            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.info("Manifest 已注入 Team Archive 摘要上下文: matches=%s -> %s", updated_matches, manifest_path)
+        except OSError as exc:
+            logger.warning("Manifest 注入 Team Archive 摘要失败（保留内存态继续执行）: %s", exc)
+    return {"updated_matches": updated_matches}
+
+
 def _is_prematch_mapped_match(match: Dict[str, Any]) -> bool:
     mapping_source = str(match.get("mapping_source") or "").strip().lower()
     has_anchor = bool(match.get("understat_id") or match.get("fbref_url") or match.get("football_data_match_id"))
@@ -871,6 +973,7 @@ def run_issue_team_archive_backfill(
     issue: str,
     base_dir: Path,
     intel_file: Optional[str] = None,
+    force: bool = False,
 ) -> Dict[str, int]:
     """在 prematch 前统一回填 issue 球队档案（可选注入 TEAM-INTEL 文件）。"""
     script_path = base_dir / "src" / "data" / "team_archive_backfill.py"
@@ -881,6 +984,8 @@ def run_issue_team_archive_backfill(
     cmd = [sys.executable, str(script_path), "--issue", str(issue)]
     if intel_file:
         cmd.extend(["--intel-file", str(Path(intel_file).expanduser())])
+    if force:
+        cmd.append("--force")
 
     result = subprocess.run(
         cmd,
@@ -1158,6 +1263,18 @@ if __name__ == "__main__":
     mode_group.add_argument("--date", type=str, help="按日期分析，格式 YYYYMMDD，如 20260502")
     parser.add_argument("--scope", type=str, default="top5", help="date 模式范围，当前支持 top5")
     parser.add_argument(
+        "--date-source",
+        type=str,
+        default="understat",
+        choices=["understat", "football-data"],
+        help="date 模式赛程口径来源，默认 understat（严格按 understat 比赛日）。",
+    )
+    parser.add_argument(
+        "--date-enable-prematch",
+        action="store_true",
+        help="允许 date 模式执行 prematch（默认仅赛程清单流程）。",
+    )
+    parser.add_argument(
         "--source",
         type=str,
         default="auto",
@@ -1171,6 +1288,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip-postmatch", action="store_true", help="只跑 crawler 与目录路由，不跑赛后复盘")
     parser.add_argument("--skip-team-forge", action="store_true", help="跳过 Team Archives 批量补档")
     parser.add_argument("--skip-team-backfill", action="store_true", help="跳过 prematch 前 Team Archive 回填")
+    parser.add_argument("--team-backfill-force", action="store_true", help="强制回填本期球队档案（覆盖 skipped_usable）")
     parser.add_argument("--team-intel-file", required=False, help="prematch 前回填使用的 TEAM-INTEL JSON 文件")
     parser.add_argument(
         "--sync-team-rag-only",
@@ -1199,7 +1317,7 @@ if __name__ == "__main__":
         if args.sync_team_rag_only:
             logger.warning("date 模式不支持 --sync-team-rag-only，已忽略。")
             args.sync_team_rag_only = False
-        if not args.skip_prematch:
+        if (not args.date_enable_prematch) and (not args.skip_prematch):
             logger.info("date 模式 v1 暂不执行 prematch，已自动启用 --skip-prematch。")
             args.skip_prematch = True
         if not args.skip_postmatch:
@@ -1209,8 +1327,10 @@ if __name__ == "__main__":
             logger.info("date 模式 v1 暂不执行 Team Forge，已自动启用 --skip-team-forge。")
             args.skip_team_forge = True
         if not args.skip_team_backfill:
-            logger.info("date 模式 v1 暂不执行 Team Archive backfill，已自动启用 --skip-team-backfill。")
-            args.skip_team_backfill = True
+            logger.info("date 模式将执行 Team Archive backfill（默认强制回填）。")
+        if not args.team_backfill_force:
+            logger.info("date 模式默认启用 --team-backfill-force。")
+            args.team_backfill_force = True
     engine_dir: Optional[Path] = None
     if (not args.skip_prematch) or args.sync_team_rag_only:
         engine_dir = _resolve_engine_dir(args.engine_dir)
@@ -1224,7 +1344,12 @@ if __name__ == "__main__":
     manifest_path: Optional[Path] = None
 
     if not args.skip_crawler:
-        crawler = AresOsintCrawler(issue=args.issue, analysis_date=args.date, scope=args.scope)
+        crawler = AresOsintCrawler(
+            issue=args.issue,
+            analysis_date=args.date,
+            scope=args.scope,
+            date_source=args.date_source,
+        )
         manifest_path = crawler.scan_and_map()
     else:
         manifest_path = resolve_manifest_path(base_dir, run_id)
@@ -1249,15 +1374,30 @@ if __name__ == "__main__":
             run_issue_team_forge(issue=run_id, base_dir=base_dir)
         except Exception as e:
             logger.warning("Team Forge 批量补档失败（不影响主流程）: %s", e)
-    if not args.skip_team_backfill and ((not args.skip_prematch) or args.sync_team_rag_only):
+    should_run_team_backfill = (not args.skip_team_backfill) and (
+        is_date_mode or (not args.skip_prematch) or args.sync_team_rag_only
+    )
+    if should_run_team_backfill:
         try:
             run_issue_team_archive_backfill(
                 issue=run_id,
                 base_dir=base_dir,
                 intel_file=args.team_intel_file,
+                force=args.team_backfill_force,
             )
         except Exception as e:
             logger.warning("Team Archive 回填失败（不影响主流程）: %s", e)
+    vault_path = os.getenv("ARES_VAULT_PATH")
+    if vault_path:
+        try:
+            enrich_manifest_with_team_archive_context(
+                manifest=manifest,
+                manifest_path=manifest_path,
+                base_dir=base_dir,
+                vault_root=Path(normalize_vault_path(vault_path)).expanduser(),
+            )
+        except Exception as e:
+            logger.warning("Manifest 注入 Team Archive 摘要失败（不影响主流程）: %s", e)
     if ((not args.skip_prematch) or args.sync_team_rag_only) and engine_dir is not None:
         try:
             sync_issue_team_archives_to_rag(

@@ -168,11 +168,57 @@ def _fmt_match_line(row: MatchTelemetry) -> str:
     )
 
 
+def _classify_review_case(row: MatchTelemetry, manifest_row: Dict[str, Any]) -> Dict[str, str]:
+    flags = manifest_row.get("match_context_flags") if isinstance(manifest_row.get("match_context_flags"), dict) else {}
+    market = manifest_row.get("market_behavior") if isinstance(manifest_row.get("market_behavior"), dict) else {}
+    survival_level = _safe_text(flags.get("survival_pressure_level")).lower()
+    new_manager_sample = int(flags.get("new_manager_sample_matches") or 0)
+    manager_change_recent = bool(flags.get("manager_change_recent"))
+    structural_crisis_context = bool(flags.get("structural_crisis_context"))
+    favorite_overprice_risk = bool(market.get("favorite_overprice_risk"))
+
+    case_type = "ALIGNED"
+    if row.variance_flag:
+        case_type = "VARIANCE_ALERT"
+    elif (
+        row.xg_better_side == "draw"
+        and row.winner != "draw"
+    ) or (
+        row.xg_better_side in {"home", "away"} and row.winner != row.xg_better_side
+    ):
+        case_type = "SUSPICIOUS"
+
+    error_type = "NONE"
+    if manager_change_recent and new_manager_sample <= 1 and row.winner != "home":
+        error_type = "NEW_MANAGER_REBOUND_OVERWEIGHTED"
+    elif structural_crisis_context and survival_level in {"high", "extreme"} and row.winner == "home":
+        error_type = "STRUCTURAL_CRISIS_OVERDOWNGRADE"
+    elif survival_level in {"high", "extreme"} and row.xg_better_side == row.winner and row.winner in {"home", "away"}:
+        error_type = "SURVIVAL_WIN_PATH_UNDERWEIGHTED"
+    elif survival_level in {"high", "extreme"} and row.winner != row.xg_better_side and row.variance_flag:
+        error_type = "STRUCTURAL_WEAK_SURVIVAL_TEAM_LIMIT"
+    elif row.pass_gap >= 6 and row.winner != ("home" if row.pass_home > row.pass_away else "away"):
+        error_type = "OVERPRICED_DOMINANCE_HANDICAP_FAILURE"
+    elif favorite_overprice_risk and row.pass_gap >= 6 and row.winner != row.xg_better_side:
+        error_type = "TERRITORY_NOT_EQUAL_XG_GATE_TRIGGERED"
+    elif row.winner == "home" and (row.home_xg - row.away_xg) >= 0.8:
+        error_type = "HIGH_QUALITY_HOME_FAVORITE_HIT"
+
+    hit_type = "MAIN_HIT"
+    if case_type == "VARIANCE_ALERT":
+        hit_type = "PHYSICAL_DOMINANCE_VARIANCE"
+    elif case_type == "SUSPICIOUS":
+        hit_type = "RESULT_HIT_PROCESS_WARNING"
+
+    return {"case_type": case_type, "error_type": error_type, "hit_type": hit_type}
+
+
 def build_report(
     issue: str,
     rows: List[MatchTelemetry],
     top5_only: bool,
     expected_rows: Optional[List[Dict[str, Any]]] = None,
+    manifest_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     total = len(rows)
     variance_rows = [r for r in rows if r.variance_flag]
@@ -230,6 +276,28 @@ def build_report(
             }
         )
 
+    manifest_lookup = manifest_lookup or {}
+    review_cases: List[Dict[str, Any]] = []
+    for row in rows:
+        review_case = _classify_review_case(row, manifest_lookup.get(row.match_id, {}))
+        error_type = review_case["error_type"]
+        review_cases.append(
+            {
+                "match_id": row.match_id,
+                "match_name": row.match_name,
+                "case_type": review_case["case_type"],
+                "error_type": error_type,
+                "hit_type": review_case["hit_type"],
+                "archive_patch_required": error_type != "NONE",
+                "physical_validation": {
+                    "xG": f"{row.home_xg:.2f}-{row.away_xg:.2f}",
+                    "shots_on_target": None,
+                    "attacking_third_passes": f"{row.pass_home}-{row.pass_away}",
+                    "variance_flag": row.variance_flag,
+                },
+            }
+        )
+
     summary_json: Dict[str, Any] = {
         "issue": issue,
         "scope": "top5" if top5_only else "all",
@@ -243,6 +311,7 @@ def build_report(
         "pass_dom_not_win_matches": len(pass_dom_not_win),
         "promote_teams": [{"team": t, "delta": round(d, 2)} for t, d in up_teams],
         "downgrade_teams": [{"team": t, "delta": round(d, 2)} for t, d in down_teams],
+        "review_cases": review_cases,
     }
 
     lines: List[str] = []
@@ -263,6 +332,17 @@ def build_report(
             lines.append(f"- `{item['index']}` `{item['english']}`: `{item['reason']}`")
     else:
         lines.append(f"- Postmatch 覆盖 `{total}/{len(expected_rows)}`，本期无缺口。")
+    lines.append("")
+    lines.append("## 0.5) Review 标准码")
+    lines.append("- `case_type`: `ALIGNED` / `SUSPICIOUS` / `VARIANCE_ALERT`")
+    lines.append("- `hit_type`: `MAIN_HIT` / `RESULT_HIT_PROCESS_WARNING` / `PHYSICAL_DOMINANCE_VARIANCE`")
+    lines.append(
+        "- `error_type`: `NONE` / `NEW_MANAGER_REBOUND_OVERWEIGHTED` / `SURVIVAL_WIN_PATH_UNDERWEIGHTED` / `OVERPRICED_DOMINANCE_HANDICAP_FAILURE` / `STRUCTURAL_CRISIS_OVERDOWNGRADE` / `STRUCTURAL_WEAK_SURVIVAL_TEAM_LIMIT` / `HIGH_QUALITY_HOME_FAVORITE_HIT` / `TERRITORY_NOT_EQUAL_XG_GATE_TRIGGERED`"
+    )
+    for item in review_cases:
+        lines.append(
+            f"- `{item['match_id']}` `{item['match_name']}`: case=`{item['case_type']}` hit=`{item['hit_type']}` error=`{item['error_type']}` archive_patch_required=`{item['archive_patch_required']}`"
+        )
     lines.append("")
     lines.append("## ⚙️ 一、系统架构调整评估")
     lines.append("")
@@ -370,7 +450,13 @@ def main() -> int:
         for row in (manifest.get("matches") or [])
         if (not args.top5_only) or _safe_text(row.get("league")) in TOP5_LEAGUES
     ]
-    md_text, payload = build_report(args.issue, rows, args.top5_only, expected_rows=expected_rows)
+    md_text, payload = build_report(
+        args.issue,
+        rows,
+        args.top5_only,
+        expected_rows=expected_rows,
+        manifest_lookup=mid_lookup,
+    )
     suffix = "-Top5" if args.top5_only else ""
     md_path = analysis_dir / f"FINAL-{args.issue}-Postmatch_Synthesis{suffix}.md"
     json_path = analysis_dir / f"FINAL-{args.issue}-Postmatch_Synthesis{suffix}.json"

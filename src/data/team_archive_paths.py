@@ -62,6 +62,18 @@ TEAM_FILENAME_ALIASES: Dict[str, List[str]] = {
     "realmadrid": ["Real_Madrid", "Real Madrid"],
     "realoviedo": ["Real_Oviedo", "Real Oviedo"],
     "realsociedad": ["Real_Sociedad", "Real Sociedad"],
+    "rbleipzig": [
+        "RasenBallsport_Leipzig",
+        "RB_Leipzig",
+        "RB Leipzig",
+        "RasenBallsport Leipzig",
+    ],
+    "rasenballsportleipzig": [
+        "RasenBallsport_Leipzig",
+        "RB_Leipzig",
+        "RB Leipzig",
+        "RasenBallsport Leipzig",
+    ],
     "vfbstuttgart": ["VfB_Stuttgart", "VfB Stuttgart"],
 }
 

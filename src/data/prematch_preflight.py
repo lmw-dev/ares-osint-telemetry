@@ -816,6 +816,38 @@ def write_team_diagnostics(vault_root: Path, issue: str, report: Dict[str, Any])
     issue_dir = vault_root / "03_Match_Audits" / str(issue)
     issue_dir.mkdir(parents=True, exist_ok=True)
     target = issue_dir / f"Audit-{issue}-team-diagnostics.json"
+    def _team_class_hint(team_name: str) -> str:
+        elite_teams = {
+            "arsenal",
+            "liverpool",
+            "manchester united",
+            "manchester city",
+            "chelsea",
+            "tottenham hotspur",
+            "newcastle united",
+            "bayern munich",
+            "bayer leverkusen",
+            "borussia dortmund",
+            "rasenballsport leipzig",
+            "rb leipzig",
+            "juventus",
+            "inter milan",
+            "ac milan",
+            "napoli",
+            "atalanta",
+            "barcelona",
+            "real madrid",
+            "atletico madrid",
+            "athletic club",
+            "paris saint-germain",
+            "paris saint germain",
+            "psg",
+        }
+        low = str(team_name or "").strip().lower()
+        if low in elite_teams:
+            return "elite_depth"
+        return "standard"
+
     payload = {
         "issue": issue,
         "updated_at": report["updated_at"],
@@ -834,6 +866,32 @@ def write_team_diagnostics(vault_root: Path, issue: str, report: Dict[str, Any])
                 "missing_market_behavior_keys": team.get("missing_market_behavior_keys", []),
                 "stale_days": team.get("stale_days"),
                 "rag_doc_count": team.get("rag_doc_count", 0),
+                "team_class_hint": _team_class_hint(team["team"]),
+                "injured_nodes": (
+                    team.get("frontmatter", {}).get("injured_nodes")
+                    if isinstance(team.get("frontmatter", {}).get("injured_nodes"), list)
+                    else []
+                ),
+                "suspended_nodes": (
+                    team.get("frontmatter", {}).get("suspended_nodes")
+                    if isinstance(team.get("frontmatter", {}).get("suspended_nodes"), list)
+                    else []
+                ),
+                "avg_xG_last_5": (
+                    team.get("frontmatter", {}).get("physical_reality", {}).get("avg_xG_last_5")
+                    if isinstance(team.get("frontmatter", {}).get("physical_reality"), dict)
+                    else None
+                ),
+                "conversion_efficiency": (
+                    team.get("frontmatter", {}).get("physical_reality", {}).get("conversion_efficiency")
+                    if isinstance(team.get("frontmatter", {}).get("physical_reality"), dict)
+                    else None
+                ),
+                "defensive_leakage": (
+                    team.get("frontmatter", {}).get("physical_reality", {}).get("defensive_leakage")
+                    if isinstance(team.get("frontmatter", {}).get("physical_reality"), dict)
+                    else None
+                ),
             }
             for team in report["teams"]
         ],
@@ -887,6 +945,11 @@ def _extract_team_intel_snapshot(team: Dict[str, Any]) -> Dict[str, Any]:
         "youtube_tactical_briefs": market_osint.get("youtube_tactical_briefs")
         if isinstance(market_osint.get("youtube_tactical_briefs"), list)
         else [],
+        "source_items": [],
+        "absences": [],
+        "expected_core_availability": "UNKNOWN",
+        "lineup_stability_precheck": "UNKNOWN",
+        "key_node_absence_risk": "UNKNOWN",
     }
     return payload
 

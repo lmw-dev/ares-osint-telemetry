@@ -19,6 +19,18 @@ logging.basicConfig(
 logger = logging.getLogger("AresTelemetry.PrematchSynthesis")
 
 SUPPORTED_LLM_PROVIDERS = {"openai", "gemini", "deepseek"}
+RIVALRY_TEAM_PAIRS = {
+    ("manchesterunited", "liverpool"),
+    ("liverpool", "manchesterunited"),
+    ("arsenal", "tottenhamhotspur"),
+    ("tottenhamhotspur", "arsenal"),
+    ("realmadrid", "barcelona"),
+    ("barcelona", "realmadrid"),
+    ("atleticomadrid", "realmadrid"),
+    ("realmadrid", "atleticomadrid"),
+    ("intermilan", "acmilan"),
+    ("acmilan", "intermilan"),
+}
 
 
 def _safe_text(value: Any) -> str:
@@ -78,6 +90,15 @@ def _parse_first_float(text: str) -> Optional[float]:
         return None
 
 
+def _safe_float(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _build_gate_lookup(gate_snapshot: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     lookup: Dict[str, Dict[str, Any]] = {}
     rows = gate_snapshot.get("rows") if isinstance(gate_snapshot.get("rows"), list) else []
@@ -97,6 +118,75 @@ def _safe_gap(edge_a: Any, edge_b: Any) -> Optional[float]:
     if not isinstance(edge_a, (int, float)) or not isinstance(edge_b, (int, float)):
         return None
     return abs(float(edge_a) - float(edge_b))
+
+
+def _normalize_match_key(value: str) -> str:
+    return re.sub(r"\s+", " ", _safe_text(value).lower()).strip()
+
+
+def _normalize_team_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", _safe_text(value).lower())
+
+
+def _has_confirmed_absence(nodes: List[Any]) -> bool:
+    if not isinstance(nodes, list):
+        return False
+    signals = (
+        "out",
+        "injur",
+        "suspend",
+        "acl",
+        "meniscus",
+        "sidelined",
+        "absence",
+        "缺阵",
+        "伤",
+        "停赛",
+    )
+    for raw in nodes:
+        text = _safe_text(raw).lower()
+        if text and any(sig in text for sig in signals):
+            return True
+    return False
+
+
+def _parse_simple_scalar(raw: str) -> Any:
+    txt = _safe_text(raw)
+    low = txt.lower()
+    if low in {"true", "yes"}:
+        return True
+    if low in {"false", "no"}:
+        return False
+    return txt
+
+
+def _parse_gate_override_markdown(path: Path) -> Dict[str, Any]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    data: Dict[str, Any] = {}
+    current_list_key: Optional[str] = None
+    for raw in lines:
+        line = raw.rstrip()
+        if not line.strip():
+            current_list_key = None
+            continue
+        if line.lstrip().startswith("- "):
+            if current_list_key:
+                data.setdefault(current_list_key, []).append(_safe_text(line.lstrip()[2:]))
+            continue
+        current_list_key = None
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        k = _safe_text(key)
+        v = _safe_text(value)
+        if not k:
+            continue
+        if v == "":
+            data[k] = []
+            current_list_key = k
+        else:
+            data[k] = _parse_simple_scalar(v)
+    return data
 
 
 class PrematchSynthesis:
@@ -124,6 +214,7 @@ class PrematchSynthesis:
 
         self.issue_root = self.vault_root / "03_Match_Audits" / self.issue
         self.review_dir = self.issue_root / "03_Review_Reports"
+        self.gate_override_dir = self.issue_root / "00_Gate"
         self.prematch_dir = self.issue_root / "01_Prematch_Audits"
         self.manifest_path = (
             self.vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake" / f"{self.issue}_dispatch_manifest.json"
@@ -186,12 +277,32 @@ class PrematchSynthesis:
     def _load_json(path: Path) -> Dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def _load_gate_overrides(self) -> Dict[str, Dict[str, Any]]:
+        lookup: Dict[str, Dict[str, Any]] = {}
+        if not self.gate_override_dir.exists():
+            return lookup
+        for path in sorted(self.gate_override_dir.glob("REVIEW-*.md")):
+            try:
+                payload = _parse_gate_override_markdown(path)
+            except Exception:
+                continue
+            match_name = _safe_text(payload.get("match"))
+            if not match_name:
+                continue
+            lookup[_normalize_match_key(match_name)] = payload
+            if "vs" in match_name:
+                parts = [x.strip() for x in match_name.split("vs", 1)]
+                if len(parts) == 2 and parts[0] and parts[1]:
+                    lookup[_normalize_match_key(f"{parts[0]} vs {parts[1]}")] = payload
+        return lookup
+
     def _load_inputs(self) -> Dict[str, Any]:
         if not self.review_dir.exists():
             raise FileNotFoundError(f"目录不存在: {self.review_dir}")
         manifest = self._load_json(self.manifest_path) if self.manifest_path.exists() else {}
         diagnostics = self._load_json(self.diagnostics_path) if self.diagnostics_path.exists() else {}
         gate_snapshot = self._load_json(self.gate_json_path) if self.gate_json_path.exists() else {}
+        gate_overrides = self._load_gate_overrides()
         quality_text = self.review_quality_path.read_text(encoding="utf-8") if self.review_quality_path.exists() else ""
         gate_lookup = _build_gate_lookup(gate_snapshot)
         gate_rows = gate_snapshot.get("rows") if isinstance(gate_snapshot.get("rows"), list) else []
@@ -240,6 +351,23 @@ class PrematchSynthesis:
             insufficient_files = {f for f in insufficient_files if f in accepted_files}
 
         match_payloads: List[Dict[str, Any]] = []
+        diagnostics_teams = diagnostics.get("teams") if isinstance(diagnostics.get("teams"), list) else []
+        team_profiles: Dict[str, Dict[str, Any]] = {}
+        for team_row in diagnostics_teams:
+            if not isinstance(team_row, dict):
+                continue
+            team_name = _safe_text(team_row.get("team"))
+            if not team_name:
+                continue
+            team_profiles[_normalize_team_key(team_name)] = {
+                "team": team_name,
+                "team_class_hint": _safe_text(team_row.get("team_class_hint")) or "standard",
+                "injured_nodes": team_row.get("injured_nodes") if isinstance(team_row.get("injured_nodes"), list) else [],
+                "suspended_nodes": team_row.get("suspended_nodes") if isinstance(team_row.get("suspended_nodes"), list) else [],
+                "conversion_efficiency": _safe_float(team_row.get("conversion_efficiency")),
+                "avg_xG_last_5": _safe_float(team_row.get("avg_xG_last_5")),
+                "defensive_leakage": _safe_float(team_row.get("defensive_leakage")),
+            }
         for filename in sorted(accepted_files):
             path = self.prematch_dir / filename
             if not path.exists():
@@ -250,8 +378,23 @@ class PrematchSynthesis:
                 gate_row = gate_lookup.get(f"idx:{parsed.get('match_index')}")
             if gate_row is None and _safe_text(parsed.get("match")):
                 gate_row = gate_lookup.get(f"match:{_safe_text(parsed.get('match'))}")
+            match_key = _normalize_match_key(_safe_text(parsed.get("match")))
+            cn_match_key = _normalize_match_key(_safe_text(parsed.get("cn_match")))
+            override = gate_overrides.get(match_key) or gate_overrides.get(cn_match_key) or {}
             parsed["gate_row"] = gate_row
-            parsed["readiness_level"] = _safe_text((gate_row or {}).get("prematch_readiness_level")).upper() or "READY"
+            readiness_level = _safe_text((gate_row or {}).get("prematch_readiness_level")).upper() or "READY"
+            gate_status_override = _safe_text(override.get("gate_status")).upper()
+            if gate_status_override in {"READY", "HOLD", "BLOCKED"}:
+                readiness_level = gate_status_override
+            parsed["readiness_level"] = readiness_level
+            parsed["ready_level"] = _safe_text(override.get("ready_level")).upper()
+            parsed["confidence_cap"] = _safe_text(override.get("confidence_cap")).lower()
+            parsed["prematch_allowed"] = bool(override.get("prematch_allowed")) if "prematch_allowed" in override else None
+            parsed["required_controls"] = (
+                override.get("required_prematch_controls")
+                if isinstance(override.get("required_prematch_controls"), list)
+                else []
+            )
             parsed["is_low_confidence"] = (
                 bool((gate_row or {}).get("soft_blockers"))
                 or _safe_text((gate_row or {}).get("quality_tag")) == "DATA_WEAK"
@@ -261,6 +404,8 @@ class PrematchSynthesis:
                 filename in insufficient_files and gate_row is None
             )
             parsed["is_structural_data_gap"] = bool((gate_row or {}).get("has_structural_data_gap"))
+            parsed["home_profile"] = team_profiles.get(_normalize_team_key(parsed.get("home_team")))
+            parsed["away_profile"] = team_profiles.get(_normalize_team_key(parsed.get("away_team")))
             match_payloads.append(parsed)
 
         if gate_rows:
@@ -304,6 +449,7 @@ class PrematchSynthesis:
             "low_conf_count": low_conf_count,
             "insufficient_count": insufficient_count,
             "top5_mode": self.top5_only,
+            "team_profiles": team_profiles,
         }
 
     def _parse_prematch_audit(self, path: Path) -> Dict[str, Any]:
@@ -316,9 +462,15 @@ class PrematchSynthesis:
             except Exception:
                 match_index = None
         title = _safe_text(next((line for line in text.splitlines() if line.startswith("# ")), ""))
-        title_match = re.search(r"# Ares Prematch Audit - Issue (\d+) - (.+?) vs (.+)$", title)
+        title_match = re.search(r"# Ares Prematch Audit - Issue (.+?) - (.+?) vs (.+)$", title)
         home_team = _safe_text(title_match.group(2)) if title_match else ""
         away_team = _safe_text(title_match.group(3)) if title_match else ""
+
+        if not (home_team and away_team):
+            m_en = re.search(r"- 英文对阵:\s*`([^`]+)\s+vs\s+([^`]+)`", text)
+            if m_en:
+                home_team = _safe_text(m_en.group(1))
+                away_team = _safe_text(m_en.group(2))
 
         cn_match = ""
         m_cn = re.search(r"- 中文对阵:\s*`([^`]+)`", text)
@@ -383,6 +535,28 @@ class PrematchSynthesis:
         if current_team:
             team_sections.append(current_team)
 
+        risk_tags: List[str] = []
+        for m_tag in re.finditer(
+            r"(?mi)^\s*-\s*([a-z0-9_]+(?:exposure|variance|urgency|escape|survival|reversal|motivation|rival)[a-z0-9_]*)\s*$",
+            text,
+        ):
+            token = _safe_text(m_tag.group(1)).lower()
+            if token:
+                risk_tags.append(token)
+
+        text_l = text.lower()
+        survival_escape_signal = any(
+            token in text_l
+            for token in (
+                "win_moves_team_out_of_relegation_zone: true",
+                "immediate_table_escape_condition",
+                "survival_urgency: extreme",
+                "relegation_zone",
+                "降级区",
+                "保级",
+            )
+        )
+
         return {
             "file": path.name,
             "match_index": match_index,
@@ -394,6 +568,8 @@ class PrematchSynthesis:
             "understat_id": understat_id,
             "odds": odds,
             "teams": team_sections,
+            "risk_tags": sorted(set(risk_tags)),
+            "survival_escape_signal": survival_escape_signal,
         }
 
     @staticmethod
@@ -477,6 +653,15 @@ class PrematchSynthesis:
         if suggestion in {"3", "0"} and score >= 4.0 and readiness_level == "READY" and not is_low_conf and not is_insufficient:
             return "稳胆"
         if suggestion != "skip" and score >= 1.5 and readiness_level == "READY" and best_edge is not None and best_edge >= 0:
+            return "博弈"
+        if (
+            suggestion in {"1", "3/1", "1/0"}
+            and readiness_level in {"READY", "HOLD"}
+            and not is_low_conf
+            and score >= -0.5
+        ):
+            return "博弈"
+        if suggestion != "skip" and readiness_level in {"READY", "HOLD"} and not is_insufficient and score >= -0.5:
             return "博弈"
         if cls._watchlist_upgrade_reason(verdict):
             return "博弈"
@@ -603,6 +788,431 @@ class PrematchSynthesis:
             items = tiers.get("观察") if isinstance(tiers.get("观察"), list) else []
         return items[:5]
 
+    @staticmethod
+    def _combo_type_from_suggestion(suggestion: str) -> str:
+        txt = _safe_text(suggestion).strip().lower()
+        if txt in {"3", "1", "0", "skip"}:
+            return "NONE"
+        parts = [p for p in txt.split("/") if p]
+        if len(parts) == 2:
+            return "DOUBLE"
+        if len(parts) >= 3:
+            return "TRIPLE"
+        return "NONE"
+
+    @staticmethod
+    def _blocked_by_gates(verdict: Dict[str, Any]) -> List[str]:
+        blocks: List[str] = []
+        if bool(verdict.get("no_single_pick_gate")):
+            blocks.append("NO_SINGLE_PICK_GATE")
+        if bool(verdict.get("away_elite_conditional_only")):
+            blocks.append("AWAY_ELITE_CONDITIONAL_ONLY")
+        if bool(verdict.get("is_insufficient_resilience")):
+            blocks.append("INSUFFICIENT_RESILIENCE")
+        if bool(verdict.get("is_low_confidence")):
+            blocks.append("LOW_CONFIDENCE")
+        if bool(verdict.get("market_reversal_gate")):
+            blocks.append("MARKET_REVERSAL_GATE")
+        if bool(verdict.get("survival_escape_signal")):
+            blocks.append("SURVIVAL_ESCAPE_SIGNAL")
+        if _safe_text(verdict.get("rotation_intensity")).upper() == "HIGH":
+            blocks.append("GATE_HIGH_ROTATION_RISK")
+        return blocks
+
+    @classmethod
+    def _single_pick_score_01(cls, verdict: Dict[str, Any]) -> float:
+        raw = cls._candidate_score(verdict)
+        score = (float(raw) + 2.0) / 8.0
+        return round(max(0.0, min(1.0, score)), 3)
+
+    @classmethod
+    def _apply_dynamic_ticket_structure(cls, verdicts: List[Dict[str, Any]], candidate_board: Dict[str, Any]) -> Dict[str, int]:
+        tier_by_match = {
+            _safe_text(item.get("match")): tier
+            for tier, items in (candidate_board.get("tiers") or {}).items()
+            if isinstance(items, list)
+            for item in items
+        }
+        single_candidates: List[Dict[str, Any]] = []
+        high_risk_count = 0
+        for verdict in verdicts:
+            tier = tier_by_match.get(_safe_text(verdict.get("match")), _safe_text(verdict.get("candidate_tier")) or "放弃")
+            analysis_suggestion = _safe_text(verdict.get("suggestion")) or "skip"
+            blocked = cls._blocked_by_gates(verdict)
+            single_score = cls._single_pick_score_01(verdict)
+            high_risk = bool(
+                {"NO_SINGLE_PICK_GATE", "INSUFFICIENT_RESILIENCE", "AWAY_ELITE_CONDITIONAL_ONLY", "GATE_HIGH_ROTATION_RISK"}
+                & set(blocked)
+            )
+            if high_risk:
+                high_risk_count += 1
+            eligible_single = (
+                analysis_suggestion in {"3", "1", "0"}
+                and tier in {"稳胆", "博弈"}
+                and single_score >= 0.68
+                and "NO_SINGLE_PICK_GATE" not in blocked
+                and "AWAY_ELITE_CONDITIONAL_ONLY" not in blocked
+                and "GATE_HIGH_ROTATION_RISK" not in blocked
+            )
+            verdict["candidate_tier"] = tier
+            verdict["analysis_suggestion"] = analysis_suggestion
+            verdict["single_pick_score"] = single_score
+            verdict["blocked_by_gates"] = blocked
+            verdict["single_pick_eligible"] = eligible_single
+            if not _safe_text(verdict.get("key_node_absence_risk")):
+                verdict["key_node_absence_risk"] = "UNKNOWN"
+            if not isinstance(verdict.get("lineup_stability_precheck"), dict):
+                verdict["lineup_stability_precheck"] = {"home": "UNKNOWN", "away": "UNKNOWN"}
+            if eligible_single:
+                single_candidates.append(verdict)
+
+        total_matches = max(1, len(verdicts))
+        base_budget = total_matches // 4
+        quality_bonus = 1 if len(single_candidates) >= base_budget + 2 else 0
+        high_risk_ratio = high_risk_count / total_matches
+        risk_penalty = -2 if high_risk_ratio >= 0.50 else -1 if high_risk_ratio >= 0.35 else 0
+        final_budget = max(0, min(5, base_budget + quality_bonus + risk_penalty))
+        ranked_single = sorted(single_candidates, key=lambda x: float(x.get("single_pick_score") or 0.0), reverse=True)
+        allowed_single_matches = {_safe_text(v.get("match")) for v in ranked_single[:final_budget]}
+        single_ranks = {_safe_text(v.get("match")): i + 1 for i, v in enumerate(ranked_single)}
+
+        single_used = 0
+        combo_used = 0
+        pass_used = 0
+        for verdict in verdicts:
+            match_name = _safe_text(verdict.get("match"))
+            analysis_suggestion = _safe_text(verdict.get("analysis_suggestion") or verdict.get("suggestion") or "skip")
+            tier = _safe_text(verdict.get("candidate_tier"))
+            is_pass = analysis_suggestion == "skip" or tier in {"放弃"}
+            decision_type = "PASS"
+            final_suggestion = "skip"
+            if not is_pass:
+                if match_name in allowed_single_matches and analysis_suggestion in {"3", "1", "0"}:
+                    decision_type = "SINGLE"
+                    final_suggestion = analysis_suggestion
+                    single_used += 1
+                else:
+                    decision_type = "COMBO"
+                    if analysis_suggestion in {"3", "1", "0"}:
+                        final_suggestion = "3/1" if analysis_suggestion == "3" else "1/0" if analysis_suggestion == "0" else "1/3"
+                    else:
+                        final_suggestion = analysis_suggestion
+                    combo_used += 1
+            else:
+                pass_used += 1
+
+            verdict["decision_type"] = decision_type
+            verdict["non_actionable"] = decision_type == "PASS"
+            verdict["final_suggestion"] = final_suggestion
+            verdict["single_pick_rank"] = single_ranks.get(match_name)
+            verdict["combo_type"] = cls._combo_type_from_suggestion(final_suggestion)
+
+        return {
+            "single_pick_dynamic_budget": final_budget,
+            "single_used": single_used,
+            "combo_used": combo_used,
+            "pass_used": pass_used,
+        }
+
+    @staticmethod
+    def _is_elite_profile(profile: Optional[Dict[str, Any]]) -> bool:
+        if not isinstance(profile, dict):
+            return False
+        return _safe_text(profile.get("team_class_hint")).lower() == "elite_depth"
+
+    @staticmethod
+    def _has_confirmed_xi_damage(profile: Optional[Dict[str, Any]]) -> bool:
+        if not isinstance(profile, dict):
+            return False
+        injuries = profile.get("injured_nodes") if isinstance(profile.get("injured_nodes"), list) else []
+        susp = profile.get("suspended_nodes") if isinstance(profile.get("suspended_nodes"), list) else []
+        return _has_confirmed_absence(injuries) or _has_confirmed_absence(susp)
+
+    @staticmethod
+    def _schedule_risk_controls(required_controls: List[Any]) -> bool:
+        if not isinstance(required_controls, list):
+            return False
+        keywords = ("lineup", "首发", "rotation", "轮换", "final_lineup_recheck_required")
+        for item in required_controls:
+            text = _safe_text(item).lower()
+            if text and any(k in text for k in keywords):
+                return True
+        return False
+
+    @staticmethod
+    def _is_rivalry_match(home_team: str, away_team: str, risk_tags: List[str]) -> bool:
+        home_key = _normalize_team_key(home_team)
+        away_key = _normalize_team_key(away_team)
+        if (home_key, away_key) in RIVALRY_TEAM_PAIRS:
+            return True
+        for raw in risk_tags:
+            tag = _safe_text(raw).lower()
+            if "rival" in tag or "derby" in tag or "variance" in tag:
+                return True
+        return False
+
+    @staticmethod
+    def _has_transition_threat(home_profile: Dict[str, Any], away_profile: Dict[str, Any]) -> bool:
+        home_xg = _safe_float(home_profile.get("avg_xG_last_5"))
+        away_xg = _safe_float(away_profile.get("avg_xG_last_5"))
+        home_leak = _safe_float(home_profile.get("defensive_leakage"))
+        away_leak = _safe_float(away_profile.get("defensive_leakage"))
+        xg_ready = (home_xg is not None and home_xg >= 1.2) and (away_xg is not None and away_xg >= 1.2)
+        leak_ready = (home_leak is not None and home_leak >= 0.55) or (away_leak is not None and away_leak >= 0.55)
+        return xg_ready or leak_ready
+
+    @staticmethod
+    def _away_favorite_defense_exposure_trigger(
+        home_market: Optional[float],
+        away_market: Optional[float],
+        home_profile: Dict[str, Any],
+        away_profile: Dict[str, Any],
+        risk_tags: List[str],
+    ) -> bool:
+        away_favorite = (
+            isinstance(home_market, (int, float))
+            and isinstance(away_market, (int, float))
+            and away_market - home_market >= 3.0
+        )
+        if not away_favorite:
+            return False
+        away_leak = _safe_float(away_profile.get("defensive_leakage"))
+        home_xg = _safe_float(home_profile.get("avg_xG_last_5"))
+        tag_signal = any("rest_defense_exposure" in _safe_text(tag).lower() for tag in risk_tags)
+        prev_xga_proxy = (away_leak is not None and away_leak >= 0.58) or tag_signal
+        home_xg_proxy = home_xg is not None and home_xg >= 1.5
+        return prev_xga_proxy and home_xg_proxy
+
+    @staticmethod
+    def _low_event_home_favorite_trigger(
+        home_market: Optional[float],
+        away_market: Optional[float],
+        home_profile: Dict[str, Any],
+        away_profile: Dict[str, Any],
+    ) -> bool:
+        # ARES_LOW_EVENT_HOME_FAVORITE_GATE:
+        # 低事件主队即便被市场轻抬，也不允许重仓单挑主胜。
+        home_favorite = (
+            isinstance(home_market, (int, float))
+            and isinstance(away_market, (int, float))
+            and home_market - away_market >= 2.5
+        )
+        if not home_favorite:
+            return False
+        home_xg = _safe_float(home_profile.get("avg_xG_last_5"))
+        home_leak = _safe_float(home_profile.get("defensive_leakage"))
+        away_xg = _safe_float(away_profile.get("avg_xG_last_5"))
+        low_event_home = (home_xg is not None and home_xg <= 1.35) and (home_leak is not None and home_leak <= 0.55)
+        away_pressure = away_xg is not None and away_xg >= 1.45
+        return low_event_home or away_pressure
+
+    @staticmethod
+    def _away_recent_xg_protection_trigger(
+        home_profile: Dict[str, Any],
+        away_profile: Dict[str, Any],
+    ) -> bool:
+        # ARES_AWAY_RECENT_XG_PROTECTION_GATE:
+        # 客队近期 xG 明显领先时，不能删除客胜路径。
+        home_xg = _safe_float(home_profile.get("avg_xG_last_5"))
+        away_xg = _safe_float(away_profile.get("avg_xG_last_5"))
+        if home_xg is None or away_xg is None:
+            return False
+        if away_xg < home_xg + 0.4:
+            return False
+        away_conv = _safe_float(away_profile.get("conversion_efficiency"))
+        away_xi_damage = PrematchSynthesis._has_confirmed_xi_damage(away_profile)
+        away_attack_collapsed = away_xg < 1.0 and away_xi_damage and (away_conv is None or away_conv < 0.6)
+        return not away_attack_collapsed
+
+    @staticmethod
+    def _market_reversal_gate_trigger(risk_tags: List[str]) -> bool:
+        for raw in risk_tags:
+            tag = _safe_text(raw).lower()
+            if "market_reversal" in tag or "odds_reversal" in tag or "reversal" in tag:
+                return True
+        return False
+
+    @staticmethod
+    def _backup_gk_low_score_risk_trigger(
+        home_profile: Dict[str, Any],
+        away_profile: Dict[str, Any],
+    ) -> bool:
+        # ARES_BACKUP_GK_LOW_SCORE_RISK: 门将缺席 + 低产对局容易放大开放度
+        nodes = home_profile.get("injured_nodes") if isinstance(home_profile.get("injured_nodes"), list) else []
+        text = " | ".join(_safe_text(x).lower() for x in nodes)
+        gk_absent = any(k in text for k in ("gk", "goalkeeper", "keeper", "门将", "gardien"))
+        home_xg = _safe_float(home_profile.get("avg_xG_last_5"))
+        away_xg = _safe_float(away_profile.get("avg_xG_last_5"))
+        low_event = (home_xg is not None and home_xg <= 1.4) and (away_xg is not None and away_xg <= 1.3)
+        return gk_absent and low_event
+
+    @staticmethod
+    def _direct_rival_home_pressure_trigger(
+        home_profile: Dict[str, Any],
+        away_profile: Dict[str, Any],
+        risk_tags: List[str],
+    ) -> bool:
+        # ARES_DIRECT_RIVAL_HOME_PRESSURE_GATE
+        tag_hit = any("direct_rival" in _safe_text(t).lower() or "high_motivation" in _safe_text(t).lower() for t in risk_tags)
+        home_xg = _safe_float(home_profile.get("avg_xG_last_5"))
+        away_xg = _safe_float(away_profile.get("avg_xG_last_5"))
+        return tag_hit and (home_xg is not None and home_xg >= 1.5) and (away_xg is not None and away_xg >= 1.1)
+
+    @staticmethod
+    def _recent_big_win_noise_gate(risk_tags: List[str], away_profile: Dict[str, Any]) -> bool:
+        # ARES_RECENT_BIG_WIN_NOISE_GATE
+        has_big_win_signal = any("big_win" in _safe_text(t).lower() or "recent_hot_form" in _safe_text(t).lower() for t in risk_tags)
+        away_inj = away_profile.get("injured_nodes") if isinstance(away_profile.get("injured_nodes"), list) else []
+        away_susp = away_profile.get("suspended_nodes") if isinstance(away_profile.get("suspended_nodes"), list) else []
+        multi_line_absence = len(away_inj) + len(away_susp) >= 2
+        return has_big_win_signal and multi_line_absence
+
+    @staticmethod
+    def _away_favorite_injury_result_gate(away_profile: Dict[str, Any], away_favorite: bool) -> bool:
+        # ARES_AWAY_FAVORITE_INJURY_RESULT_GATE
+        if not away_favorite:
+            return False
+        away_inj = away_profile.get("injured_nodes") if isinstance(away_profile.get("injured_nodes"), list) else []
+        away_susp = away_profile.get("suspended_nodes") if isinstance(away_profile.get("suspended_nodes"), list) else []
+        return len(away_inj) + len(away_susp) >= 3
+
+    @staticmethod
+    def _away_process_edge_over_home_survival(
+        home_profile: Dict[str, Any],
+        away_profile: Dict[str, Any],
+        survival_escape_signal: bool,
+    ) -> bool:
+        # ARES_AWAY_PROCESS_EDGE_OVER_HOME_SURVIVAL_PRESSURE
+        if not survival_escape_signal:
+            return False
+        home_xg = _safe_float(home_profile.get("avg_xG_last_5"))
+        away_xg = _safe_float(away_profile.get("avg_xG_last_5"))
+        if home_xg is None or away_xg is None:
+            return False
+        return away_xg >= home_xg + 0.45
+
+    @staticmethod
+    def _relegation_away_draw_protection(
+        home_market: Optional[float],
+        away_market: Optional[float],
+        risk_tags: List[str],
+    ) -> bool:
+        # ARES_RELEGATION_AWAY_DRAW_PROTECTION_GATE
+        retreat_signal = any("market_reversal" in _safe_text(t).lower() or "home_odds_raise" in _safe_text(t).lower() for t in risk_tags)
+        close_market = (
+            isinstance(home_market, (int, float))
+            and isinstance(away_market, (int, float))
+            and abs(float(home_market) - float(away_market)) <= 4.0
+        )
+        return retreat_signal or close_market
+
+    @staticmethod
+    def _away_favorite_attack_cold_gate(
+        home_market: Optional[float],
+        away_market: Optional[float],
+        home_profile: Dict[str, Any],
+        away_profile: Dict[str, Any],
+    ) -> bool:
+        # ARES_AWAY_FAVORITE_ATTACK_COLD_GATE
+        away_favorite = (
+            isinstance(home_market, (int, float))
+            and isinstance(away_market, (int, float))
+            and away_market - home_market >= 2.5
+        )
+        if not away_favorite:
+            return False
+        away_xg = _safe_float(away_profile.get("avg_xG_last_5"))
+        away_conv = _safe_float(away_profile.get("conversion_efficiency"))
+        home_xg = _safe_float(home_profile.get("avg_xG_last_5"))
+        attack_cold = (away_xg is not None and away_xg <= 1.35) or (away_conv is not None and away_conv <= 0.95)
+        home_resistance = home_xg is not None and home_xg >= 1.35
+        return attack_cold and home_resistance
+
+    @staticmethod
+    def _home_form_resistance_gate(
+        home_profile: Dict[str, Any],
+        away_profile: Dict[str, Any],
+        home_market: Optional[float],
+        away_market: Optional[float],
+    ) -> bool:
+        # ARES_HOME_FORM_RESISTANCE_GATE
+        home_xg = _safe_float(home_profile.get("avg_xG_last_5"))
+        home_conv = _safe_float(home_profile.get("conversion_efficiency"))
+        away_favorite = (
+            isinstance(home_market, (int, float))
+            and isinstance(away_market, (int, float))
+            and away_market - home_market >= 2.5
+        )
+        if not away_favorite:
+            return False
+        strong_home_form = (home_xg is not None and home_xg >= 1.45) or (home_conv is not None and home_conv >= 1.05)
+        away_leak = _safe_float(away_profile.get("defensive_leakage"))
+        away_not_stable = away_leak is not None and away_leak >= 0.52
+        return strong_home_form and away_not_stable
+
+    @staticmethod
+    def _conversion_bubble_penalty(
+        profile: Optional[Dict[str, Any]],
+        opponent_profile: Optional[Dict[str, Any]],
+    ) -> float:
+        if not isinstance(profile, dict):
+            return 0.0
+        conv = _safe_float(profile.get("conversion_efficiency"))
+        xg = _safe_float(profile.get("avg_xG_last_5"))
+        opp_leak = _safe_float((opponent_profile or {}).get("defensive_leakage"))
+        if conv is None or conv < 1.8:
+            return 0.0
+        # ARES_CONVERSION_BUBBLE_SPLIT:
+        # 高转化不自动反转；仅在“机会质量偏弱 + 对手防守不漏”时轻微降权。
+        if (xg is not None and xg < 1.35) and (opp_leak is not None and opp_leak < 0.5):
+            return 0.8
+        return 0.0
+
+    @staticmethod
+    def _is_away_elite_conditional_only(
+        away_favorite: bool,
+        away_elite: bool,
+        recent_xga_risk: bool,
+        injuries_across_lines: bool,
+        opponent_survival_pressure: bool,
+        market_retreat_against_favorite: bool,
+        derby_or_rivalry: bool,
+    ) -> bool:
+        if not (away_favorite and away_elite):
+            return False
+        hard_risks = (
+            recent_xga_risk,
+            injuries_across_lines,
+            opponent_survival_pressure,
+            market_retreat_against_favorite,
+            derby_or_rivalry,
+        )
+        return any(hard_risks)
+
+    @staticmethod
+    def _should_block_single_pick(
+        new_manager_sample_matches: int,
+        opponent_survival_pressure_high: bool,
+        favorite_deep_handicap: float,
+        market_retreat_against_favorite: bool,
+        structural_crisis_home_survival: bool,
+        both_sides_strong_counterarguments: bool,
+        away_elite_conditional_only: bool,
+        key_node_absence_high: bool,
+        lineup_stability_red: bool,
+    ) -> bool:
+        triggers = [
+            new_manager_sample_matches <= 1 and opponent_survival_pressure_high,
+            favorite_deep_handicap >= 1.25,
+            market_retreat_against_favorite,
+            structural_crisis_home_survival,
+            both_sides_strong_counterarguments,
+            away_elite_conditional_only,
+            key_node_absence_high,
+            lineup_stability_red,
+        ]
+        return any(triggers)
+
     def _build_rule_based_result(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         diagnostics = inputs.get("diagnostics") or {}
         gate_snapshot = inputs.get("gate_snapshot") or {}
@@ -613,9 +1223,13 @@ class PrematchSynthesis:
 
         mapping_counter: Dict[str, int] = {}
         smoke_count = 0
+        manifest_index_lookup: Dict[int, Dict[str, Any]] = {}
         for match in manifest_matches:
             source = _safe_text(match.get("mapping_source")).lower() or "unknown"
             mapping_counter[source] = mapping_counter.get(source, 0) + 1
+            idx_val = match.get("index")
+            if isinstance(idx_val, int):
+                manifest_index_lookup[idx_val] = match
             mode = _safe_text(match.get("manual_anchor_mode")).lower()
             notes = _safe_text(match.get("manual_anchor_notes")).lower()
             fbref_url = _safe_text(match.get("fbref_url")).lower()
@@ -627,11 +1241,21 @@ class PrematchSynthesis:
             team_map = {str(t.get("side")).lower(): t for t in (row.get("teams") or [])}
             home = team_map.get("home", {})
             away = team_map.get("away", {})
+            match_index = row.get("match_index")
+            manifest_row = manifest_index_lookup.get(int(match_index)) if isinstance(match_index, int) else {}
+            context_flags = (
+                manifest_row.get("match_context_flags") if isinstance(manifest_row.get("match_context_flags"), dict) else {}
+            )
+            market_behavior = (
+                manifest_row.get("market_behavior") if isinstance(manifest_row.get("market_behavior"), dict) else {}
+            )
 
             home_market = home.get("market_prob")
             away_market = away.get("market_prob")
             home_model = home.get("model_prob")
             away_model = away.get("model_prob")
+            home_sd = home.get("s_dynamic")
+            away_sd = away.get("s_dynamic")
 
             edge_home = None
             edge_away = None
@@ -647,12 +1271,124 @@ class PrematchSynthesis:
             elif isinstance(edge_away, (int, float)):
                 best_edge = float(edge_away)
             readiness_level = _safe_text(row.get("readiness_level")).upper() or "READY"
+            confidence_cap = _safe_text(row.get("confidence_cap")).lower()
+            required_controls = row.get("required_controls") if isinstance(row.get("required_controls"), list) else []
+            home_profile = row.get("home_profile") if isinstance(row.get("home_profile"), dict) else {}
+            away_profile = row.get("away_profile") if isinstance(row.get("away_profile"), dict) else {}
+            risk_tags = row.get("risk_tags") if isinstance(row.get("risk_tags"), list) else []
+            home_elite = self._is_elite_profile(home_profile)
+            away_elite = self._is_elite_profile(away_profile)
+            home_xi_damage = self._has_confirmed_xi_damage(home_profile)
+            away_xi_damage = self._has_confirmed_xi_damage(away_profile)
+            schedule_risk_flag = self._schedule_risk_controls(required_controls)
+            rivalry_flag = self._is_rivalry_match(
+                _safe_text(row.get("home_team")),
+                _safe_text(row.get("away_team")),
+                risk_tags,
+            )
+            rivalry_transition_ready = self._has_transition_threat(home_profile, away_profile)
+            away_fav_def_exposure = self._away_favorite_defense_exposure_trigger(
+                home_market,
+                away_market,
+                home_profile,
+                away_profile,
+                risk_tags,
+            )
+            away_favorite = (
+                isinstance(home_market, (int, float))
+                and isinstance(away_market, (int, float))
+                and away_market - home_market >= 3.0
+            )
+            low_event_home_fav = self._low_event_home_favorite_trigger(
+                home_market,
+                away_market,
+                home_profile,
+                away_profile,
+            )
+            away_recent_xg_protect = self._away_recent_xg_protection_trigger(home_profile, away_profile)
+            market_reversal_flag = self._market_reversal_gate_trigger(risk_tags)
+            backup_gk_low_score_risk = self._backup_gk_low_score_risk_trigger(home_profile, away_profile)
+            direct_rival_home_pressure = self._direct_rival_home_pressure_trigger(home_profile, away_profile, risk_tags)
+            recent_big_win_noise = self._recent_big_win_noise_gate(risk_tags, away_profile)
+            away_fav_injury_result = self._away_favorite_injury_result_gate(away_profile, away_favorite)
+            away_process_over_survival = self._away_process_edge_over_home_survival(
+                home_profile,
+                away_profile,
+                bool(row.get("survival_escape_signal")),
+            )
+            relegation_away_draw = self._relegation_away_draw_protection(home_market, away_market, risk_tags)
+            away_attack_cold = self._away_favorite_attack_cold_gate(
+                home_market,
+                away_market,
+                home_profile,
+                away_profile,
+            )
+            home_form_resistance = self._home_form_resistance_gate(
+                home_profile,
+                away_profile,
+                home_market,
+                away_market,
+            )
+            survival_escape_signal = bool(row.get("survival_escape_signal"))
+            recent_xga_risk = bool(away_fav_def_exposure)
+            injuries_across_lines = bool(self._has_confirmed_xi_damage(away_profile))
+            opponent_survival_pressure = bool(
+                context_flags.get("opponent_survival_pressure_high") or survival_escape_signal
+            )
+            market_retreat_against_favorite = bool(
+                market_behavior.get("market_retreat_against_favorite") or market_reversal_flag
+            )
+            derby_or_rivalry = bool(rivalry_flag)
+            away_elite_conditional_only = self._is_away_elite_conditional_only(
+                away_favorite=away_favorite,
+                away_elite=away_elite,
+                recent_xga_risk=recent_xga_risk,
+                injuries_across_lines=injuries_across_lines,
+                opponent_survival_pressure=opponent_survival_pressure,
+                market_retreat_against_favorite=market_retreat_against_favorite,
+                derby_or_rivalry=derby_or_rivalry,
+            )
+            new_manager_sample_matches = int(context_flags.get("new_manager_sample_matches") or 0)
+            favorite_deep_handicap = float(context_flags.get("favorite_deep_handicap") or 0.0)
+            structural_crisis_home_survival = bool(
+                context_flags.get("structural_crisis_context") and opponent_survival_pressure
+            )
+            both_sides_strong_counterarguments = bool(
+                away_attack_cold or home_form_resistance or low_event_home_fav or away_recent_xg_protect
+            )
+            no_single_pick_gate = self._should_block_single_pick(
+                new_manager_sample_matches=new_manager_sample_matches,
+                opponent_survival_pressure_high=opponent_survival_pressure,
+                favorite_deep_handicap=favorite_deep_handicap,
+                market_retreat_against_favorite=market_retreat_against_favorite,
+                structural_crisis_home_survival=structural_crisis_home_survival,
+                both_sides_strong_counterarguments=both_sides_strong_counterarguments,
+                away_elite_conditional_only=away_elite_conditional_only,
+                key_node_absence_high=(
+                    str(context_flags.get("key_node_absence_risk") or "UNKNOWN").upper() in {"HIGH", "CRITICAL"}
+                ),
+                lineup_stability_red=(
+                    any(
+                        str(side_flag or "UNKNOWN").upper() == "RED"
+                        for side_flag in (
+                            (context_flags.get("lineup_stability_precheck") or {}).get("home")
+                            if isinstance(context_flags.get("lineup_stability_precheck"), dict)
+                            else None,
+                            (context_flags.get("lineup_stability_precheck") or {}).get("away")
+                            if isinstance(context_flags.get("lineup_stability_precheck"), dict)
+                            else None,
+                        )
+                    )
+                ),
+            ) or str(context_flags.get("rotation_intensity") or "UNKNOWN").upper() == "HIGH"
 
             suggestion = "skip"
             confidence = "low"
             reason = "缺少可计算的市场/模型偏差，暂归为观望。"
             confidence_score = 1.0
             upgrade_reason = None
+            conv_penalty = 0.0
+            reverse_block_note = ""
 
             if isinstance(edge_home, (int, float)) and isinstance(edge_away, (int, float)):
                 # 仅基于主客两侧边际，避免“1 - (主+客)”带来的平局伪信号。
@@ -689,6 +1425,160 @@ class PrematchSynthesis:
                     confidence_score -= 2.0
                 if readiness_level == "HOLD":
                     confidence_score -= 1.0
+
+                # ARES_CONVERSION_BUBBLE_SPLIT:
+                # 高转化率只在“机会质量不足 + 对手防线较稳”场景降权，不自动反转方向。
+                conv_penalty = 0.0
+                if suggestion in {"3", "3/1"}:
+                    conv_penalty = self._conversion_bubble_penalty(home_profile, away_profile)
+                elif suggestion in {"0", "1/0"}:
+                    conv_penalty = self._conversion_bubble_penalty(away_profile, home_profile)
+                elif suggestion in {"3/0", "1"}:
+                    conv_penalty = max(
+                        self._conversion_bubble_penalty(home_profile, away_profile),
+                        self._conversion_bubble_penalty(away_profile, home_profile),
+                    )
+                if conv_penalty > 0:
+                    confidence_score -= conv_penalty
+
+                # ARES_STRONG_TEAM_REVERSE_GATE:
+                # 强队不得仅因赛程/盘口信号被机械反向；无确认首发损伤时，只允许降置信或回到对冲。
+                reverse_block_note = ""
+                if home_elite and not home_xi_damage and suggestion in {"0", "1/0"}:
+                    suggestion = "3/1" if suggestion == "0" else "1"
+                    confidence_score -= 1.0
+                    reverse_block_note = "触发强队反向门禁：主队为 elite 且无确认首发损伤，禁止直接做空。"
+                elif away_elite and not away_xi_damage and suggestion in {"3", "3/1"}:
+                    suggestion = "1/0" if suggestion == "3" else "1"
+                    confidence_score -= 1.0
+                    reverse_block_note = "触发强队反向门禁：客队为 elite 且无确认首发损伤，禁止直接做空。"
+
+                # ARES_RIVALRY_VARIANCE_GATE:
+                # 德比/宿敌高方差场景默认保留主胜路径，禁止把 3 直接删空。
+                if rivalry_flag and rivalry_transition_ready:
+                    if suggestion in {"0", "1/0"}:
+                        suggestion = "0/1/3"
+                        confidence_score -= 0.4
+                    elif suggestion == "1":
+                        suggestion = "1/3"
+                        confidence_score -= 0.2
+
+                # ARES_AWAY_FAVORITE_DEFENSE_EXPOSURE_GATE:
+                # 客队热门且防线暴露时，必须保留主胜保护腿。
+                if away_fav_def_exposure:
+                    if suggestion == "0":
+                        suggestion = "0/1/3"
+                        confidence_score -= 0.7
+                    elif suggestion == "1/0":
+                        suggestion = "0/1/3"
+                        confidence_score -= 0.5
+                    elif suggestion == "1":
+                        suggestion = "1/3"
+                        confidence_score -= 0.3
+
+                if low_event_home_fav:
+                    if suggestion == "3":
+                        suggestion = "3/1"
+                        confidence_score -= 0.8
+                    elif suggestion == "3/1":
+                        confidence_score -= 0.4
+
+                if away_recent_xg_protect:
+                    if suggestion == "3":
+                        suggestion = "3/1/0"
+                        confidence_score -= 0.6
+                    elif suggestion == "3/1":
+                        suggestion = "3/1/0"
+                        confidence_score -= 0.4
+                    elif suggestion == "1":
+                        suggestion = "1/0"
+                        confidence_score -= 0.2
+
+                if market_reversal_flag:
+                    if suggestion == "3":
+                        suggestion = "1/0"
+                        confidence_score -= 0.9
+                    elif suggestion == "3/1":
+                        suggestion = "1/0"
+                        confidence_score -= 0.6
+
+                if backup_gk_low_score_risk:
+                    if suggestion == "3":
+                        suggestion = "3/1"
+                        confidence_score -= 0.5
+                    elif suggestion == "1":
+                        suggestion = "1/0"
+                        confidence_score -= 0.3
+
+                if direct_rival_home_pressure:
+                    if suggestion in {"0", "1/0"}:
+                        suggestion = "3/0"
+                        confidence_score -= 0.2
+                    elif suggestion == "1":
+                        suggestion = "3/1"
+                        confidence_score -= 0.2
+
+                if recent_big_win_noise:
+                    if suggestion == "0":
+                        suggestion = "0/1"
+                        confidence_score -= 0.6
+                    elif suggestion == "0/1/3":
+                        confidence_score -= 0.3
+
+                if away_fav_injury_result:
+                    if suggestion == "0":
+                        suggestion = "0/1/3"
+                        confidence_score -= 0.7
+                    elif suggestion == "0/1":
+                        suggestion = "0/1/3"
+                        confidence_score -= 0.5
+
+                if away_process_over_survival:
+                    if suggestion == "1":
+                        suggestion = "1/0"
+                        confidence_score -= 0.3
+                    elif suggestion == "3/1":
+                        suggestion = "1/0"
+                        confidence_score -= 0.4
+
+                if relegation_away_draw:
+                    if suggestion == "3":
+                        suggestion = "3/1"
+                        confidence_score -= 0.5
+                    elif suggestion == "0":
+                        suggestion = "0/1"
+                        confidence_score -= 0.3
+
+                if away_attack_cold:
+                    if suggestion == "0":
+                        suggestion = "0/1/3"
+                        confidence_score -= 0.8
+                    elif suggestion == "0/1":
+                        suggestion = "0/1/3"
+                        confidence_score -= 0.6
+
+                if home_form_resistance:
+                    if suggestion == "0":
+                        suggestion = "0/1/3"
+                        confidence_score -= 0.6
+                    elif suggestion == "1":
+                        suggestion = "1/3"
+                        confidence_score -= 0.3
+
+                # ARES_SURVIVAL_ESCAPE_GATE:
+                # 即时逃生战意触发时，提升不败与客胜保护，避免被静态伤停惩罚过度压制。
+                if survival_escape_signal:
+                    if suggestion == "3":
+                        suggestion = "3/1"
+                    elif suggestion == "1":
+                        suggestion = "1/0"
+                    confidence_score = max(confidence_score, 2.5)
+
+                # ARES_SCHEDULE_SANDWICH_RULE:
+                # 赛程风险默认只降置信，不可单独翻转方向。
+                if schedule_risk_flag and not (home_xi_damage or away_xi_damage):
+                    confidence_score -= 0.6
+
                 provisional_verdict = {
                     "suggestion": suggestion,
                     "readiness_level": readiness_level,
@@ -708,16 +1598,94 @@ class PrematchSynthesis:
                 else:
                     confidence = "low"
 
+                if schedule_risk_flag and confidence == "high":
+                    confidence = "medium"
+
+                if away_elite_conditional_only and suggestion == "0":
+                    suggestion = "1/0"
+                    confidence_score -= 0.5
+                    reason += " 客场强队条件保护触发，单边客胜降为客不败。"
+
+                # Match-level gate override: cap confidence upper bound.
+                if confidence_cap == "medium" and confidence == "high":
+                    confidence = "medium"
+                elif confidence_cap == "low" and confidence in {"high", "medium"}:
+                    confidence = "low"
+
+                if no_single_pick_gate and suggestion in {"3", "0"}:
+                    suggestion = "3/1" if suggestion == "3" else "1/0"
+                    reason += " 触发 NO_SINGLE_PICK_GATE，禁止单挑，改为组合路径。"
+                if no_single_pick_gate and confidence == "high":
+                    confidence = "medium"
+                if no_single_pick_gate and confidence == "medium":
+                    confidence = "low"
+            elif isinstance(home_sd, (int, float)) and isinstance(away_sd, (int, float)):
+                sd_gap = float(home_sd) - float(away_sd)
+                if sd_gap >= 0.7:
+                    suggestion = "3"
+                elif sd_gap <= -0.7:
+                    suggestion = "0"
+                elif abs(sd_gap) <= 0.25:
+                    suggestion = "1"
+                elif sd_gap > 0:
+                    suggestion = "3/1"
+                else:
+                    suggestion = "1/0"
+                confidence = "low"
+                confidence_score = 1.6
                 reason = (
-                    f"边际偏差: 主胜{edge_home if edge_home is not None else 0:+.1f}pp / "
-                    f"客胜{edge_away if edge_away is not None else 0:+.1f}pp。"
+                    "缺少可计算 EV 概率，改用 S_dynamic 差值低置信兜底。"
+                    f" ΔS={sd_gap:.2f}。"
                 )
-                if edge_home < 0 and edge_away < 0:
+                if no_single_pick_gate and suggestion in {"3", "0"}:
+                    suggestion = "3/1" if suggestion == "3" else "1/0"
+                    reason += " 触发 NO_SINGLE_PICK_GATE，降为组合路径。"
+
+                if isinstance(edge_home, (int, float)) and isinstance(edge_away, (int, float)):
+                    reason = (
+                        f"边际偏差: 主胜{edge_home if edge_home is not None else 0:+.1f}pp / "
+                        f"客胜{edge_away if edge_away is not None else 0:+.1f}pp。"
+                    )
+                if isinstance(edge_home, (int, float)) and isinstance(edge_away, (int, float)) and edge_home < 0 and edge_away < 0:
                     reason += " 双侧均为负边际，仅保留观察价值。"
                 if upgrade_reason:
                     reason += f" {upgrade_reason}"
                 if row.get("is_low_confidence") or row.get("is_insufficient_resilience"):
                     reason += " 已施加质量折扣。"
+                if conv_penalty > 0:
+                    reason += " 转化率高位已做因子拆分降权（非自动反转）。"
+                if reverse_block_note:
+                    reason += f" {reverse_block_note}"
+                if schedule_risk_flag and not (home_xi_damage or away_xi_damage):
+                    reason += " 赛程三明治仅用于降置信，未直接翻转方向。"
+                if rivalry_flag and rivalry_transition_ready:
+                    reason += " 德比高方差门禁已生效：保留主胜路径并降低单挑置信。"
+                if away_fav_def_exposure:
+                    reason += " 客队热门防线污染门禁已生效：强制加入主胜保护腿。"
+                if low_event_home_fav:
+                    reason += " 低事件主队让球风险门禁已生效：禁止强单主胜。"
+                if away_recent_xg_protect:
+                    reason += " 客队近期xG保护门禁已生效：保留客胜路径。"
+                if market_reversal_flag:
+                    reason += " 市场反转门禁已生效：主胜方向降级并提升客队不败。"
+                if backup_gk_low_score_risk:
+                    reason += " 门将缺席+低产环境门禁已生效：降低小比分/零封自信。"
+                if direct_rival_home_pressure:
+                    reason += " 直接卡位战主场压制门禁已生效：恢复主胜主线权重。"
+                if recent_big_win_noise:
+                    reason += " 强队客场上一场大胜降噪门禁已生效：降低客胜单挑权重。"
+                if away_fav_injury_result:
+                    reason += " 强队客场伤停胜负联动门禁已生效：不仅降让球，也降1X2置信。"
+                if away_process_over_survival:
+                    reason += " 客队过程优势压过主队保级战意门禁已生效：提升客胜保护。"
+                if relegation_away_draw:
+                    reason += " 市场退主+保级客队防平门禁已生效：平局权重上调。"
+                if away_attack_cold:
+                    reason += " 强队客场进攻冷却门禁已生效：禁止客胜单挑并保留主胜路径。"
+                if home_form_resistance:
+                    reason += " 主队主场韧性保护门禁已生效：主队不败路径上调。"
+                if survival_escape_signal:
+                    reason += " 即时逃生战意门禁已生效：上调不败/客胜保护。"
                 if suggestion == "skip":
                     reason += " 正向边际不足阈值，先观望。"
 
@@ -759,6 +1727,8 @@ class PrematchSynthesis:
             ]
             if row.get("is_insufficient_resilience"):
                 invalidation.append("若无法补齐逆境样本，保持回避。")
+            if "final_lineup_recheck_required" in required_controls:
+                invalidation.append("临场首发未确认前禁止提升置信等级。")
 
             verdicts.append(
                 {
@@ -778,10 +1748,34 @@ class PrematchSynthesis:
                     "upgrade_reason": upgrade_reason,
                     "is_low_confidence": bool(row.get("is_low_confidence")),
                     "is_insufficient_resilience": bool(row.get("is_insufficient_resilience")),
+                    "risk_tags": risk_tags,
+                    "rivalry_flag": rivalry_flag,
+                    "away_favorite_defense_exposure": away_fav_def_exposure,
+                    "low_event_home_favorite": low_event_home_fav,
+                    "away_recent_xg_protection": away_recent_xg_protect,
+                    "market_reversal_gate": market_reversal_flag,
+                    "backup_gk_low_score_risk": backup_gk_low_score_risk,
+                    "direct_rival_home_pressure": direct_rival_home_pressure,
+                    "recent_big_win_noise_gate": recent_big_win_noise,
+                    "away_favorite_injury_result_gate": away_fav_injury_result,
+                    "away_process_edge_over_home_survival": away_process_over_survival,
+                    "relegation_away_draw_protection": relegation_away_draw,
+                    "away_favorite_attack_cold_gate": away_attack_cold,
+                    "home_form_resistance_gate": home_form_resistance,
+                    "survival_escape_signal": survival_escape_signal,
                     "edge_home": edge_home,
                     "edge_away": edge_away,
                     "best_edge": best_edge,
                     "confidence_score": confidence_score,
+                    "confidence_cap": confidence_cap or None,
+                    "no_single_pick_gate": no_single_pick_gate,
+                    "away_elite_conditional_only": away_elite_conditional_only,
+                    "key_node_absence_risk": str(context_flags.get("key_node_absence_risk") or "UNKNOWN"),
+                    "lineup_stability_precheck": context_flags.get("lineup_stability_precheck")
+                    if isinstance(context_flags.get("lineup_stability_precheck"), dict)
+                    else {"home": "UNKNOWN", "away": "UNKNOWN"},
+                    "rotation_intensity": str(context_flags.get("rotation_intensity") or "UNKNOWN").upper(),
+                    "ready_level": _safe_text(row.get("ready_level")) or None,
                 }
             )
 
@@ -821,20 +1815,7 @@ class PrematchSynthesis:
         candidate_board = self._build_candidate_board(verdicts)
         if self.ops_mode:
             candidate_board = self._build_operational_candidate_board(verdicts)
-        tier_by_match = {
-            _safe_text(item.get("match")): tier
-            for tier, items in (candidate_board.get("tiers") or {}).items()
-            if isinstance(items, list)
-            for item in items
-        }
-        for verdict in verdicts:
-            tier = tier_by_match.get(_safe_text(verdict.get("match")), "放弃")
-            analysis_suggestion = _safe_text(verdict.get("suggestion")) or "skip"
-            non_actionable = tier in {"观察", "放弃"}
-            verdict["candidate_tier"] = tier
-            verdict["analysis_suggestion"] = analysis_suggestion
-            verdict["final_suggestion"] = "skip" if non_actionable else analysis_suggestion
-            verdict["non_actionable"] = non_actionable
+        budget_stats = self._apply_dynamic_ticket_structure(verdicts, candidate_board)
         return {
             "mode": "rule_only",
             "executive_summary": summary,
@@ -853,6 +1834,10 @@ class PrematchSynthesis:
             ],
             "match_verdicts": verdicts,
             "candidate_board": candidate_board,
+            "single_pick_dynamic_budget": budget_stats.get("single_pick_dynamic_budget", 0),
+            "single_used": budget_stats.get("single_used", 0),
+            "combo_used": budget_stats.get("combo_used", 0),
+            "pass_used": budget_stats.get("pass_used", 0),
         }
 
     def _call_llm_openai(self, system_prompt: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1095,6 +2080,8 @@ class PrematchSynthesis:
                     "reason": _safe_text(item.get("reason")),
                     "source": _safe_text(item.get("source")) or normalized["mode"],
                     "readiness_level": _safe_text(item.get("readiness_level")) or _safe_text((source_row or {}).get("readiness_level")) or "READY",
+                    "ready_level": _safe_text(item.get("ready_level")) or _safe_text((source_row or {}).get("ready_level")) or None,
+                    "confidence_cap": _safe_text(item.get("confidence_cap")) or _safe_text((source_row or {}).get("confidence_cap")) or None,
                     "upgrade_reason": _safe_text(item.get("upgrade_reason")),
                     "is_low_confidence": bool(item.get("is_low_confidence")),
                     "is_insufficient_resilience": bool(item.get("is_insufficient_resilience")),
@@ -1134,20 +2121,14 @@ class PrematchSynthesis:
                 )
         normalized["match_verdicts"] = fixed_verdicts
         normalized["candidate_board"] = PrematchSynthesis._build_candidate_board(fixed_verdicts)
-        tier_by_match = {
-            _safe_text(item.get("match")): tier
-            for tier, items in (normalized["candidate_board"].get("tiers") or {}).items()
-            if isinstance(items, list)
-            for item in items
-        }
-        for verdict in normalized["match_verdicts"]:
-            tier = tier_by_match.get(_safe_text(verdict.get("match")), _safe_text(verdict.get("candidate_tier")) or "放弃")
-            analysis_suggestion = _safe_text(verdict.get("analysis_suggestion") or verdict.get("suggestion") or "skip")
-            non_actionable = bool(verdict.get("non_actionable")) or tier in {"观察", "放弃"}
-            verdict["candidate_tier"] = tier
-            verdict["analysis_suggestion"] = analysis_suggestion
-            verdict["final_suggestion"] = "skip" if non_actionable else (_safe_text(verdict.get("final_suggestion")) or analysis_suggestion)
-            verdict["non_actionable"] = non_actionable
+        budget_stats = PrematchSynthesis._apply_dynamic_ticket_structure(
+            normalized["match_verdicts"],
+            normalized["candidate_board"],
+        )
+        normalized["single_pick_dynamic_budget"] = budget_stats.get("single_pick_dynamic_budget", 0)
+        normalized["single_used"] = budget_stats.get("single_used", 0)
+        normalized["combo_used"] = budget_stats.get("combo_used", 0)
+        normalized["pass_used"] = budget_stats.get("pass_used", 0)
 
         normalized["risk_points"] = [_safe_text(x) for x in normalized["risk_points"] if _safe_text(x)]
         normalized["next_actions"] = [_safe_text(x) for x in normalized["next_actions"] if _safe_text(x)]
@@ -1210,6 +2191,10 @@ class PrematchSynthesis:
             execution_instruction = "可按候选池执行，优先稳胆，博弈位严格控仓。"
         lines.append(f"- 执行灯号: `{execution_light}`")
         lines.append(f"- Global Posture: `{_safe_text(synthesis.get('global_posture'))}`")
+        lines.append(
+            f"- Ticket Structure: budget(single)=`{int(synthesis.get('single_pick_dynamic_budget') or 0)}` / "
+            f"used(single/combo/pass)=`{int(synthesis.get('single_used') or 0)}`/`{int(synthesis.get('combo_used') or 0)}`/`{int(synthesis.get('pass_used') or 0)}`"
+        )
         lines.append(f"- 一句话指令: {execution_instruction}")
         lines.append(f"- Recommendation: {_safe_text(synthesis.get('final_recommendation')) or '暂无'}")
         lines.append("")

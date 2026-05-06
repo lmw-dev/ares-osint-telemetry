@@ -7,7 +7,7 @@ import re
 import unicodedata
 import requests
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
 from bs4 import BeautifulSoup, Comment
 from audit_router import AuditRouter
@@ -199,9 +199,15 @@ class AresOsintCrawler:
         )
         the_odds_base_url_raw = str(os.getenv("ARES_THE_ODDS_BASE_URL", "")).strip()
         self.the_odds_base_url = (the_odds_base_url_raw or "https://api.the-odds-api.com/v4").rstrip("/")
-        self.enable_external_odds_enrich = str(
-            os.getenv("ARES_ENABLE_EXTERNAL_ODDS_ENRICH", "0")
-        ).strip().lower() in {"1", "true", "yes", "on"}
+        external_odds_raw = str(os.getenv("ARES_ENABLE_EXTERNAL_ODDS_ENRICH", "")).strip().lower()
+        if external_odds_raw:
+            self.enable_external_odds_enrich = external_odds_raw in {"1", "true", "yes", "on"}
+        else:
+            self.enable_external_odds_enrich = self.mode == "date"
+        # date 模式默认强制开启 external odds enrich；仅在显式配置 ARES_DATE_FORCE_EXTERNAL_ODDS=0 时关闭。
+        date_force_external = str(os.getenv("ARES_DATE_FORCE_EXTERNAL_ODDS", "1")).strip().lower()
+        if self.mode == "date" and date_force_external in {"1", "true", "yes", "on"}:
+            self.enable_external_odds_enrich = True
         self.enable_titan_prematch_enrich = str(
             os.getenv("ARES_ENABLE_TITAN_PREMATCH_ENRICH", "1")
         ).strip().lower() in {"1", "true", "yes", "on"}
@@ -268,6 +274,8 @@ class AresOsintCrawler:
                 "status": status,
                 "http_status": status_code,
                 "url": url,
+                "page_key": page_key,
+                "raw_ref": raw_ref,
                 "title": title,
                 "encoding": encoding_used,
                 "table_count": table_count,
@@ -282,10 +290,56 @@ class AresOsintCrawler:
             return {
                 "status": "error",
                 "url": url,
+                "page_key": page_key,
                 "error": str(exc),
             }, None
 
-    def _fetch_titan_prematch_snapshot(self, cn_match_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _validate_titan_snapshot_identity(
+        self,
+        *,
+        pages: Dict[str, Any],
+        expected_home_zh: str,
+        expected_away_zh: str,
+    ) -> Dict[str, Any]:
+        home = str(expected_home_zh or "").strip()
+        away = str(expected_away_zh or "").strip()
+        if not home or not away:
+            return {"ok": True, "reason": "missing_expected_team_names"}
+
+        combined_text = " ".join(
+            str((payload or {}).get("title") or "")
+            for payload in pages.values()
+            if isinstance(payload, dict)
+        )
+        if home in combined_text and away in combined_text:
+            return {"ok": True, "reason": "title_contains_expected_teams"}
+
+        # Fallback: inspect analysis raw html content for team keywords.
+        analysis_payload = pages.get("analysis") if isinstance(pages.get("analysis"), dict) else {}
+        raw_ref = str(analysis_payload.get("raw_ref") or "").strip()
+        if raw_ref:
+            try:
+                html_text = Path(raw_ref).read_text(encoding="utf-8", errors="ignore")
+                if home in html_text and away in html_text:
+                    return {"ok": True, "reason": "analysis_html_contains_expected_teams"}
+            except Exception:
+                pass
+
+        return {
+            "ok": False,
+            "reason": "team_identity_mismatch",
+            "expected_home_zh": home,
+            "expected_away_zh": away,
+            "observed_titles": combined_text[:300],
+        }
+
+    def _fetch_titan_prematch_snapshot(
+        self,
+        cn_match_id: Optional[str],
+        *,
+        expected_home_zh: str = "",
+        expected_away_zh: str = "",
+    ) -> Optional[Dict[str, Any]]:
         match_id = str(cn_match_id or "").strip()
         if not self.enable_titan_prematch_enrich or not match_id or not match_id.isdigit():
             return None
@@ -311,11 +365,28 @@ class AresOsintCrawler:
         elif ok_count > 0:
             coverage = "partial"
 
+        identity_check = self._validate_titan_snapshot_identity(
+            pages=pages,
+            expected_home_zh=expected_home_zh,
+            expected_away_zh=expected_away_zh,
+        )
+        if not identity_check.get("ok", False):
+            logger.warning(
+                "Titan 盘口页身份校验失败 match_id=%s expected=%s vs %s reason=%s; 将 coverage 标记为 none",
+                match_id,
+                expected_home_zh,
+                expected_away_zh,
+                identity_check.get("reason"),
+            )
+            coverage = "none"
+            ok_count = 0
+
         snapshot = {
             "source": "titan007",
             "match_id": match_id,
             "pages": pages,
             "raw_refs": raw_refs,
+            "identity_check": identity_check,
             "signals": {
                 "coverage": coverage,
                 "ok_page_count": ok_count,
@@ -909,6 +980,175 @@ class AresOsintCrawler:
         )
 
     @staticmethod
+    def _league_key(value: Any) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+    def _cn_tuple_key(self, league: Any, kickoff: Any, home: Any, away: Any) -> str:
+        dt = self._parse_datetime(str(kickoff or ""))
+        minute_key = dt.strftime("%Y-%m-%d %H:%M") if dt else str(kickoff or "").strip()[:16]
+        return "|".join(
+            [
+                self._league_key(league),
+                minute_key,
+                self._normalize_team_name(str(home or "")),
+                self._normalize_team_name(str(away or "")),
+            ]
+        )
+
+    def _build_cn_match_id_cache(self) -> Dict[str, Dict[str, str]]:
+        cache = {"by_understat_id": {}, "by_tuple": {}}
+        root = self.raw_reports_dir
+        if not root.exists():
+            return cache
+        for path in sorted(root.glob("*_dispatch_manifest.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for match in payload.get("matches") or []:
+                if not isinstance(match, dict):
+                    continue
+                cn_match_id = str(match.get("cn_match_id") or "").strip()
+                if not cn_match_id.isdigit():
+                    continue
+                understat_id = str(match.get("understat_id") or "").strip()
+                if understat_id.isdigit():
+                    cache["by_understat_id"][understat_id] = cn_match_id
+                key = self._cn_tuple_key(
+                    match.get("league"),
+                    match.get("understat_date") or match.get("football_data_date"),
+                    str(match.get("english") or "").split(" vs ")[0],
+                    str(match.get("english") or "").split(" vs ")[1] if " vs " in str(match.get("english") or "") else "",
+                )
+                if key and cn_match_id:
+                    cache["by_tuple"][key] = cn_match_id
+        return cache
+
+    def _resolve_cn_match_id_for_date_match(
+        self,
+        *,
+        league: Any,
+        kickoff: Any,
+        home: Any,
+        away: Any,
+        understat_id: Any,
+        cache: Dict[str, Dict[str, str]],
+    ) -> Tuple[Optional[str], str]:
+        uid = str(understat_id or "").strip()
+        if uid and uid in cache.get("by_understat_id", {}):
+            return cache["by_understat_id"][uid], "understat_id"
+        key = self._cn_tuple_key(league, kickoff, home, away)
+        cid = cache.get("by_tuple", {}).get(key)
+        if cid:
+            return cid, "league_time_teams"
+        titan_id = self._resolve_cn_match_id_from_titan_over(
+            analysis_dt=self._parse_analysis_date(),
+            kickoff=kickoff,
+            home=home,
+            away=away,
+        )
+        if titan_id:
+            return titan_id, "titan_over_tuple"
+        return None, "missing"
+
+    def _fetch_titan_overday_rows(self, analysis_dt: datetime) -> List[Dict[str, Any]]:
+        date_token = analysis_dt.strftime("%Y%m%d")
+        url = f"https://bf.titan007.com/football/Over_{date_token}.htm"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+        }
+        try:
+            resp = requests.get(url, headers=headers, timeout=20)
+            text, _enc = self._decode_html_bytes(resp.content)
+        except Exception as exc:
+            logger.warning("[Date 模式] Titan Over 页抓取失败: %s", exc)
+            return []
+
+        rows: List[Dict[str, Any]] = []
+        soup = BeautifulSoup(text, "html.parser")
+        for tr in soup.select("table#table_live tr[id^='tr1_']"):
+            match_id = str(tr.get("sid") or tr.get("sId") or "").strip()
+            if not match_id.isdigit():
+                continue
+            tds = tr.find_all("td")
+            if len(tds) < 6:
+                continue
+            time_txt = re.sub(r"\s+", " ", tds[1].get_text(" ", strip=True))
+            home_zh = re.sub(r"\[[^\]]*\]", "", tds[3].get_text(" ", strip=True))
+            away_zh = re.sub(r"\[[^\]]*\]", "", tds[5].get_text(" ", strip=True))
+            home_zh = re.sub(r"\s+", " ", home_zh).strip(" -")
+            away_zh = re.sub(r"\s+", " ", away_zh).strip(" -")
+            if not home_zh or not away_zh:
+                continue
+
+            hm = re.search(r"(\d{1,2}):(\d{2})", time_txt)
+            kickoff_local = None
+            if hm:
+                hour = int(hm.group(1))
+                minute = int(hm.group(2))
+                try:
+                    kickoff_local = datetime(analysis_dt.year, analysis_dt.month, analysis_dt.day, hour, minute)
+                except Exception:
+                    kickoff_local = None
+
+            rows.append(
+                {
+                    "cn_match_id": match_id,
+                    "time_text": time_txt,
+                    "kickoff_local": kickoff_local.strftime("%Y-%m-%d %H:%M:%S") if kickoff_local else "",
+                    "home_en": self.translate_team(home_zh),
+                    "away_en": self.translate_team(away_zh),
+                }
+            )
+        return rows
+
+    def _resolve_cn_match_id_from_titan_over(
+        self,
+        *,
+        analysis_dt: datetime,
+        kickoff: Any,
+        home: Any,
+        away: Any,
+    ) -> Optional[str]:
+        if not hasattr(self, "_date_titan_over_rows"):
+            self._date_titan_over_rows = self._fetch_titan_overday_rows(analysis_dt)
+            logger.info("[Date 模式] Titan Over 候选池 rows=%s", len(self._date_titan_over_rows))
+        candidates = getattr(self, "_date_titan_over_rows", []) or []
+        if not candidates:
+            return None
+
+        target_home = self._normalize_team_name(str(home or ""))
+        target_away = self._normalize_team_name(str(away or ""))
+        target_kickoff = self._parse_datetime(str(kickoff or ""))
+        target_local = None
+        if target_kickoff:
+            target_local = target_kickoff.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=8))).replace(
+                tzinfo=None
+            )
+
+        best_id = None
+        best_gap = None
+        for row in candidates:
+            row_home = self._normalize_team_name(str(row.get("home_en") or ""))
+            row_away = self._normalize_team_name(str(row.get("away_en") or ""))
+            if row_home != target_home or row_away != target_away:
+                continue
+            row_dt = self._parse_datetime(str(row.get("kickoff_local") or ""))
+            if target_local and row_dt:
+                gap = abs((row_dt - target_local).total_seconds())
+            else:
+                gap = 0.0
+            if best_gap is None or gap < best_gap:
+                best_gap = gap
+                best_id = str(row.get("cn_match_id") or "").strip()
+        if best_id and best_id.isdigit():
+            return best_id
+        return None
+
+    @staticmethod
     def _to_iso_z(dt: datetime) -> str:
         return dt.replace(microsecond=0).isoformat() + "Z"
 
@@ -1285,7 +1525,11 @@ class AresOsintCrawler:
             
             home_en = self.translate_team(home_zh)
             away_en = self.translate_team(away_zh)
-            titan_prematch_snapshot = self._fetch_titan_prematch_snapshot(cn_match_id)
+            titan_prematch_snapshot = self._fetch_titan_prematch_snapshot(
+                cn_match_id,
+                expected_home_zh=home_zh,
+                expected_away_zh=away_zh,
+            )
             
             # Understat -> FBref 双源映射
             found_id = None
@@ -1464,6 +1708,14 @@ class AresOsintCrawler:
                     existing_match["manual_anchor_source"] = None
                 if "market_odds_history" not in existing_match:
                     existing_match["market_odds_history"] = []
+                existing_match["match_context_flags"] = self._merge_with_defaults(
+                    existing_match.get("match_context_flags"),
+                    self._build_default_match_context_flags(),
+                )
+                existing_match["market_behavior"] = self._merge_with_defaults(
+                    existing_match.get("market_behavior"),
+                    self._build_default_market_behavior(),
+                )
                 # Remove initial legacy snapshot mapping if present, just keep history clean
                 existing_match["market_odds_history"].append(market_snapshot)
                 if external_odds_snapshot:
@@ -1542,7 +1794,9 @@ class AresOsintCrawler:
                     "manual_anchor_mode": manual_anchor_mode,
                     "manual_anchor_notes": manual_anchor_notes,
                     "manual_anchor_source": self._manual_anchor_source_path if manual_anchor_applied else None,
-                    "market_odds_history": [market_snapshot]
+                    "match_context_flags": self._build_default_match_context_flags(),
+                    "market_behavior": self._build_default_market_behavior(),
+                    "market_odds_history": [market_snapshot],
                 }
                 if external_odds_snapshot:
                     match_item["external_odds_history"] = [external_odds_snapshot]
@@ -1659,6 +1913,7 @@ class AresOsintCrawler:
             "cold_data_refs": list(dict.fromkeys(self._football_data_cold_refs)),
             "matches": [],
         }
+        cn_cache = self._build_cn_match_id_cache()
         for i, match in enumerate(db_matches, start=1):
             home = str(match.get("home_en") or "").strip()
             away = str(match.get("away_en") or "").strip()
@@ -1681,12 +1936,29 @@ class AresOsintCrawler:
                     _football_data_league,
                     football_data_competition,
                 ) = self._pick_football_data_match_by_time(fd_candidates, anchor_dt, max_gap_days=self.mapping_max_gap_days)
+            mapped_match_time = understat_date or football_data_date
+            cn_match_id, cn_match_id_source = self._resolve_cn_match_id_for_date_match(
+                league=match.get("league"),
+                kickoff=mapped_match_time,
+                home=home,
+                away=away,
+                understat_id=understat_id,
+                cache=cn_cache,
+            )
+            external_odds_snapshot = self._enrich_external_odds_snapshot(
+                home_en=home,
+                away_en=away,
+                league=match.get("league"),
+                anchor_dt=anchor_dt,
+                target_match_time=mapped_match_time,
+            )
             output_manifest["matches"].append(
                 {
                     "index": i,
                     "chinese": f"{home} vs {away}",
                     "english": f"{home} vs {away}",
-                    "cn_match_id": None,
+                    "cn_match_id": cn_match_id,
+                    "cn_match_id_source": cn_match_id_source,
                     "understat_id": understat_id,
                     "understat_date": understat_date,
                     "understat_gap_days": understat_gap_days,
@@ -1703,13 +1975,19 @@ class AresOsintCrawler:
                     "manual_anchor_mode": None,
                     "manual_anchor_notes": None,
                     "manual_anchor_source": None,
+                    "match_context_flags": self._build_default_match_context_flags(),
+                    "market_behavior": self._build_default_market_behavior(),
                     "market_odds_history": [],
+                    "external_odds_history": [external_odds_snapshot] if external_odds_snapshot else [],
                 }
             )
 
         manifest_path = self._manifest_path()
         if not output_manifest["matches"]:
             output_manifest["mapping_status"] = "EMPTY_DATE_FIXTURES"
+        output_manifest["cold_data_refs"] = list(
+            dict.fromkeys(output_manifest.get("cold_data_refs", []) + self._odds_cold_refs)
+        )
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(output_manifest, f, ensure_ascii=False, indent=2)
         logger.info("[Date 模式] 战术派发单已落盘 -> %s (matches=%s)", manifest_path, len(output_manifest["matches"]))
@@ -1719,6 +1997,44 @@ class AresOsintCrawler:
         if self.mode == "date":
             return self._scan_and_map_by_date()
         return self._scan_and_map_issue()
+
+    @staticmethod
+    def _build_default_match_context_flags() -> Dict[str, Any]:
+        return {
+            "primary_motivation_type": "NORMAL",
+            "motivation_context_flags": [],
+            "manager_change_recent": False,
+            "new_manager_sample_matches": 0,
+            "survival_pressure_level": "none",
+            "opponent_survival_pressure_high": False,
+            "elite_away_flag": False,
+            "favorite_deep_handicap": 0.0,
+            "structural_crisis_context": False,
+            "europe_sandwich": False,
+            "title_race_pressure": False,
+            "relegation_zone_rank": None,
+            "future_fixture_gap_days": None,
+        }
+
+    @staticmethod
+    def _build_default_market_behavior() -> Dict[str, Any]:
+        return {
+            "handicap_retreat": False,
+            "handicap_deepen": False,
+            "favorite_odds_compressed": False,
+            "favorite_overprice_risk": False,
+            "shallow_home_support": False,
+            "market_retreat_against_favorite": False,
+        }
+
+    @staticmethod
+    def _merge_with_defaults(payload: Any, defaults: Dict[str, Any]) -> Dict[str, Any]:
+        merged = dict(defaults)
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                if value is not None:
+                    merged[key] = value
+        return merged
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ares OSINT Telemetry - PREMATCH Crawler Mapping")

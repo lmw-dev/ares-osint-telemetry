@@ -1,0 +1,149 @@
+issue: 26070
+cases:
+  - case_id: 26070_brentford_westham
+    class: positive
+    expected_keep:
+      - home_or_draw
+
+  - case_id: 26070_bayern_heidenheim
+    class: positive
+    expected_keep:
+      - avoid_favorite_handicap_cover
+
+  - case_id: 26070_frankfurt_hamburg
+    class: positive
+    expected_keep:
+      - away_or_draw
+
+  - case_id: 26070_leverkusen_leipzig
+    class: negative
+    expected_after_fix:
+      - no_reverse_without_confirmed_lineup_damage
+      - include_home_win_candidate
+
+  - case_id: 26070_valencia_atletico
+    class: negative
+    expected_after_fix:
+      - schedule_pressure_is_risk_only
+
+  - case_id: 26070_alaves_athletic
+    class: negative
+    expected_after_fix:
+      - conversion_bubble_split_required
+
+  - case_id: 26070_osasuna_barcelona
+    class: negative
+    expected_after_fix:
+      - elite_team_reverse_gate_protection
+
+  - case_id: 20260503_epl_bournemouth_crystalpalace
+    class: positive
+    expected_keep:
+      - home_process_strength_respected
+      - home_or_draw
+
+  - case_id: 20260503_epl_manutd_liverpool
+    class: negative
+    expected_after_fix:
+      - rivalry_variance_gate_keeps_home_win_path
+      - away_favorite_defense_exposure_adds_home_cover
+
+  - case_id: 20260503_epl_villa_tottenham
+    class: positive
+    expected_keep:
+      - survival_escape_gate_upgrade
+      - keep_away_win_cover
+
+  - case_id: 20260503_laliga_betis_oviedo
+    class: positive
+    expected_keep:
+      - european_qualification_home_favorite
+      - home_win_with_handicap_caution
+
+  - case_id: 20260503_laliga_celta_elche
+    class: positive
+    expected_keep:
+      - result_hit_process_warning_tag
+      - no_auto_upgrade_on_xg_inferior_winner
+
+  - case_id: 20260503_laliga_espanyol_realmadrid
+    class: positive
+    expected_keep:
+      - elite_away_favorite_with_injury_downgrade
+
+  - case_id: 20260503_laliga_getafe_rayo
+    class: negative
+    expected_after_fix:
+      - low_event_home_favorite_gate_applied
+      - away_recent_xg_protection_gate_applied
+
+  - case_id: 20260503_ligue1_auxerre_angers
+    class: positive
+    expected_keep:
+      - home_or_draw_direction_hold
+      - backup_gk_low_score_risk_gate_applied
+
+  - case_id: 20260503_ligue1_lille_lehavre
+    class: positive
+    expected_keep:
+      - dominant_home_draw_variance_tag
+      - do_not_overpunish_home_model
+
+  - case_id: 20260503_ligue1_lyon_rennes
+    class: positive
+    expected_keep:
+      - direct_rival_home_pressure_gate_applied
+
+  - case_id: 20260503_ligue1_parisfc_brest
+    class: positive
+    expected_keep:
+      - home_form_market_upgrade_respected
+
+  - case_id: 20260503_ligue1_strasbourg_toulouse
+    class: positive
+    expected_keep:
+      - market_reversal_gate_applied
+
+  - case_id: 20260503_bundesliga_stpauli_mainz
+    class: positive
+    expected_keep:
+      - away_process_edge_over_home_survival
+      - keep_away_non_loss_path
+
+  - case_id: 20260503_bundesliga_gladbach_dortmund
+    class: negative
+    expected_after_fix:
+      - recent_big_win_noise_gate_applied
+      - away_favorite_injury_result_gate_applied
+      - keep_home_win_third_cover
+
+  - case_id: 20260503_bundesliga_freiburg_wolfsburg
+    class: positive
+    expected_keep:
+      - relegation_away_draw_protection_applied
+      - draw_cover_priority
+
+  - case_id: 20260503_seriea_bologna_cagliari
+    class: positive
+    expected_keep:
+      - home_edge_with_market_retreat_gate_applied
+      - draw_cover_priority
+
+  - case_id: 20260503_seriea_inter_parma
+    class: positive
+    expected_keep:
+      - deep_home_handicap_split_respected
+      - elite_home_favorite_path
+
+  - case_id: 20260503_seriea_juventus_verona
+    class: positive
+    expected_keep:
+      - dominant_home_draw_variance_tag
+      - no_home_model_downgrade_on_variance_draw
+
+  - case_id: 20260503_seriea_sassuolo_milan
+    class: negative
+    expected_after_fix:
+      - away_favorite_attack_cold_gate_applied
+      - home_form_resistance_gate_applied
+      - prohibit_strong_single_away

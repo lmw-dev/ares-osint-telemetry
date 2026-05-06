@@ -60,6 +60,14 @@ DEFAULT_MARKET_BEHAVIOR_CORE = {
     "bookmaker_divergence_index": None,
 }
 
+LINEUP_ENUMS = {
+    "expected_core_availability": {"FULL", "MOSTLY_AVAILABLE", "PARTIAL", "DAMAGED", "UNKNOWN"},
+    "lineup_stability_precheck": {"GREEN", "YELLOW", "RED", "UNKNOWN"},
+    "key_node_absence_risk": {"LOW", "MEDIUM", "HIGH", "CRITICAL", "UNKNOWN"},
+}
+ROTATION_ENUMS = {"LOW", "MEDIUM", "HIGH", "UNKNOWN"}
+LINEUP_SNAPSHOT_STATUS_ENUMS = {"LIVE_OK", "LIVE_BLOCKED", "SEEDED", "UNKNOWN"}
+
 
 def _split_match_english(english: str) -> Tuple[str, str]:
     if " vs " in english:
@@ -207,6 +215,93 @@ def _normalize_intel_payload(payload: Any) -> Dict[str, Any]:
     youtube_tactical_briefs = _normalize_string_list(payload.get("youtube_tactical_briefs"))
     if youtube_tactical_briefs:
         normalized["youtube_tactical_briefs"] = youtube_tactical_briefs
+    source_items = payload.get("source_items")
+    if isinstance(source_items, list):
+        norm_sources: List[Dict[str, Any]] = []
+        for item in source_items:
+            if not isinstance(item, dict):
+                continue
+            source_name = str(item.get("source_name") or "").strip()
+            url = str(item.get("url") or "").strip()
+            fetched_at = str(item.get("fetched_at") or "").strip()
+            reliability = str(item.get("reliability") or "").strip().upper() or "UNKNOWN"
+            raw_status = str(item.get("raw_status") or "").strip().upper() or "UNKNOWN"
+            if not source_name and not url:
+                continue
+            norm_sources.append(
+                {
+                    "source_name": source_name,
+                    "url": url,
+                    "fetched_at": fetched_at,
+                    "reliability": reliability,
+                    "raw_status": raw_status,
+                }
+            )
+        if norm_sources:
+            normalized["source_items"] = norm_sources
+
+    absences = payload.get("absences")
+    if isinstance(absences, list):
+        norm_absences: List[Dict[str, Any]] = []
+        for item in absences:
+            if not isinstance(item, dict):
+                continue
+            player = str(item.get("player") or "").strip()
+            if not player:
+                continue
+            status = str(item.get("status") or "UNKNOWN").strip().upper()
+            role = str(item.get("role") or "UNKNOWN").strip().upper()
+            confidence = str(item.get("confidence") or "UNKNOWN").strip().upper()
+            source_url = str(item.get("source_url") or "").strip()
+            fetched_at = str(item.get("fetched_at") or "").strip()
+            key_node = bool(item.get("key_node"))
+            impact_level = str(item.get("impact_level") or ("HIGH" if key_node else "MEDIUM")).strip().upper()
+            norm_absences.append(
+                {
+                    "player": player,
+                    "status": status,
+                    "role": role,
+                    "confidence": confidence,
+                    "key_node": key_node,
+                    "impact_level": impact_level,
+                    "source_url": source_url,
+                    "fetched_at": fetched_at,
+                }
+            )
+        if norm_absences:
+            normalized["absences"] = norm_absences
+
+    lineup_risk_profile: Dict[str, str] = {}
+    for key, allowed in LINEUP_ENUMS.items():
+        raw = str(payload.get(key) or "UNKNOWN").strip().upper()
+        lineup_risk_profile[key] = raw if raw in allowed else "UNKNOWN"
+    normalized["lineup_risk_profile"] = lineup_risk_profile
+    last_snapshot = payload.get("last_match_lineup_snapshot")
+    if isinstance(last_snapshot, dict):
+        source = last_snapshot.get("source") if isinstance(last_snapshot.get("source"), dict) else {}
+        normalized["last_match_lineup_snapshot"] = {
+            "source": {
+                "provider": str(source.get("provider") or "").strip(),
+                "url": str(source.get("url") or "").strip(),
+                "fetched_at": str(source.get("fetched_at") or "").strip(),
+            },
+            "starting_xi": _normalize_string_list(last_snapshot.get("starting_xi")),
+            "substitutes": _normalize_string_list(last_snapshot.get("substitutes")),
+        }
+    rotation = payload.get("lineup_rotation_signals")
+    if isinstance(rotation, dict):
+        level = str(rotation.get("rotation_intensity") or "UNKNOWN").strip().upper()
+        if level not in ROTATION_ENUMS:
+            level = "UNKNOWN"
+        normalized["lineup_rotation_signals"] = {
+            "rotation_intensity": level,
+            "rotation_triggers": _normalize_string_list(rotation.get("rotation_triggers")),
+            "confidence": str(rotation.get("confidence") or "LOW").strip().upper(),
+        }
+    lineup_snapshot_status = str(payload.get("lineup_snapshot_status") or "UNKNOWN").strip().upper()
+    normalized["lineup_snapshot_status"] = (
+        lineup_snapshot_status if lineup_snapshot_status in LINEUP_SNAPSHOT_STATUS_ENUMS else "UNKNOWN"
+    )
 
     for key in [
         "avg_xG_last_5",
@@ -341,6 +436,11 @@ def _has_substantive_intel(intel: Dict[str, Any]) -> bool:
     if _is_meaningful_text(intel.get("bias_type")) and str(intel.get("bias_type")).strip().lower() != "aligned":
         return True
     if _normalize_float(intel.get("S_dynamic_modifier")) not in (None, 0.0):
+        return True
+    if isinstance(intel.get("absences"), list) and any(str(item.get("player") or "").strip() for item in intel.get("absences", [])):
+        return True
+    profile = intel.get("lineup_risk_profile") if isinstance(intel.get("lineup_risk_profile"), dict) else {}
+    if any(str(profile.get(key) or "UNKNOWN").strip().upper() != "UNKNOWN" for key in LINEUP_ENUMS):
         return True
     return False
 
@@ -551,6 +651,35 @@ def _merge_intel_into_frontmatter(frontmatter: Dict[str, Any], intel: Dict[str, 
     if tactical_logic:
         merged_frontmatter["tactical_logic"] = tactical_logic
 
+    if isinstance(intel.get("source_items"), list):
+        merged_frontmatter["intel_source_items"] = intel.get("source_items", [])
+    if isinstance(intel.get("absences"), list):
+        merged_frontmatter["absences"] = intel.get("absences", [])
+        injured_nodes = [
+            str(item.get("player")).strip()
+            for item in intel.get("absences", [])
+            if isinstance(item, dict)
+            and str(item.get("player") or "").strip()
+            and str(item.get("status") or "").upper() in {"OUT", "DOUBTFUL", "RETURNING"}
+        ]
+        suspended_nodes = [
+            str(item.get("player")).strip()
+            for item in intel.get("absences", [])
+            if isinstance(item, dict)
+            and str(item.get("player") or "").strip()
+            and str(item.get("status") or "").upper() == "SUSPENDED"
+        ]
+        merged_frontmatter["injured_nodes"] = sorted(set(injured_nodes))
+        merged_frontmatter["suspended_nodes"] = sorted(set(suspended_nodes))
+    if isinstance(intel.get("lineup_risk_profile"), dict):
+        merged_frontmatter["lineup_risk_profile"] = intel.get("lineup_risk_profile", {})
+    if isinstance(intel.get("last_match_lineup_snapshot"), dict):
+        merged_frontmatter["last_match_lineup_snapshot"] = intel.get("last_match_lineup_snapshot", {})
+    if str(intel.get("lineup_snapshot_status") or "").strip():
+        merged_frontmatter["lineup_snapshot_status"] = str(intel.get("lineup_snapshot_status") or "UNKNOWN").upper()
+    if isinstance(intel.get("lineup_rotation_signals"), dict):
+        merged_frontmatter["lineup_rotation_signals"] = intel.get("lineup_rotation_signals", {})
+
     resilience_core = dict(merged_frontmatter.get("resilience_core") or {})
     resilience_core = merge_frontmatter_defaults(resilience_core, DEFAULT_RESILIENCE_CORE)
     if isinstance(intel.get("resilience_core"), dict):
@@ -573,6 +702,54 @@ def _merge_intel_into_frontmatter(frontmatter: Dict[str, Any], intel: Dict[str, 
     merged_frontmatter["market_behavior_core"] = market_behavior_core
 
     return merged_frontmatter
+
+
+def _update_manifest_context_flags_from_intel(manifest: Dict[str, Any], intel_lookup: Dict[str, Dict[str, Any]]) -> None:
+    if not isinstance(manifest.get("matches"), list):
+        return
+    for match in manifest["matches"]:
+        if not isinstance(match, dict):
+            continue
+        english = str(match.get("english") or "").strip()
+        home, away = _split_match_english(english)
+        home_intel = intel_lookup.get(home, {})
+        away_intel = intel_lookup.get(away, {})
+        home_profile = home_intel.get("lineup_risk_profile") if isinstance(home_intel.get("lineup_risk_profile"), dict) else {}
+        away_profile = away_intel.get("lineup_risk_profile") if isinstance(away_intel.get("lineup_risk_profile"), dict) else {}
+
+        flags = match.get("match_context_flags") if isinstance(match.get("match_context_flags"), dict) else {}
+        flags["expected_core_availability"] = {
+            "home": str(home_profile.get("expected_core_availability") or "UNKNOWN"),
+            "away": str(away_profile.get("expected_core_availability") or "UNKNOWN"),
+        }
+        flags["lineup_stability_precheck"] = {
+            "home": str(home_profile.get("lineup_stability_precheck") or "UNKNOWN"),
+            "away": str(away_profile.get("lineup_stability_precheck") or "UNKNOWN"),
+        }
+        key_risk_home = str(home_profile.get("key_node_absence_risk") or "UNKNOWN")
+        key_risk_away = str(away_profile.get("key_node_absence_risk") or "UNKNOWN")
+        risk_rank = {"UNKNOWN": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+        dominant = key_risk_home if risk_rank.get(key_risk_home, 0) >= risk_rank.get(key_risk_away, 0) else key_risk_away
+        flags["key_node_absence_risk"] = dominant
+        home_rotation = (
+            (home_intel.get("lineup_rotation_signals") or {}).get("rotation_intensity")
+            if isinstance(home_intel.get("lineup_rotation_signals"), dict)
+            else "UNKNOWN"
+        )
+        away_rotation = (
+            (away_intel.get("lineup_rotation_signals") or {}).get("rotation_intensity")
+            if isinstance(away_intel.get("lineup_rotation_signals"), dict)
+            else "UNKNOWN"
+        )
+        rr = {"UNKNOWN": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3}
+        home_rotation = str(home_rotation or "UNKNOWN").upper()
+        away_rotation = str(away_rotation or "UNKNOWN").upper()
+        flags["rotation_intensity"] = home_rotation if rr.get(home_rotation, 0) >= rr.get(away_rotation, 0) else away_rotation
+        hs = str(home_intel.get("lineup_snapshot_status") or "UNKNOWN").upper()
+        as_ = str(away_intel.get("lineup_snapshot_status") or "UNKNOWN").upper()
+        sr = {"UNKNOWN": 0, "LIVE_BLOCKED": 1, "SEEDED": 2, "LIVE_OK": 3}
+        flags["lineup_snapshot_status"] = hs if sr.get(hs, 0) >= sr.get(as_, 0) else as_
+        match["match_context_flags"] = flags
 
 
 def _render_body(
@@ -947,6 +1124,10 @@ def main() -> int:
             force=args.force,
         )
         results.append(result)
+
+    _update_manifest_context_flags_from_intel(manifest, intel_lookup)
+    manifest_path = vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake" / f"{args.issue}_dispatch_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     report_path = _write_review_report(vault_root, args.issue, results, intel_file_path)
     logger.info(

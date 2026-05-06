@@ -124,6 +124,12 @@ export ARES_VAULT_PATH="/path/to/your/Vault"
 | 一键主流程 | `python src/data/osint_pipeline.py --issue <issue>` | 当预检通过或你确认可以继续跑时 |
 | 单场/单队情报补录 | `python src/data/intel_sweeper.py --team <team> --league <league> --url ...` | 当你已经有明确新闻源，要回填单支球队情报时 |
 
+### 0.1 文档导航（docs/agents）
+
+- 文档总索引（推荐入口）：[`docs/agents/INDEX.md`](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/INDEX.md)
+- 近期交付总览（P0/P0.3/回归结果）：[`docs/agents/osint_recent_delivery_summary_2026-05-06.md`](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/osint_recent_delivery_summary_2026-05-06.md)
+- Team Intel 字段规范：[`docs/agents/team_intel_schema_v2_2026-04-26.md`](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/team_intel_schema_v2_2026-04-26.md)
+
 ### 1. 赛前映射（Crawler）
 获取中国足彩期号并从海外数据库寻找比赛映射 ID。
 *(内置高级网络爬取：利用逆向工程提取了 Understat 的私有隐密接口，无需 Selenium/代理池即可无痕获取数据且避免 API-Football 等授权费)*。
@@ -399,3 +405,10 @@ ares-osint-telemetry/
 - 强制使用 **Python 3.10+** 特性，并在核心函数加入严格的 `Type Hinting` 类型提示。
 - 全局使用 `logging` 提供标准结构化输出，禁止使用 `print()` 破坏系统日志管道。
 - 保证“小步快跑，单向流动”的数据思维，永远不在同一个脚本中循环反复读取黑石塔的数据。
+补丁说明（v5.0 轻量门禁落地）：
+- `dispatch_manifest.matches[*]` 新增结构化字段（默认值，不影响旧流程）：
+  - `match_context_flags`：`manager_change_recent`、`new_manager_sample_matches`、`survival_pressure_level`、`structural_crisis_context`、`europe_sandwich`、`title_race_pressure`、`relegation_zone_rank`、`future_fixture_gap_days`
+  - `market_behavior`：`handicap_retreat`、`handicap_deepen`、`favorite_odds_compressed`、`favorite_overprice_risk`、`shallow_home_support`
+- `postmatch_synthesis` 新增标准化输出：
+  - `case_type`：`ALIGNED` / `SUSPICIOUS` / `VARIANCE_ALERT`
+  - `error_type`：`NEW_MANAGER_REBOUND_OVERWEIGHTED`、`SURVIVAL_WIN_PATH_UNDERWEIGHTED`、`OVERPRICED_DOMINANCE_HANDICAP_FAILURE`、`STRUCTURAL_CRISIS_OVERDOWNGRADE`、`STRUCTURAL_WEAK_SURVIVAL_TEAM_LIMIT`、`HIGH_QUALITY_HOME_FAVORITE_HIT`、`TERRITORY_NOT_EQUAL_XG_GATE_TRIGGERED`

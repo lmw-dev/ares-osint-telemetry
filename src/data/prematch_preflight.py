@@ -502,8 +502,10 @@ def build_preflight_report(
                 issues.append(f"placeholder_archive:{team}")
             elif archive_status == "placeholder_backfilled":
                 issues.append(f"placeholder_backfilled_archive:{team}")
-            elif archive_status == "usable" and record.get("needs_enrichment"):
+            elif str(record.get("archive_strength") or "unknown") == "weak":
                 issues.append(f"weak_archive:{team}")
+            elif archive_status == "usable" and record.get("needs_enrichment"):
+                issues.append(f"archive_enrichment_required:{team}")
             if record.get("needs_enrichment"):
                 issues.append(f"needs_archive_enrichment:{team}")
             if record["rag_doc_count"] <= 1:
@@ -626,6 +628,17 @@ def build_preflight_report(
         ),
         recommended_action,
     ]
+    primary_hold_reasons: List[str] = []
+    if market_fallback_ready_matches <= 0 and titan_prematch_missing_matches > 0:
+        primary_hold_reasons.append("MARKET_SOURCE_MISSING")
+    if not gate_snapshot:
+        primary_hold_reasons.append("PREMATCH_INPUT_GATE_MISSING")
+    if enrichment_needed_teams > 0:
+        primary_hold_reasons.append("TEAM_ARCHIVE_ENRICHMENT_REQUIRED")
+    if any("inactive_player_in_injured_nodes" in (r.get("gaps") or []) for r in team_records.values()):
+        primary_hold_reasons.append("PLAYER_NODE_CONTAMINATION")
+    if any("conversion_efficiency_suspicious_zero" in (r.get("gaps") or []) for r in team_records.values()):
+        primary_hold_reasons.append("METRIC_SANITY_UNRESOLVED")
 
     if gate_snapshot and gate_rows:
         weak_matches = []
@@ -652,6 +665,7 @@ def build_preflight_report(
         "rag_readiness": rag_readiness,
         "gate_snapshot": gate_snapshot,
         "summary": summary,
+        "primary_hold_reasons": primary_hold_reasons,
         "matches": matches,
         "weak_matches": weak_matches,
         "teams": sorted(team_records.values(), key=lambda item: (item["league"], item["team"])),
@@ -840,15 +854,24 @@ def render_markdown(report: Dict[str, Any]) -> str:
     if report["status"] == "BLOCKED":
         lines.append("1. 先修复 RAG 数据库或 team metadata 覆盖，再进入主流程。")
     elif report["status"] == "HOLD":
-        if report.get("enrichment_needed_teams", 0) > 0:
-            lines.append(f"1. 先补 `03_Match_Audits/{issue}/03_Review_Reports/TEAM-INTEL-{issue}.generated.json` 中列出的缺口，再执行 `team_archive_backfill.py`。")
-            lines.append("2. 优先补 `placeholder` / `placeholder_backfilled` 队档的实质内容（新闻、战术上下文、物理指标），不要重复跑模板回填。")
-            lines.append(f"3. 对 `unmapped` 比赛先补 `03_Match_Audits/{issue}/03_Review_Reports/UNMAPPED-ANCHORS-{issue}.generated.json` 锚点，再决定是否全量执行。")
-            lines.append("4. 补录后按需重建或同步 RAG，再重新运行 `prematch_preflight.py --issue <issue>`。")
-        else:
-            lines.append(f"1. 本期队档结构已收敛，无需继续模板回填；下一步聚焦 `03_Match_Audits/{issue}/03_Review_Reports/UNMAPPED-ANCHORS-{issue}.generated.json` 锚点补录。")
-            lines.append("2. 优先补强 RAG 薄样本（`thin_rag_docs`），把每队文档覆盖从 1 提升到可用阈值。")
-            lines.append("3. 完成锚点与 RAG 补强后，重新运行 `prematch_preflight.py --issue <issue>`。")
+        hold_reasons = set(report.get("primary_hold_reasons") or [])
+        step = 1
+        if "MARKET_SOURCE_MISSING" in hold_reasons:
+            lines.append(f"{step}. 先补齐市场源：Titan 或 500 fallback，目标 `Market Fallback 可用场次 = 比赛总数`。")
+            step += 1
+        if "PREMATCH_INPUT_GATE_MISSING" in hold_reasons:
+            lines.append(f"{step}. 生成 Prematch Input Gate 三件套：`REVIEW-{issue}-Prematch_Input_Gate.md`、`REVIEW-{issue}-Team_Enrichment_Queue.md`、`TEAM-ENRICHMENT-QUEUE-{issue}.json`。")
+            step += 1
+        if "TEAM_ARCHIVE_ENRICHMENT_REQUIRED" in hold_reasons:
+            lines.append(f"{step}. 仅针对 `needs_enrichment=true` 球队补料：先填 `TEAM-INTEL-{issue}.generated.json`，再跑 `team_archive_backfill.py`。")
+            step += 1
+        if "PLAYER_NODE_CONTAMINATION" in hold_reasons:
+            lines.append(f"{step}. 清洗球员节点污染（如已转会球员从 `injured_nodes` 移出并转入 inactive/transfer context）。")
+            step += 1
+        if "METRIC_SANITY_UNRESOLVED" in hold_reasons:
+            lines.append(f"{step}. 校验可疑指标来源（如 `conversion_efficiency=0` 与高 xG 冲突），确认后再允许作为方向证据。")
+            step += 1
+        lines.append(f"{step}. 完成上述项后重跑 `prematch_preflight.py --issue {issue}`。")
     elif report["status"] == "CAUTION":
         lines.append(f"1. 优先查看 `03_Match_Audits/{issue}/03_Review_Reports/TEAM-INTEL-{issue}.generated.json`，补齐仍有缺口的球队。")
         lines.append("2. 先单场验证强队或已有实质档案的比赛。")
@@ -948,6 +971,30 @@ def write_team_diagnostics(vault_root: Path, issue: str, report: Dict[str, Any])
                     team.get("frontmatter", {}).get("physical_reality", {}).get("conversion_efficiency")
                     if isinstance(team.get("frontmatter", {}).get("physical_reality"), dict)
                     else None
+                ),
+                "conversion_zero_gate_explain": (
+                    "triggered: avg_xG_last_5 >= 1.0 and conversion_efficiency == 0.0"
+                    if (
+                        _safe_float(
+                            team.get("frontmatter", {}).get("physical_reality", {}).get("avg_xG_last_5")
+                            if isinstance(team.get("frontmatter", {}).get("physical_reality"), dict)
+                            else None
+                        )
+                        is not None
+                        and _safe_float(
+                            team.get("frontmatter", {}).get("physical_reality", {}).get("avg_xG_last_5")
+                            if isinstance(team.get("frontmatter", {}).get("physical_reality"), dict)
+                            else None
+                        )
+                        >= 1.0
+                        and _safe_float(
+                            team.get("frontmatter", {}).get("physical_reality", {}).get("conversion_efficiency")
+                            if isinstance(team.get("frontmatter", {}).get("physical_reality"), dict)
+                            else None
+                        )
+                        == 0.0
+                    )
+                    else "not_triggered: avg_xG_last_5 below 1.0 threshold or conversion_efficiency non-zero"
                 ),
                 "defensive_leakage": (
                     team.get("frontmatter", {}).get("physical_reality", {}).get("defensive_leakage")

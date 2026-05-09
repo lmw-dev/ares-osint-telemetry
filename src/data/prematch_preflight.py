@@ -30,8 +30,7 @@ PLACEHOLDER_MARKERS = (
     "待更新",
 )
 
-STRONG_ARCHIVE_STATUSES = {"usable_strong"}
-WEAK_ARCHIVE_STATUSES = {"usable", "usable_weak"}
+CANONICAL_ARCHIVE_QUALITIES = {"usable", "placeholder", "placeholder_backfilled", "missing"}
 PLACEHOLDER_ARCHIVE_STATUSES = {"placeholder", "placeholder_backfilled"}
 
 TACTICAL_LOGIC_KEYS = ("P", "Space", "F", "H", "Set_Piece")
@@ -242,6 +241,16 @@ def _collect_archive_gaps(frontmatter: Dict[str, Any], body_text: str) -> Dict[s
     if len(body_text.strip()) < 180:
         gaps.append("thin_archive_body")
 
+    injured_nodes = frontmatter.get("injured_nodes") if isinstance(frontmatter.get("injured_nodes"), list) else []
+    inactive_keywords = ("transferred", "inactive", "loaned out", "retired", "转会", "不再")
+    if any(any(k in str(node).lower() for k in inactive_keywords) for node in injured_nodes):
+        gaps.append("inactive_player_in_injured_nodes")
+
+    avg_xg = _safe_float(physical_reality.get("avg_xG_last_5"))
+    conversion = _safe_float(physical_reality.get("conversion_efficiency"))
+    if avg_xg is not None and conversion is not None and avg_xg >= 1.0 and abs(conversion) < 1e-9:
+        gaps.append("conversion_efficiency_suspicious_zero")
+
     return {
         "gaps": gaps,
         "missing_tactical_keys": missing_tactical_keys,
@@ -262,6 +271,7 @@ def _inspect_team_archive_content(path: Path) -> Dict[str, Any]:
         "char_count": 0,
         "archive_quality": None,
         "archive_status": "missing",
+        "archive_strength": "unknown",
         "frontmatter": {},
         "gaps": [],
         "missing_tactical_keys": [],
@@ -280,6 +290,7 @@ def _inspect_team_archive_content(path: Path) -> Dict[str, Any]:
         diagnostics["placeholder"] = True
         diagnostics["markers"] = ["unreadable_archive"]
         diagnostics["archive_status"] = "placeholder"
+        diagnostics["archive_strength"] = "unknown"
         return diagnostics
 
     frontmatter, _ = split_frontmatter(text)
@@ -308,30 +319,30 @@ def _inspect_team_archive_content(path: Path) -> Dict[str, Any]:
 
     gap_diagnostics = _collect_archive_gaps(diagnostics["frontmatter"], text)
 
-    explicit_statuses = STRONG_ARCHIVE_STATUSES | WEAK_ARCHIVE_STATUSES | PLACEHOLDER_ARCHIVE_STATUSES
-    if archive_quality in explicit_statuses:
+    if archive_quality in CANONICAL_ARCHIVE_QUALITIES:
         archive_status = archive_quality
         if archive_status == "placeholder_backfilled":
             markers.append("archive_quality_placeholder_backfilled")
     else:
         if archive_quality:
             markers.append(f"archive_quality_unrecognized:{archive_quality}")
-        archive_status = "placeholder" if markers else "usable_weak"
-
-    if archive_status not in PLACEHOLDER_ARCHIVE_STATUSES:
-        if gap_diagnostics["needs_enrichment"]:
-            archive_status = "usable_weak"
-        elif archive_status in WEAK_ARCHIVE_STATUSES:
-            archive_status = "usable_strong"
+        archive_status = "placeholder" if markers else "usable"
 
     diagnostics["archive_status"] = archive_status
+    diagnostics["archive_strength"] = (
+        "weak"
+        if archive_status in PLACEHOLDER_ARCHIVE_STATUSES or gap_diagnostics["needs_enrichment"]
+        else "strong"
+        if archive_status == "usable"
+        else "unknown"
+    )
     diagnostics["placeholder"] = archive_status in PLACEHOLDER_ARCHIVE_STATUSES
     diagnostics["gaps"] = gap_diagnostics["gaps"]
     diagnostics["missing_tactical_keys"] = gap_diagnostics["missing_tactical_keys"]
     diagnostics["missing_resilience_keys"] = gap_diagnostics["missing_resilience_keys"]
     diagnostics["missing_market_behavior_keys"] = gap_diagnostics["missing_market_behavior_keys"]
     diagnostics["default_physical_fields"] = gap_diagnostics["default_physical_fields"]
-    diagnostics["needs_enrichment"] = gap_diagnostics["needs_enrichment"] or archive_status in {"usable_weak"} or diagnostics["placeholder"]
+    diagnostics["needs_enrichment"] = gap_diagnostics["needs_enrichment"] or diagnostics["placeholder"]
     diagnostics["stale_days"] = gap_diagnostics["stale_days"]
     markers.extend(gap_diagnostics["gaps"])
     diagnostics["markers"] = sorted(set(markers))
@@ -438,6 +449,30 @@ def build_preflight_report(
             **archive_diagnostics,
         }
 
+    leakage_bucket: Dict[str, int] = {}
+    for record in team_records.values():
+        pr = record.get("frontmatter", {}).get("physical_reality") if isinstance(record.get("frontmatter"), dict) else {}
+        leakage = _safe_float(pr.get("defensive_leakage")) if isinstance(pr, dict) else None
+        if leakage is None:
+            continue
+        key = f"{leakage:.2f}"
+        leakage_bucket[key] = leakage_bucket.get(key, 0) + 1
+    repeated_leakage_values = {k for k, v in leakage_bucket.items() if v >= 3}
+    for record in team_records.values():
+        pr = record.get("frontmatter", {}).get("physical_reality") if isinstance(record.get("frontmatter"), dict) else {}
+        leakage = _safe_float(pr.get("defensive_leakage")) if isinstance(pr, dict) else None
+        if leakage is None:
+            continue
+        key = f"{leakage:.2f}"
+        if key in repeated_leakage_values:
+            markers = record.get("markers") if isinstance(record.get("markers"), list) else []
+            gaps = record.get("gaps") if isinstance(record.get("gaps"), list) else []
+            markers.append("default_value_contamination:defensive_leakage")
+            gaps.append("default_value_contamination:defensive_leakage")
+            record["markers"] = sorted(set(markers))
+            record["gaps"] = sorted(set(gaps))
+            record["needs_enrichment"] = True
+
     mapping_counts = Counter(str(match.get("mapping_source") or "unknown") for match in manifest.get("matches", []))
     matches: List[Dict[str, Any]] = []
     weak_matches: List[Dict[str, Any]] = []
@@ -467,7 +502,7 @@ def build_preflight_report(
                 issues.append(f"placeholder_archive:{team}")
             elif archive_status == "placeholder_backfilled":
                 issues.append(f"placeholder_backfilled_archive:{team}")
-            elif archive_status == "usable_weak":
+            elif archive_status == "usable" and record.get("needs_enrichment"):
                 issues.append(f"weak_archive:{team}")
             if record.get("needs_enrichment"):
                 issues.append(f"needs_archive_enrichment:{team}")
@@ -496,13 +531,14 @@ def build_preflight_report(
             weak_matches.append(row)
 
     archive_status_counts = Counter(str(record.get("archive_status") or "missing") for record in team_records.values())
+    strength_counts = Counter(str(record.get("archive_strength") or "unknown") for record in team_records.values())
     usable_teams = archive_status_counts.get("usable", 0)
-    usable_strong_teams = archive_status_counts.get("usable_strong", 0)
-    usable_weak_teams = archive_status_counts.get("usable_weak", 0) + usable_teams
+    usable_strong_teams = strength_counts.get("strong", 0)
+    usable_weak_teams = strength_counts.get("weak", 0)
     placeholder_teams = archive_status_counts.get("placeholder", 0)
     placeholder_backfilled_teams = archive_status_counts.get("placeholder_backfilled", 0)
     missing_teams = archive_status_counts.get("missing", 0)
-    low_quality_teams = usable_weak_teams + placeholder_teams + placeholder_backfilled_teams
+    low_quality_teams = usable_weak_teams
     thin_rag_teams = sum(1 for record in team_records.values() if record["rag_doc_count"] <= 1)
     enrichment_needed_teams = sum(1 for record in team_records.values() if record.get("needs_enrichment"))
     resilience_gap_teams = sum(1 for record in team_records.values() if record.get("missing_resilience_keys"))
@@ -518,6 +554,11 @@ def build_preflight_report(
         1 for row in matches if str(row.get("titan_prematch_coverage") or "none") == "full"
     )
     titan_prematch_missing_matches = max(0, total_matches - titan_prematch_available_matches)
+    market_fallback_ready_matches = sum(
+        1
+        for m in manifest.get("matches", [])
+        if isinstance(m.get("market_odds_history"), list) and len(m.get("market_odds_history")) > 0
+    )
 
     status = "READY"
     recommended_action = "可以进入 prematch 主流程。"
@@ -548,22 +589,40 @@ def build_preflight_report(
     elif gate_status == "HOLD" and status != "BLOCKED":
         status = "HOLD"
         recommended_action = "Prematch Input Gate 当前仅允许部分或暂不建议推进，请先完成最小补料清单。"
+    elif not gate_snapshot and status not in {"BLOCKED"}:
+        status = "HOLD"
+        recommended_action = "Prematch Input Gate 快照缺失，需先生成 gate 产物后再信任 READY 结论。"
+
+    if titan_prematch_missing_matches > 0:
+        if market_fallback_ready_matches <= 0:
+            status = "HOLD"
+            recommended_action = "Titan 缺失且无市场 fallback 证据，需先补齐市场行为源。"
 
     summary = [
         f"manifest 已落盘：`{manifest_path}`",
         f"本期共 `{total_matches}` 场，`mapping_source=unmapped` 有 `{unmapped_matches}` 场。",
         f"本期使用 smoke 锚点的比赛有 `{smoke_anchor_matches}` 场（仅回归测试，不视为生产可用映射）。",
         f"Titan prematch 覆盖 `{titan_prematch_available_matches}/{total_matches}` 场（full `{titan_prematch_full_matches}` 场，missing `{titan_prematch_missing_matches}` 场）。",
+        (
+            f"Market fallback（500 等）可用 `{market_fallback_ready_matches}/{total_matches}` 场。"
+            if market_fallback_ready_matches > 0
+            else "Market fallback（500 等）当前不可用。"
+        ),
         f"本期球队共 `{total_teams}` 支：usable_strong `{usable_strong_teams}`、usable_weak `{usable_weak_teams}`、placeholder `{placeholder_teams}`、placeholder_backfilled `{placeholder_backfilled_teams}`、missing `{missing_teams}`。",
         f"低质量/待补强队档（usable_weak + placeholder + placeholder_backfilled）共 `{low_quality_teams}` 支。",
         f"需要补强的球队共 `{enrichment_needed_teams}` 支（含结构缺口、过期时间戳、默认物理值、缺新闻摘要等）。",
         f"其中 resilience_core 缺口球队 `{resilience_gap_teams}` 支，market_behavior_core 缺口球队 `{market_behavior_gap_teams}` 支。",
         f"RAG team metadata 覆盖 `{len(rag_readiness['covered_teams'])}/{len(rag_readiness['issue_teams'])}`，但 `thin_rag_docs` 球队有 `{thin_rag_teams}` 支。",
         (
+            f"defensive_leakage 重复值疑似默认污染：{', '.join(sorted(repeated_leakage_values))}（命中>=3队）。"
+            if repeated_leakage_values
+            else "defensive_leakage 未检测到明显重复默认污染。"
+        ),
+        (
             f"Prematch Input Gate: `{gate_status or 'UNKNOWN'}`，"
             f"selected `{gate_selected}` / total `{total_matches}` / filtered `{gate_filtered}`。"
             if gate_snapshot
-            else "Prematch Input Gate: 尚未生成 gate 快照。"
+            else "Prematch Input Gate: 尚未生成 gate 快照（按规则应 HOLD，不可直接视为 READY）。"
         ),
         recommended_action,
     ]
@@ -612,6 +671,7 @@ def build_preflight_report(
         "titan_prematch_available_matches": titan_prematch_available_matches,
         "titan_prematch_full_matches": titan_prematch_full_matches,
         "titan_prematch_missing_matches": titan_prematch_missing_matches,
+        "market_fallback_ready_matches": market_fallback_ready_matches,
         "total_matches": total_matches,
         "total_teams": total_teams,
     }
@@ -677,6 +737,7 @@ def render_markdown(report: Dict[str, Any]) -> str:
     lines.append(f"| Market Behavior Core 缺口球队 | `{report.get('market_behavior_gap_teams', 0)}` |")
     lines.append(f"| 缺失队档 | `{report['missing_team_archives']}` |")
     lines.append(f"| Thin RAG Docs 球队 | `{report['thin_rag_teams']}` |")
+    lines.append(f"| Market Fallback 可用场次 | `{report.get('market_fallback_ready_matches', 0)}` |")
     lines.append("")
 
     lines.append("## 3. 核心发现")
@@ -859,6 +920,7 @@ def write_team_diagnostics(vault_root: Path, issue: str, report: Dict[str, Any])
                 "archive_path": team["archive_path"],
                 "archive_status": team["archive_status"],
                 "archive_quality": team.get("archive_quality"),
+                "archive_strength": team.get("archive_strength"),
                 "needs_enrichment": team.get("needs_enrichment", False),
                 "gaps": team.get("gaps", []),
                 "markers": team.get("markers", []),
@@ -919,6 +981,7 @@ def _extract_team_intel_snapshot(team: Dict[str, Any]) -> Dict[str, Any]:
         "league": team["league"],
         "archive_status": team.get("archive_status"),
         "archive_quality": team.get("archive_quality"),
+        "archive_strength": team.get("archive_strength"),
         "archive_path": team.get("archive_path"),
         "gaps": team.get("gaps", []),
         "markers": team.get("markers", []),

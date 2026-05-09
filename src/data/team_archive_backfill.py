@@ -445,9 +445,9 @@ def _has_substantive_intel(intel: Dict[str, Any]) -> bool:
     return False
 
 
-def _derive_archive_quality(intel: Dict[str, Any], substantive_intel: bool) -> str:
+def _derive_archive_quality_and_strength(intel: Dict[str, Any], substantive_intel: bool) -> Tuple[str, str]:
     if not substantive_intel:
-        return "placeholder_backfilled"
+        return "placeholder_backfilled", "weak"
     resilience_core = intel.get("resilience_core") if isinstance(intel.get("resilience_core"), dict) else {}
     market_behavior_core = intel.get("market_behavior_core") if isinstance(intel.get("market_behavior_core"), dict) else {}
     resilience_ready = all(_normalize_float(resilience_core.get(key)) is not None for key in DEFAULT_RESILIENCE_CORE)
@@ -455,7 +455,7 @@ def _derive_archive_quality(intel: Dict[str, Any], substantive_intel: bool) -> s
         _normalize_float(market_behavior_core.get(key)) is not None
         for key in ("water_level_slope", "bookmaker_divergence_index")
     )
-    return "usable_strong" if resilience_ready and market_ready else "usable_weak"
+    return "usable", ("strong" if resilience_ready and market_ready else "weak")
 
 
 def _frontmatter_text(frontmatter: Dict[str, Any], key: str, fallback: str = "") -> str:
@@ -763,7 +763,7 @@ def _render_body(
     intel = intel or {}
     frontmatter = frontmatter or {}
     substantive = _has_substantive_intel(intel)
-    archive_quality = _derive_archive_quality(intel, substantive)
+    archive_quality, archive_strength = _derive_archive_quality_and_strength(intel, substantive)
     coach = _frontmatter_text(frontmatter, "coach", "待补充")
     base_formation = _frontmatter_text(frontmatter, "base_formation", "待补充")
     tactical_style = _frontmatter_text(frontmatter, "tactical_style", "待补充")
@@ -814,7 +814,7 @@ def _render_body(
     lines.append("")
     lines.append("## 1. 档案状态")
     lines.append("")
-    lines.append(f"- 当前状态：`{archive_quality}`")
+    lines.append(f"- 当前状态：`{archive_quality}`（strength=`{archive_strength}`）")
     lines.append(f"- 回填来源：`team_archive_backfill.py --issue {issue}`")
     lines.append(f"- 所属联赛：`{league}`")
     lines.append(f"- 当前可用层级：`{'基础可用' if known_signals >= 4 else '低样本可用'}`")
@@ -1034,7 +1034,9 @@ def _backfill_one_team(
     merged_frontmatter["project"] = merged_frontmatter.get("project", "Ares-Matrix-DB")
     merged_frontmatter["owner"] = merged_frontmatter.get("owner", "Ares")
     merged_frontmatter["current_league"] = merged_frontmatter.get("current_league", league)
-    merged_frontmatter["archive_quality"] = _derive_archive_quality(intel or {}, substantive_intel)
+    derived_quality, derived_strength = _derive_archive_quality_and_strength(intel or {}, substantive_intel)
+    merged_frontmatter["archive_quality"] = derived_quality
+    merged_frontmatter["archive_strength"] = derived_strength
     merged_frontmatter["last_modified_date"] = datetime.utcnow().strftime("%Y-%m-%d")
     merged_frontmatter["backfill_context"] = {
         "issue": issue,

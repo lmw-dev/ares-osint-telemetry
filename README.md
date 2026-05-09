@@ -122,6 +122,7 @@ export ARES_VAULT_PATH="/path/to/your/Vault"
 | 赛后命中复盘（推演 vs 赛果） | `python src/data/prematch_outcome_review.py --issue <issue>` | 当官方比分入库后，评估 prematch 推演命中率 |
 | 赛后综合复盘（物理遥测聚合） | `python src/data/postmatch_synthesis.py --issue <issue>` | 当 postmatch 跑完后，输出“系统调整 + 分组复盘 + 队伍评级建议” |
 | 一键主流程 | `python src/data/osint_pipeline.py --issue <issue>` | 当预检通过或你确认可以继续跑时 |
+| Date 模式一键 prematch（含 audit-issue 前置） | `python src/data/date_prematch_run.py --date <YYYYMMDD> --scope top5` | 当你按比赛日执行，并希望直接拿到可汇总的 prematch 结论 |
 | 单场/单队情报补录 | `python src/data/intel_sweeper.py --team <team> --league <league> --url ...` | 当你已经有明确新闻源，要回填单支球队情报时 |
 
 ### 0.1 文档导航（docs/agents）
@@ -191,6 +192,30 @@ python src/data/prematch_preflight.py --issue 24040
 - `$ARES_VAULT_PATH/03_Match_Audits/{issue}/Audit-{issue}-team-diagnostics.json`
 - `$ARES_VAULT_PATH/03_Match_Audits/{issue}/03_Review_Reports/TEAM-INTEL-{issue}.generated.json`
 - `$ARES_VAULT_PATH/03_Match_Audits/{issue}/03_Review_Reports/UNMAPPED-ANCHORS-{issue}.generated.json`
+
+### 1.6.1 关键前置依赖（避免 `matches=0`）
+
+`prematch_synthesis.py` 只做“汇总收口”，不会替代 `20-engine` 生成比赛级 prematch 审计稿。  
+因此必须先有 `audit-issue` 产物，再跑 synthesis 才会输出“真正 prematch 结论”。
+
+推荐顺序（issue/date 都适用）：
+```bash
+# A. 先完成输入层（crawler / preflight / team backfill）
+# B. 执行 20-engine 生成 prematch 基础稿
+/Users/liumingwei/01-project/12-liumw/20-ares-v4-engine/.venv/bin/python \
+  /Users/liumingwei/01-project/12-liumw/20-ares-v4-engine/main.py \
+  audit-issue \
+  --issue <issue> \
+  --manifest $ARES_VAULT_PATH/04_RAG_Raw_Data/Cold_Data_Lake/<issue>_dispatch_manifest.json
+
+# C. 再执行 synthesis 收口
+python src/data/prematch_synthesis.py --issue <issue>
+```
+
+若跳过步骤 B，`prematch_synthesis` 可能出现：
+- `global_posture=HOLD`
+- `matches=0`
+- 无 `match_verdicts`（仅风险提示）
 
 ### 1.7 批量补 Placeholder Team Archives
 当 `Audit-{issue}.md` 提示 placeholder 队档过多时，先批量把空壳档案升级成可维护模板；如果你已经整理了 issue 级球队情报，还可以直接批量把部分队档提升为 `usable`。若未手工准备 intel 文件，脚本会自动尝试读取预检生成的 `TEAM-INTEL-{issue}.generated.json`。

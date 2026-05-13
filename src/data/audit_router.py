@@ -161,14 +161,14 @@ class AuditRouter:
         special_dir = issue_dir / "02_Special_Analyses"
         review_dir = issue_dir / "03_Review_Reports"
         postmatch_dir = issue_dir / "04_Postmatch_Telemetry"
-        postmatch_legacy_dir = issue_dir / "04_Postmatch_Legacy"
+        manual_prematch_dir = issue_dir / "05_Pretmatch_Legacy_Manual"
         return {
             "issue_dir": issue_dir,
             "prematch_dir": prematch_dir,
             "special_dir": special_dir,
             "review_dir": review_dir,
             "postmatch_dir": postmatch_dir,
-            "postmatch_legacy_dir": postmatch_legacy_dir,
+            "manual_prematch_dir": manual_prematch_dir,
         }
 
     def _issue_postmatch_main_dir(self, issue: str) -> Path:
@@ -194,7 +194,22 @@ class AuditRouter:
         dirs = self._issue_dirs(issue)
         for d in dirs.values():
             d.mkdir(parents=True, exist_ok=True)
+        self._migrate_legacy_manual_dir(dirs["issue_dir"], dirs["manual_prematch_dir"])
         return dirs
+
+    def _migrate_legacy_manual_dir(self, issue_dir: Path, manual_dir: Path) -> None:
+        old_dir = issue_dir / "04_Postmatch_Legacy"
+        if not old_dir.exists():
+            return
+        for src in old_dir.glob("*.md"):
+            dst = manual_dir / src.name
+            if dst.exists():
+                dst = manual_dir / f"{dst.stem}__migrated_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}{dst.suffix}"
+            src.rename(dst)
+        try:
+            old_dir.rmdir()
+        except OSError:
+            pass
 
     def _split_pair_text(self, value: str) -> Tuple[str, str]:
         txt = self._safe_str(value)
@@ -247,6 +262,64 @@ class AuditRouter:
             "- 物理面（近期 xG / 转化效率）：\n"
             "- Ares 结论（方向 + 风险等级）：\n"
         )
+
+    def _build_manual_template_content(self, issue: str, match: Dict[str, Any], english_home: str, english_away: str) -> str:
+        chinese = self._safe_str(match.get("chinese"))
+        english = f"{english_home} vs {english_away}"
+        return (
+            "---\n"
+            f'issue: "{issue}"\n'
+            f'match_index: {int(match.get("index", 0) or 0)}\n'
+            f'chinese: "{chinese.replace(chr(34), chr(39))}"\n'
+            f'english: "{english.replace(chr(34), chr(39))}"\n'
+            f'league: "{self._safe_str(match.get("league")).replace(chr(34), chr(39))}"\n'
+            f'mapping_source: "{self._safe_str(match.get("mapping_source")).replace(chr(34), chr(39))}"\n'
+            'status: "manual_draft"\n'
+            "---\n\n"
+            f"# Manual Prematch Audit - {english_home} vs {english_away}\n\n"
+            "## 1. Gate 状态\n"
+            "- match_level:\n"
+            "- reasons:\n\n"
+            "## 2. 可用证据\n"
+            "- allowed_evidence:\n"
+            "- restricted_evidence:\n\n"
+            "## 3. 市场与盘面\n"
+            "- 1X2:\n"
+            "- Asian:\n"
+            "- O/U:\n\n"
+            "## 4. 关键风险\n"
+            "-\n\n"
+            "## 5. 建议结构\n"
+            "- main_direction:\n"
+            "- recommended_structure:\n"
+            "- backup_structure:\n"
+            "- confidence:\n"
+        )
+
+    def _sync_manual_prematch_templates(
+        self,
+        issue: str,
+        matches: List[Dict[str, Any]],
+        manual_dir: Path,
+    ) -> int:
+        created = 0
+        for match in matches:
+            index = int(match.get("index", 0) or 0)
+            if index <= 0:
+                continue
+            english_home, english_away = self._resolve_match_names(match, index)
+            home_safe = self._sanitize_segment(english_home, f"Home{index:02d}")
+            away_safe = self._sanitize_segment(english_away, f"Away{index:02d}")
+            file_name = f"Manual-Audit-{issue}-{index:02d}-{home_safe}-vs-{away_safe}.md"
+            path = manual_dir / file_name
+            if path.exists():
+                continue
+            path.write_text(
+                self._build_manual_template_content(issue, match, english_home, english_away),
+                encoding="utf-8",
+            )
+            created += 1
+        return created
 
     @staticmethod
     def _is_generated_prematch_stub(path: Path) -> bool:
@@ -1054,7 +1127,7 @@ class AuditRouter:
         prematch_count = sum(1 for _ in issue_dirs["prematch_dir"].glob("*.md"))
         special_count = sum(1 for _ in issue_dirs["special_dir"].glob("*.md"))
         review_count = sum(1 for _ in issue_dirs["review_dir"].glob("*.md"))
-        postmatch_legacy_count = sum(1 for _ in issue_dirs["postmatch_legacy_dir"].glob("*.md"))
+        manual_prematch_count = sum(1 for _ in issue_dirs["manual_prematch_dir"].glob("*.md"))
         postmatch_count = sum(1 for _ in self._iter_issue_postmatch_main(issue))
 
         mapped = 0
@@ -1087,7 +1160,7 @@ class AuditRouter:
             f"- `02_Special_Analyses/`: {special_count}\n"
             f"- `03_Review_Reports/`: {review_count}\n"
             f"- `04_Postmatch_Telemetry/`: {postmatch_count}\n"
-            f"- `04_Postmatch_Legacy/`: {postmatch_legacy_count}\n"
+            f"- `05_Pretmatch_Legacy_Manual/`: {manual_prematch_count}\n"
         )
         (issue_dir / "README.md").write_text(content, encoding="utf-8")
 
@@ -1341,6 +1414,7 @@ class AuditRouter:
         manifest_lookup = self._build_manifest_match_lookup(issue, manifest)
 
         created_stubs = 0
+        created_manual_templates = 0
         archived_prematch_duplicates = 0
         if create_prematch_stubs and isinstance(manifest, dict):
             matches = manifest.get("matches", [])
@@ -1350,6 +1424,11 @@ class AuditRouter:
                     matches,
                     issue_dirs["prematch_dir"],
                     issue_dirs["review_dir"],
+                )
+                created_manual_templates = self._sync_manual_prematch_templates(
+                    issue,
+                    matches,
+                    issue_dirs["manual_prematch_dir"],
                 )
 
         archived_prematch_duplicates += self._sync_real_prematch_duplicates(
@@ -1392,9 +1471,10 @@ class AuditRouter:
         self._write_issue_readme(issue, issue_dirs, manifest)
         self._write_global_index()
         logger.info(
-            "AuditRouter 更新完成 issue=%s, created_stubs=%s, archived_prematch_duplicates=%s, rejected_prematch=%s, deduped_review_reports=%s, restored_soft_gated=%s, cleared_obsolete_rejected=%s, moved_duplicate_postmatch=%s",
+            "AuditRouter 更新完成 issue=%s, created_stubs=%s, created_manual_templates=%s, archived_prematch_duplicates=%s, rejected_prematch=%s, deduped_review_reports=%s, restored_soft_gated=%s, cleared_obsolete_rejected=%s, moved_duplicate_postmatch=%s",
             issue,
             created_stubs,
+            created_manual_templates,
             archived_prematch_duplicates,
             len({name for names in rejected_reports.values() for name in names}),
             deduped_review_reports,

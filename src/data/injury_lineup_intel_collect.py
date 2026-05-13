@@ -157,9 +157,22 @@ def _normalize_absence(item: Dict[str, Any], fallback_url: str = "") -> Optional
     }
 
 
-def _merge_absences(old_rows: List[Dict[str, Any]], new_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _looks_like_current_issue_absence(row: Dict[str, Any], issue: str) -> bool:
+    source_url = _safe_text(row.get("source_url"))
+    if not source_url:
+        return False
+    if issue and issue in source_url:
+        return True
+    if "zq.titan007.com/analysis/" in source_url or "live.nowscore.com/analysis/" in source_url:
+        return False
+    return True
+
+
+def _merge_absences(old_rows: List[Dict[str, Any]], new_rows: List[Dict[str, Any]], issue: str = "") -> List[Dict[str, Any]]:
     idx: Dict[str, Dict[str, Any]] = {}
     for row in old_rows:
+        if issue and not _looks_like_current_issue_absence(row, issue):
+            continue
         norm = _normalize_absence(row)
         if not norm:
             continue
@@ -829,7 +842,7 @@ def main() -> int:
             seed["absences"] = existing[team].get("absences", [])
 
         archive_absences, archive_lineup, archive_path = _extract_archive_intel(vault_root, team, league)
-        merged_abs = _merge_absences(seed.get("absences", []), archive_absences)
+        merged_abs = _merge_absences(seed.get("absences", []), archive_absences, issue=args.issue)
         source_updates = [
             {
                 "source_name": "TeamArchive",
@@ -851,7 +864,7 @@ def main() -> int:
                 raw_dump_name=f"{args.issue}_nowscore_{team.replace(' ', '_')}",
             )
             source_updates.append(ns_src)
-            merged_abs = _merge_absences(merged_abs, ns_abs)
+            merged_abs = _merge_absences(merged_abs, ns_abs, issue=args.issue)
         else:
             source_updates.append(
                 {
@@ -872,7 +885,7 @@ def main() -> int:
                 raw_dump_name=f"{args.issue}_titan_{team.replace(' ', '_')}",
             )
             source_updates.append(tt_src)
-            merged_abs = _merge_absences(merged_abs, tt_abs)
+            merged_abs = _merge_absences(merged_abs, tt_abs, issue=args.issue)
             if isinstance(tt_src.get("last_match_lineup_snapshot"), dict):
                 titan_lineup_snapshot = tt_src.get("last_match_lineup_snapshot", {})
             seed["lineup_snapshot_status"] = str(tt_src.get("lineup_snapshot_status") or "UNKNOWN").upper()
@@ -900,7 +913,7 @@ def main() -> int:
             source_updates.append(tm_source)
             if _safe_text(tm_source.get("raw_status")) == "OK":
                 tm_ok += 1
-            merged_abs = _merge_absences(merged_abs, tm_abs)
+            merged_abs = _merge_absences(merged_abs, tm_abs, issue=args.issue)
 
         seed["source_items"] = _merge_source_items(seed.get("source_items", []), source_updates)
         seed["absences"] = merged_abs

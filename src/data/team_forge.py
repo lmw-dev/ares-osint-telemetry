@@ -40,6 +40,45 @@ DEFAULT_FRONTMATTER: Dict[str, Any] = {
         "bias_type": "Aligned",
         "S_dynamic_modifier": 0.0,
     },
+    "market_profile": {
+        "brand_power": "medium",
+        "public_heat": "medium",
+        "expected_price_anchor": {
+            "home_vs_mid_table": "1.65-1.90",
+            "home_vs_defensive_mid_table": "1.70-1.95",
+        },
+    },
+    "motivation_profile": {
+        "type": ["NORMAL"],
+        "intensity": 2,
+        "result_need": {
+            "win_need": 2,
+            "draw_value": 2,
+            "loss_tolerance": 2,
+        },
+    },
+    "fatigue_context": {
+        "played_midweek": False,
+        "competition": "",
+        "days_rest": None,
+        "travel_burden": "low",
+        "emotional_result": "",
+        "next_priority": "",
+    },
+    "conversion_bubble_profile": {
+        "conversion_efficiency_last_5": None,
+        "goals_minus_xG_last_5": None,
+        "bubble_status": "normal",
+    },
+    "opponent_tail_risk": {
+        "defensive_low_block_capacity": None,
+        "counterattack_path": None,
+        "set_piece_threat": None,
+        "low_margin_upset_capacity": None,
+    },
+    "memory_cards": {
+        "market_pricing_lessons": [],
+    },
     "resilience_core": {
         "concede_first_comeback_rate": None,
         "lead_protection_rate": None,

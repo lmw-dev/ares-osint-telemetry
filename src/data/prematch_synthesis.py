@@ -32,6 +32,22 @@ RIVALRY_TEAM_PAIRS = {
     ("acmilan", "intermilan"),
 }
 
+BRAND_POWER_LEVEL = {
+    "low": 1,
+    "medium": 2,
+    "medium_high": 3,
+    "high": 4,
+    "elite": 5,
+}
+
+EXPECTED_HOME_PRICE_ANCHOR = {
+    "elite": {"default": (1.25, 1.40), "defensive_mid_table": (1.35, 1.48)},
+    "high": {"default": (1.35, 1.48), "defensive_mid_table": (1.42, 1.55)},
+    "medium_high": {"default": (1.45, 1.65), "defensive_mid_table": (1.55, 1.75)},
+    "medium": {"default": (1.65, 1.90), "defensive_mid_table": (1.70, 1.95)},
+    "low": {"default": (1.85, 2.20), "defensive_mid_table": (1.95, 2.30)},
+}
+
 
 def _safe_text(value: Any) -> str:
     if value is None:
@@ -198,12 +214,14 @@ class PrematchSynthesis:
         stdout_only: bool = False,
         top5_only: bool = False,
         ops_mode: bool = False,
+        include_rejected_caution: bool = False,
     ):
         self.issue = str(issue)
         self.force_rule = force_rule
         self.stdout_only = stdout_only
         self.top5_only = top5_only
         self.ops_mode = ops_mode or (_safe_text(os.getenv("ARES_SYNTHESIS_PROFILE")).lower() == "ops")
+        self.include_rejected_caution = include_rejected_caution
         self.repo_root = Path(__file__).resolve().parent.parent.parent
         load_dotenv_into_env(self.repo_root)
 
@@ -333,6 +351,16 @@ class PrematchSynthesis:
                 matched = sorted(self.prematch_dir.glob(f"Audit-{self.issue}-{idx:02d}-*.md"))
                 if matched:
                     gate_files.add(matched[0].name)
+                elif self.include_rejected_caution:
+                    rejected = sorted(self.review_dir.glob(f"REJECTED-Audit-{self.issue}-{idx:02d}-*.md"))
+                    if rejected:
+                        gate_files.add(rejected[0].name.replace("REJECTED-", "", 1))
+            if self.include_rejected_caution:
+                gate_files.update(path.name for path in self.prematch_dir.glob(f"Audit-{self.issue}-*.md"))
+                gate_files.update(
+                    path.name.replace("REJECTED-", "", 1)
+                    for path in self.review_dir.glob(f"REJECTED-Audit-{self.issue}-*.md")
+                )
             if gate_files:
                 accepted_files = gate_files
         if not accepted_files and self.prematch_dir.exists():
@@ -370,9 +398,22 @@ class PrematchSynthesis:
             }
         for filename in sorted(accepted_files):
             path = self.prematch_dir / filename
+            rejected_caution = False
             if not path.exists():
-                continue
+                if not self.include_rejected_caution:
+                    continue
+                rejected_path = self.review_dir / f"REJECTED-{filename}"
+                if not rejected_path.exists():
+                    continue
+                path = rejected_path
+                rejected_caution = True
             parsed = self._parse_prematch_audit(path)
+            filtered_caution = (
+                self.include_rejected_caution
+                and bool(selected_gate_indices)
+                and isinstance(parsed.get("match_index"), int)
+                and int(parsed.get("match_index")) not in selected_gate_indices
+            )
             gate_row = None
             if parsed.get("match_index") is not None:
                 gate_row = gate_lookup.get(f"idx:{parsed.get('match_index')}")
@@ -386,6 +427,8 @@ class PrematchSynthesis:
             gate_status_override = _safe_text(override.get("gate_status")).upper()
             if gate_status_override in {"READY", "HOLD", "BLOCKED"}:
                 readiness_level = gate_status_override
+            if rejected_caution or filtered_caution:
+                readiness_level = "HOLD"
             parsed["readiness_level"] = readiness_level
             parsed["ready_level"] = _safe_text(override.get("ready_level")).upper()
             parsed["confidence_cap"] = _safe_text(override.get("confidence_cap")).lower()
@@ -399,11 +442,19 @@ class PrematchSynthesis:
                 bool((gate_row or {}).get("soft_blockers"))
                 or _safe_text((gate_row or {}).get("quality_tag")) == "DATA_WEAK"
                 or (filename in low_conf_files and gate_row is None)
+                or rejected_caution
+                or filtered_caution
             )
             parsed["is_insufficient_resilience"] = bool((gate_row or {}).get("has_resilience_gap")) or (
                 filename in insufficient_files and gate_row is None
-            )
+            ) or rejected_caution
             parsed["is_structural_data_gap"] = bool((gate_row or {}).get("has_structural_data_gap"))
+            caution_tags = []
+            if rejected_caution:
+                caution_tags.append("rejected_caution")
+            if filtered_caution:
+                caution_tags.append("gate_filtered_caution")
+            parsed["risk_tags"] = sorted(set((parsed.get("risk_tags") or []) + caution_tags))
             parsed["home_profile"] = team_profiles.get(_normalize_team_key(parsed.get("home_team")))
             parsed["away_profile"] = team_profiles.get(_normalize_team_key(parsed.get("away_team")))
             match_payloads.append(parsed)
@@ -461,7 +512,16 @@ class PrematchSynthesis:
                 match_index = int(m_idx.group(1))
             except Exception:
                 match_index = None
-        title = _safe_text(next((line for line in text.splitlines() if line.startswith("# ")), ""))
+        title = _safe_text(
+            next(
+                (
+                    line
+                    for line in text.splitlines()
+                    if line.startswith("# Ares Prematch Audit - Issue ")
+                ),
+                next((line for line in text.splitlines() if line.startswith("# ")), ""),
+            )
+        )
         title_match = re.search(r"# Ares Prematch Audit - Issue (.+?) - (.+?) vs (.+)$", title)
         home_team = _safe_text(title_match.group(2)) if title_match else ""
         away_team = _safe_text(title_match.group(3)) if title_match else ""
@@ -805,6 +865,16 @@ class PrematchSynthesis:
         blocks: List[str] = []
         if bool(verdict.get("no_single_pick_gate")):
             blocks.append("NO_SINGLE_PICK_GATE")
+        if bool(verdict.get("non_elite_hot_favorite_caution")):
+            blocks.append("NON_ELITE_HOT_FAVORITE_CAUTION")
+        if bool(verdict.get("favorite_retreat_not_reversal_gate")):
+            blocks.append("FAVORITE_RETREAT_NOT_REVERSAL")
+        if bool(verdict.get("away_euro_fatigue_mild_favorite_gate")):
+            blocks.append("AWAY_EURO_FATIGUE_MILD_FAVORITE")
+        if bool(verdict.get("favorite_conversion_bubble_no_single_gate")):
+            blocks.append("CONVERSION_BUBBLE_NO_SINGLE")
+        if bool(verdict.get("away_half_ball_no_upgrade_home_xg_risk_gate")):
+            blocks.append("AWAY_HALF_BALL_NO_UPGRADE_HOME_XG_RISK")
         if bool(verdict.get("away_elite_conditional_only")):
             blocks.append("AWAY_ELITE_CONDITIONAL_ONLY")
         if bool(verdict.get("is_insufficient_resilience")):
@@ -919,6 +989,97 @@ class PrematchSynthesis:
         if not isinstance(profile, dict):
             return False
         return _safe_text(profile.get("team_class_hint")).lower() == "elite_depth"
+
+    @staticmethod
+    def _brand_power(profile: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(profile, dict):
+            return "medium"
+        market_profile = profile.get("market_profile") if isinstance(profile.get("market_profile"), dict) else {}
+        tier = _safe_text(market_profile.get("brand_power")).lower()
+        if tier in BRAND_POWER_LEVEL:
+            return tier
+        if PrematchSynthesis._is_elite_profile(profile):
+            return "elite"
+        return "medium"
+
+    @staticmethod
+    def _motivation_intensity(context_flags: Dict[str, Any]) -> int:
+        if not isinstance(context_flags, dict):
+            return 0
+        profile = context_flags.get("motivation_profile") if isinstance(context_flags.get("motivation_profile"), dict) else {}
+        if not profile and isinstance(context_flags.get("favorite_profile"), dict):
+            fav_profile = context_flags.get("favorite_profile") or {}
+            profile = fav_profile.get("motivation_profile") if isinstance(fav_profile.get("motivation_profile"), dict) else {}
+        intensity = profile.get("intensity")
+        try:
+            return int(intensity)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _brand_favorite_price_not_low_enough_gate(
+        *,
+        home_favorite: bool,
+        favorite_profile: Dict[str, Any],
+        underdog_profile: Dict[str, Any],
+        home_market: Optional[float],
+        away_market: Optional[float],
+        favorite_deep_handicap: float,
+        context_flags: Dict[str, Any],
+    ) -> bool:
+        # BRAND_FAVORITE_PRICE_NOT_LOW_ENOUGH:
+        # 强品牌主场热门在题材充足时，若赔率未压进合理低位，视为“价格不够低”风险。
+        if not home_favorite:
+            return False
+        if not isinstance(home_market, (int, float)) or not isinstance(away_market, (int, float)):
+            return False
+        brand = PrematchSynthesis._brand_power(favorite_profile)
+        if BRAND_POWER_LEVEL.get(brand, 0) < BRAND_POWER_LEVEL["high"]:
+            return False
+        motivation_ok = PrematchSynthesis._motivation_intensity(context_flags) >= 3 or bool(
+            context_flags.get("title_race_pressure")
+        )
+        if not motivation_ok:
+            return False
+
+        underdog_brand = PrematchSynthesis._brand_power(underdog_profile)
+        if BRAND_POWER_LEVEL.get(underdog_brand, 0) >= BRAND_POWER_LEVEL["high"]:
+            return False
+
+        underdog_leak = _safe_float(underdog_profile.get("defensive_leakage"))
+        defensive_opponent = underdog_leak is not None and underdog_leak <= 0.42
+        anchor_type = "defensive_mid_table" if defensive_opponent else "default"
+        anchor = EXPECTED_HOME_PRICE_ANCHOR.get(brand, EXPECTED_HOME_PRICE_ANCHOR["medium"]).get(anchor_type)
+        expected_upper = float(anchor[1]) if anchor else 1.65
+        current_home_odds = 100.0 / float(home_market) if float(home_market) > 0 else 99.0
+        if current_home_odds < expected_upper:
+            return False
+
+        # 盘口在 -1 附近但并不深，且对手有低位防守能力时，强制禁单。
+        line_around_minus_one = 0.80 <= favorite_deep_handicap <= 1.20
+        if not line_around_minus_one and not defensive_opponent:
+            return False
+        return True
+
+    @staticmethod
+    def _narrative_strength_cap_gate(
+        *,
+        favorite_profile: Dict[str, Any],
+        underdog_profile: Dict[str, Any],
+        context_flags: Dict[str, Any],
+        favorite_deep_handicap: float,
+        favorite_strengthened: bool,
+    ) -> bool:
+        # NARRATIVE_STRENGTH_CAP:
+        # 强题材可抬方向，但不能盖过伤停、xG 反证和防守泄漏风险。
+        narrative_strong = bool(context_flags.get("title_race_pressure")) or PrematchSynthesis._motivation_intensity(context_flags) >= 3
+        if not (narrative_strong and favorite_strengthened):
+            return False
+        injuries = PrematchSynthesis._has_confirmed_xi_damage(favorite_profile)
+        opp_xg = _safe_float(underdog_profile.get("avg_xG_last_5"))
+        fav_leak = _safe_float(favorite_profile.get("defensive_leakage"))
+        water_not_low = favorite_deep_handicap <= 1.05
+        return injuries or (opp_xg is not None and opp_xg >= 1.25) or (fav_leak is not None and fav_leak >= 0.56) or water_not_low
 
     @staticmethod
     def _has_confirmed_xi_damage(profile: Optional[Dict[str, Any]]) -> bool:
@@ -1169,6 +1330,83 @@ class PrematchSynthesis:
         return 0.0
 
     @staticmethod
+    def _non_elite_hot_favorite_caution(
+        favorite_profile: Dict[str, Any],
+        underdog_profile: Dict[str, Any],
+        favorite_is_elite: bool,
+        favorite_strengthened: bool,
+        favorite_deep_handicap: float,
+    ) -> bool:
+        # NON_ELITE_HOT_FAVORITE_CAUTION:
+        # 非 elite 热门被市场强化时，若同时具备多项风险，禁止单选。
+        if favorite_is_elite or not favorite_strengthened:
+            return False
+        risk = 0
+        opp_xg = _safe_float(underdog_profile.get("avg_xG_last_5"))
+        fav_leak = _safe_float(favorite_profile.get("defensive_leakage"))
+        fav_conv = _safe_float(favorite_profile.get("conversion_efficiency"))
+        if opp_xg is not None and opp_xg >= 1.35:
+            risk += 1
+        if fav_leak is not None and fav_leak >= 0.52:
+            risk += 1
+        if fav_conv is not None and fav_conv >= 1.60:
+            risk += 1
+        if favorite_deep_handicap < 0.75:
+            risk += 1
+        return risk >= 2
+
+    @staticmethod
+    def _favorite_retreat_not_reversal(
+        market_retreat_against_favorite: bool,
+        home_market: Optional[float],
+        away_market: Optional[float],
+    ) -> bool:
+        # FAVORITE_RETREAT_NOT_REVERSAL:
+        # 退盘不自动反向，只做降级和防平/防冷处理。
+        if not market_retreat_against_favorite:
+            return False
+        if not (isinstance(home_market, (int, float)) and isinstance(away_market, (int, float))):
+            return False
+        return abs(float(home_market) - float(away_market)) <= 8.0
+
+    @staticmethod
+    def _away_euro_fatigue_mild_favorite_gate(
+        away_favorite: bool,
+        europe_sandwich: bool,
+        favorite_deep_handicap: float,
+    ) -> bool:
+        # AWAY_EURO_FATIGUE_MILD_FAVORITE:
+        # 客队欧战夹击 + 让球不深时，单边客胜降级。
+        if not away_favorite or not europe_sandwich:
+            return False
+        return favorite_deep_handicap <= 0.75
+
+    @staticmethod
+    def _favorite_conversion_bubble_no_single_gate(
+        favorite_profile: Dict[str, Any],
+    ) -> bool:
+        conv = _safe_float(favorite_profile.get("conversion_efficiency"))
+        return conv is not None and conv >= 1.80
+
+    @staticmethod
+    def _away_half_ball_no_upgrade_home_xg_risk_gate(
+        away_favorite: bool,
+        favorite_deep_handicap: float,
+        handicap_deepen: bool,
+        home_profile: Dict[str, Any],
+    ) -> bool:
+        # AWAY_HALF_BALL_NO_UPGRADE_HOME_XG_RISK:
+        # 客让半球低水但未升盘，且主队近期机会产量不低，需防主队乱战。
+        if not away_favorite:
+            return False
+        if not (0.45 <= favorite_deep_handicap <= 0.60):
+            return False
+        if handicap_deepen:
+            return False
+        home_xg = _safe_float(home_profile.get("avg_xG_last_5"))
+        return home_xg is not None and home_xg >= 1.35
+
+    @staticmethod
     def _is_away_elite_conditional_only(
         away_favorite: bool,
         away_elite: bool,
@@ -1299,6 +1537,11 @@ class PrematchSynthesis:
                 and isinstance(away_market, (int, float))
                 and away_market - home_market >= 3.0
             )
+            home_favorite = (
+                isinstance(home_market, (int, float))
+                and isinstance(away_market, (int, float))
+                and home_market - away_market >= 3.0
+            )
             low_event_home_fav = self._low_event_home_favorite_trigger(
                 home_market,
                 away_market,
@@ -1350,6 +1593,38 @@ class PrematchSynthesis:
             )
             new_manager_sample_matches = int(context_flags.get("new_manager_sample_matches") or 0)
             favorite_deep_handicap = float(context_flags.get("favorite_deep_handicap") or 0.0)
+            favorite_strengthened = bool(
+                market_behavior.get("favorite_odds_compressed") or market_behavior.get("handicap_deepen")
+            )
+            handicap_deepen = bool(market_behavior.get("handicap_deepen"))
+            europe_sandwich = bool(context_flags.get("europe_sandwich"))
+            favorite_profile = home_profile if home_favorite else away_profile if away_favorite else {}
+            underdog_profile = away_profile if home_favorite else home_profile if away_favorite else {}
+            favorite_is_elite = home_elite if home_favorite else away_elite if away_favorite else False
+            favorite_conversion_bubble = self._favorite_conversion_bubble_no_single_gate(favorite_profile)
+            non_elite_hot_favorite_caution = self._non_elite_hot_favorite_caution(
+                favorite_profile=favorite_profile,
+                underdog_profile=underdog_profile,
+                favorite_is_elite=favorite_is_elite,
+                favorite_strengthened=favorite_strengthened,
+                favorite_deep_handicap=favorite_deep_handicap,
+            )
+            favorite_retreat_not_reversal_gate = self._favorite_retreat_not_reversal(
+                market_retreat_against_favorite=market_retreat_against_favorite,
+                home_market=home_market,
+                away_market=away_market,
+            )
+            away_euro_fatigue_mild_gate = self._away_euro_fatigue_mild_favorite_gate(
+                away_favorite=away_favorite,
+                europe_sandwich=europe_sandwich,
+                favorite_deep_handicap=favorite_deep_handicap,
+            )
+            away_half_ball_no_upgrade_gate = self._away_half_ball_no_upgrade_home_xg_risk_gate(
+                away_favorite=away_favorite,
+                favorite_deep_handicap=favorite_deep_handicap,
+                handicap_deepen=handicap_deepen,
+                home_profile=home_profile,
+            )
             structural_crisis_home_survival = bool(
                 context_flags.get("structural_crisis_context") and opponent_survival_pressure
             )
@@ -1380,7 +1655,34 @@ class PrematchSynthesis:
                         )
                     )
                 ),
-            ) or str(context_flags.get("rotation_intensity") or "UNKNOWN").upper() == "HIGH"
+            ) or str(context_flags.get("rotation_intensity") or "UNKNOWN").upper() == "HIGH" or any(
+                [
+                    non_elite_hot_favorite_caution,
+                    favorite_conversion_bubble,
+                    away_euro_fatigue_mild_gate,
+                    away_half_ball_no_upgrade_gate,
+                ]
+            )
+            brand_price_not_low_enough = self._brand_favorite_price_not_low_enough_gate(
+                home_favorite=home_favorite,
+                favorite_profile=favorite_profile,
+                underdog_profile=underdog_profile,
+                home_market=home_market,
+                away_market=away_market,
+                favorite_deep_handicap=favorite_deep_handicap,
+                context_flags={**context_flags, "favorite_profile": favorite_profile},
+            )
+            narrative_strength_cap = self._narrative_strength_cap_gate(
+                favorite_profile=favorite_profile,
+                underdog_profile=underdog_profile,
+                context_flags={**context_flags, "favorite_profile": favorite_profile},
+                favorite_deep_handicap=favorite_deep_handicap,
+                favorite_strengthened=favorite_strengthened,
+            )
+            if brand_price_not_low_enough:
+                no_single_pick_gate = True
+            if narrative_strength_cap:
+                no_single_pick_gate = True
 
             suggestion = "skip"
             confidence = "low"
@@ -1495,12 +1797,28 @@ class PrematchSynthesis:
                         confidence_score -= 0.2
 
                 if market_reversal_flag:
-                    if suggestion == "3":
-                        suggestion = "1/0"
-                        confidence_score -= 0.9
-                    elif suggestion == "3/1":
-                        suggestion = "1/0"
-                        confidence_score -= 0.6
+                    if favorite_retreat_not_reversal_gate:
+                        if home_favorite:
+                            if suggestion == "3":
+                                suggestion = "3/1"
+                                confidence_score -= 0.6
+                            elif suggestion == "1/0":
+                                suggestion = "3/1/0"
+                                confidence_score -= 0.4
+                        elif away_favorite:
+                            if suggestion == "0":
+                                suggestion = "1/0"
+                                confidence_score -= 0.6
+                            elif suggestion == "3/1":
+                                suggestion = "3/1/0"
+                                confidence_score -= 0.4
+                    else:
+                        if suggestion == "3":
+                            suggestion = "1/0"
+                            confidence_score -= 0.9
+                        elif suggestion == "3/1":
+                            suggestion = "1/0"
+                            confidence_score -= 0.6
 
                 if backup_gk_low_score_risk:
                     if suggestion == "3":
@@ -1540,6 +1858,54 @@ class PrematchSynthesis:
                     elif suggestion == "3/1":
                         suggestion = "1/0"
                         confidence_score -= 0.4
+
+                # NON_ELITE_HOT_FAVORITE_CAUTION / CONVERSION_BUBBLE_NO_SINGLE:
+                # 非 elite 热门热度或终结泡沫触发时，禁止单挑。
+                if non_elite_hot_favorite_caution or favorite_conversion_bubble:
+                    if home_favorite and suggestion == "3":
+                        suggestion = "3/1"
+                        confidence_score -= 0.6
+                    elif away_favorite and suggestion == "0":
+                        suggestion = "1/0"
+                        confidence_score -= 0.6
+
+                if brand_price_not_low_enough:
+                    if suggestion == "3":
+                        suggestion = "3/1/0"
+                        confidence_score -= 0.8
+                    elif suggestion == "3/1":
+                        suggestion = "3/1/0"
+                        confidence_score -= 0.5
+                    elif suggestion == "1":
+                        suggestion = "3/1"
+                        confidence_score -= 0.3
+
+                if narrative_strength_cap:
+                    if suggestion == "3":
+                        suggestion = "3/1"
+                        confidence_score -= 0.6
+                    elif suggestion == "0":
+                        suggestion = "1/0"
+                        confidence_score -= 0.6
+                    elif suggestion in {"3/1", "1/0"}:
+                        confidence_score -= 0.3
+
+                # AWAY_EURO_FATIGUE_MILD_FAVORITE:
+                # 客队欧战夹击下，客胜结构至少降为对冲。
+                if away_euro_fatigue_mild_gate and suggestion in {"0", "1/0"}:
+                    home_xg = _safe_float(home_profile.get("avg_xG_last_5"))
+                    away_xg = _safe_float(away_profile.get("avg_xG_last_5"))
+                    if home_xg is not None and away_xg is not None and home_xg >= away_xg:
+                        suggestion = "0/1/3"
+                    else:
+                        suggestion = "1/0"
+                    confidence_score -= 0.5
+
+                # AWAY_HALF_BALL_NO_UPGRADE_HOME_XG_RISK:
+                # 客让半球未升盘且主队 xG 尚可，强制保留主胜深覆盖。
+                if away_half_ball_no_upgrade_gate and suggestion in {"0", "1/0"}:
+                    suggestion = "0/1/3"
+                    confidence_score -= 0.5
 
                 if relegation_away_draw:
                     if suggestion == "3":
@@ -1668,6 +2034,8 @@ class PrematchSynthesis:
                     reason += " 客队近期xG保护门禁已生效：保留客胜路径。"
                 if market_reversal_flag:
                     reason += " 市场反转门禁已生效：主胜方向降级并提升客队不败。"
+                if favorite_retreat_not_reversal_gate:
+                    reason += " 退盘不反向门禁已生效：仅降级，不机械反向删除热门胜路径。"
                 if backup_gk_low_score_risk:
                     reason += " 门将缺席+低产环境门禁已生效：降低小比分/零封自信。"
                 if direct_rival_home_pressure:
@@ -1684,6 +2052,18 @@ class PrematchSynthesis:
                     reason += " 强队客场进攻冷却门禁已生效：禁止客胜单挑并保留主胜路径。"
                 if home_form_resistance:
                     reason += " 主队主场韧性保护门禁已生效：主队不败路径上调。"
+                if non_elite_hot_favorite_caution:
+                    reason += " 非 elite 热门禁单门禁已生效：低赔热不能直接单选。"
+                if favorite_conversion_bubble:
+                    reason += " 终结泡沫禁单门禁已生效：高 conversion 不得单挑外推。"
+                if away_euro_fatigue_mild_gate:
+                    reason += " 欧战消耗加权门禁已生效：客场轻盘优势降级。"
+                if away_half_ball_no_upgrade_gate:
+                    reason += " 客让半球未升盘门禁已生效：主队乱战路径已纳入深覆盖。"
+                if brand_price_not_low_enough:
+                    reason += " 品牌强队赔率不够低门禁已生效：强题材但价格未压到预期区间，禁止单选并补深防。"
+                if narrative_strength_cap:
+                    reason += " 题材强度上限门禁已生效：战意/名气不能覆盖伤停与xG反证。"
                 if survival_escape_signal:
                     reason += " 即时逃生战意门禁已生效：上调不败/客胜保护。"
                 if suggestion == "skip":
@@ -1754,6 +2134,7 @@ class PrematchSynthesis:
                     "low_event_home_favorite": low_event_home_fav,
                     "away_recent_xg_protection": away_recent_xg_protect,
                     "market_reversal_gate": market_reversal_flag,
+                    "favorite_retreat_not_reversal_gate": favorite_retreat_not_reversal_gate,
                     "backup_gk_low_score_risk": backup_gk_low_score_risk,
                     "direct_rival_home_pressure": direct_rival_home_pressure,
                     "recent_big_win_noise_gate": recent_big_win_noise,
@@ -1762,6 +2143,12 @@ class PrematchSynthesis:
                     "relegation_away_draw_protection": relegation_away_draw,
                     "away_favorite_attack_cold_gate": away_attack_cold,
                     "home_form_resistance_gate": home_form_resistance,
+                    "non_elite_hot_favorite_caution": non_elite_hot_favorite_caution,
+                    "away_euro_fatigue_mild_favorite_gate": away_euro_fatigue_mild_gate,
+                    "favorite_conversion_bubble_no_single_gate": favorite_conversion_bubble,
+                    "away_half_ball_no_upgrade_home_xg_risk_gate": away_half_ball_no_upgrade_gate,
+                    "brand_favorite_price_not_low_enough_gate": brand_price_not_low_enough,
+                    "narrative_strength_cap_gate": narrative_strength_cap,
                     "survival_escape_signal": survival_escape_signal,
                     "edge_home": edge_home,
                     "edge_away": edge_away,
@@ -2045,6 +2432,36 @@ class PrematchSynthesis:
             f"{_safe_text(row.get('home_team'))} vs {_safe_text(row.get('away_team'))}": row
             for row in matches
         }
+        gate_fields = [
+            "rivalry_flag",
+            "away_favorite_defense_exposure",
+            "low_event_home_favorite",
+            "away_recent_xg_protection",
+            "market_reversal_gate",
+            "favorite_retreat_not_reversal_gate",
+            "backup_gk_low_score_risk",
+            "direct_rival_home_pressure",
+            "recent_big_win_noise_gate",
+            "away_favorite_injury_result_gate",
+            "away_process_edge_over_home_survival",
+            "relegation_away_draw_protection",
+            "away_favorite_attack_cold_gate",
+            "home_form_resistance_gate",
+            "non_elite_hot_favorite_caution",
+            "away_euro_fatigue_mild_favorite_gate",
+            "favorite_conversion_bubble_no_single_gate",
+            "away_half_ball_no_upgrade_home_xg_risk_gate",
+            "brand_favorite_price_not_low_enough_gate",
+            "narrative_strength_cap_gate",
+            "survival_escape_signal",
+            "no_single_pick_gate",
+            "away_elite_conditional_only",
+            "single_pick_eligible",
+            "single_pick_score",
+            "single_pick_rank",
+            "decision_type",
+            "combo_type",
+        ]
         fixed_verdicts: List[Dict[str, Any]] = []
         for item in normalized["match_verdicts"]:
             if not isinstance(item, dict):
@@ -2091,6 +2508,7 @@ class PrematchSynthesis:
                     "edge_away": item.get("edge_away"),
                     "best_edge": item.get("best_edge"),
                     "confidence_score": item.get("confidence_score"),
+                    **{k: item.get(k) for k in gate_fields if k in item},
                 }
             )
 
@@ -2398,6 +2816,11 @@ def main() -> int:
     parser.add_argument("--stdout-only", action="store_true", help="仅打印结果，不落盘文件")
     parser.add_argument("--top5-only", action="store_true", help="仅汇总五大联赛场次（EPL/LaLiga/Bundesliga/SerieA/Ligue1）")
     parser.add_argument("--ops-mode", action="store_true", help="运营模式：在严格结论外提供博弈候选池兜底排序")
+    parser.add_argument(
+        "--include-rejected-caution",
+        action="store_true",
+        help="将 REJECTED prematch 报告作为 HOLD/低置信 CAUTION 记录纳入最终汇总",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir).expanduser() if _safe_text(args.output_dir) else None
@@ -2408,6 +2831,7 @@ def main() -> int:
         stdout_only=args.stdout_only,
         top5_only=args.top5_only,
         ops_mode=args.ops_mode,
+        include_rejected_caution=args.include_rejected_caution,
     )
     summary = runner.run()
     print("[summary]")

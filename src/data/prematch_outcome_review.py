@@ -88,6 +88,42 @@ def _collect_postmatch_result_by_understat_id(issue_dir: Path, issue: str) -> Di
     return out
 
 
+def _collect_postmatch_process_by_understat_id(issue_dir: Path, issue: str) -> Dict[str, Dict[str, Any]]:
+    postmatch_dir = issue_dir / "04_Postmatch_Telemetry"
+    if not postmatch_dir.exists():
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for path in sorted(postmatch_dir.glob(f"{issue}_*_postmatch.md")):
+        m = re.search(rf"{re.escape(issue)}_(\d+)_postmatch\.md$", path.name)
+        if not m:
+            continue
+        understat_id = m.group(1)
+        text = path.read_text(encoding="utf-8")
+        if not text.startswith("---"):
+            continue
+        parts = text.split("---", 2)
+        if len(parts) < 3:
+            continue
+        frontmatter = yaml.safe_load(parts[1]) or {}
+        metrics = frontmatter.get("physical_metrics") or {}
+        home_xg = metrics.get("home_xG")
+        away_xg = metrics.get("away_xG")
+        variance = (frontmatter.get("system_evaluation") or {}).get("variance_flag")
+        try:
+            hxg = float(home_xg)
+            axg = float(away_xg)
+        except Exception:
+            continue
+        out[understat_id] = {
+            "home_xg": hxg,
+            "away_xg": axg,
+            "xg_gap_abs": abs(hxg - axg),
+            "xg_better_side": "3" if hxg > axg else "0" if axg > hxg else "1",
+            "variance_flag": bool(variance),
+        }
+    return out
+
+
 def _collect_manifest_matches(manifest: Dict[str, Any], top5_only: bool) -> Dict[int, Dict[str, Any]]:
     rows: Dict[int, Dict[str, Any]] = {}
     for row in manifest.get("matches") or []:
@@ -205,6 +241,43 @@ def _manifest_pair_lookup(manifest: Dict[str, Any], top5_only: bool) -> Dict[str
     return out
 
 
+def _classify_review_label(
+    suggestion_set: Set[str],
+    result_code: Optional[str],
+    process_payload: Optional[Dict[str, Any]],
+) -> str:
+    if not result_code:
+        return "PENDING"
+    result_hit = result_code in suggestion_set if suggestion_set else False
+    if not process_payload:
+        return "RESULT_HIT_PROCESS_UNKNOWN" if result_hit else "RESULT_MISS_PROCESS_UNKNOWN"
+
+    xg_better = _safe_text(process_payload.get("xg_better_side"))
+    xg_gap_abs = float(process_payload.get("xg_gap_abs") or 0.0)
+    # 过程标签：用 xG 胜负方向 + 差值阈值来刻画 process quality。
+    # New review taxonomy from 0510+0511 lessons:
+    # - HIGH_QUALITY_HIT
+    # - RESULT_HIT_PROCESS_WARNING
+    # - PROTECTED_STRUCTURE_HIT
+    # - CLEAR_MISS
+    # - RESULT_MISS_PROCESS_CLOSE
+    single_pick_like = len(suggestion_set) == 1
+    if result_hit:
+        if single_pick_like and xg_better == result_code and xg_gap_abs >= 0.35:
+            return "HIGH_QUALITY_HIT"
+        if (not single_pick_like) and xg_better == result_code and xg_gap_abs >= 0.35:
+            return "PROTECTED_STRUCTURE_HIT"
+        if xg_better and xg_better != result_code and xg_gap_abs >= 0.35:
+            return "RESULT_HIT_PROCESS_WARNING"
+        if not single_pick_like:
+            return "PROTECTED_STRUCTURE_HIT"
+        return "RESULT_HIT_PROCESS_NEUTRAL"
+
+    if xg_better and xg_better != result_code and xg_gap_abs >= 0.35:
+        return "CLEAR_MISS"
+    return "RESULT_MISS_PROCESS_CLOSE"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prematch 推演赛后回测（命中率 review）")
     parser.add_argument("--issue", required=True)
@@ -243,6 +316,7 @@ def main() -> int:
         if _safe_text(row.get("understat_id"))
     }
     postmatch_results = _collect_postmatch_result_by_understat_id(issue_dir, str(args.issue))
+    postmatch_process = _collect_postmatch_process_by_understat_id(issue_dir, str(args.issue))
     name_lookup = _build_issue_match_lookup(issue_dir)
 
     resolved: List[Dict[str, Any]] = []
@@ -264,6 +338,7 @@ def main() -> int:
             uid = _safe_text((fallback_row or {}).get("understat_id"))
             if uid:
                 result = postmatch_results.get(uid)
+        uid = _safe_text((manifest_row or {}).get("understat_id"))
         suggestion = _safe_text(row.get("suggestion")).lower()
         picks = _suggestion_set(suggestion)
         is_actionable = (
@@ -283,6 +358,7 @@ def main() -> int:
             status = "hit"
         else:
             status = "miss"
+        review_label = _classify_review_label(picks, result, postmatch_process.get(uid))
         resolved.append(
             {
                 "idx": idx,
@@ -292,6 +368,7 @@ def main() -> int:
                 "confidence": row["confidence"],
                 "result": result or "-",
                 "status": status,
+                "review_label": review_label,
                 "candidate_tier": row.get("candidate_tier") or "",
             }
         )
@@ -318,11 +395,11 @@ def main() -> int:
     lines.append(f"- Pending Results: `{pending}`")
     lines.append(f"- Skipped: `{skipped}`")
     lines.append("")
-    lines.append("| # | Match | Suggestion | Confidence | Tier | Result | Status |")
-    lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+    lines.append("| # | Match | Suggestion | Confidence | Tier | Result | Status | ReviewLabel |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
     for row in resolved:
         lines.append(
-            f"| {row.get('idx') or '-'} | {row['match']} | `{row['suggestion']}` | `{row['confidence']}` | `{row['candidate_tier'] or '-'}` | `{row['result']}` | `{row['status']}` |"
+            f"| {row.get('idx') or '-'} | {row['match']} | `{row['suggestion']}` | `{row['confidence']}` | `{row['candidate_tier'] or '-'}` | `{row['result']}` | `{row['status']}` | `{row['review_label']}` |"
         )
 
     lines.append("")
@@ -332,7 +409,7 @@ def main() -> int:
     for row in resolved:
         if row["status"] == "hit":
             cause = "命中"
-            detail = "建议方向覆盖赛果。"
+            detail = f"建议方向覆盖赛果（{row['review_label']}）。"
             action = "保持现有规则。"
         elif row["status"] == "miss":
             if _safe_text(row["confidence"]).lower() == "low":

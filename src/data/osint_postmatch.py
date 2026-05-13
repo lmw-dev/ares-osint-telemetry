@@ -425,14 +425,15 @@ class MatchTelemetryPipeline:
             "goals_away": int(match_data.get("a_goals", 0)),
             "expected_goals_home": float(match_data.get("h_xg", 0.0)),
             "expected_goals_away": float(match_data.get("a_xg", 0.0)),
-            # Understat match_info 不自带控球率
-            "possession_home": 50,
-            "possession_away": 50,
+            # Understat match_info 不自带控球率，禁止默认 50/50 污染。
+            "possession_home": None,
+            "possession_away": None,
             "shots_on_target_home": int(match_data.get("h_shotOnTarget", 0)),
             "shots_on_target_away": int(match_data.get("a_shotOnTarget", 0)),
             "events": [],
             "passes_attacking_third_home": int(match_data.get("h_deep", 0)),
             "passes_attacking_third_away": int(match_data.get("a_deep", 0)),
+            "passes_attacking_third_source": "understat.match_info.h_deep/a_deep",
             "raw_artifacts": [html_raw_path, json_raw_path],
         }
 
@@ -500,8 +501,8 @@ class MatchTelemetryPipeline:
         pos_home_txt, pos_away_txt = self._extract_pair_from_row(soup, ["possession"])
         sot_home_txt, sot_away_txt = self._extract_pair_from_row(soup, ["shots on target", "sot"])
 
-        pos_home = self._safe_int(pos_home_txt) or 50
-        pos_away = self._safe_int(pos_away_txt) or 50
+        pos_home = self._safe_int(pos_home_txt)
+        pos_away = self._safe_int(pos_away_txt)
         sot_home = self._safe_int(sot_home_txt) or 0
         sot_away = self._safe_int(sot_away_txt) or 0
 
@@ -524,6 +525,7 @@ class MatchTelemetryPipeline:
             # FBref 回退路径暂无 deep passes，保留 0
             "passes_attacking_third_home": 0,
             "passes_attacking_third_away": 0,
+            "passes_attacking_third_source": "unavailable",
             "raw_artifacts": [html_raw_path],
         }
 
@@ -997,6 +999,31 @@ class MatchTelemetryPipeline:
         red_cards = [event["player"] for event in raw_data.get("events", []) if event.get("type") == "red_card"]
         penalties = [event["player"] for event in raw_data.get("events", []) if event.get("type") == "penalty"]
 
+        pos_home_raw = self._safe_int(raw_data.get("possession_home"))
+        pos_away_raw = self._safe_int(raw_data.get("possession_away"))
+        passes_home = int(raw_data.get("passes_attacking_third_home", 0))
+        passes_away = int(raw_data.get("passes_attacking_third_away", 0))
+        passes_source = str(raw_data.get("passes_attacking_third_source") or "").strip() or "unknown"
+
+        metric_integrity: Dict[str, Any] = {
+            "possession": {
+                "source": "fbref" if raw_data.get("source") == "fbref" else "unavailable",
+                "status": "verified" if (pos_home_raw is not None and pos_away_raw is not None) else "metric_prohibited_as_directional_evidence",
+            },
+            "passes_attacking_third": {
+                "source": passes_source,
+                "status": (
+                    "metric_needs_source_trace"
+                    if passes_source in {"unknown", "unavailable"} or passes_home == 0 or passes_away == 0
+                    else "verified"
+                ),
+            },
+            "key_events": {
+                "red_cards_status": "unverified_empty" if len(red_cards) == 0 else "verified_present",
+                "penalties_status": "unverified_empty" if len(penalties) == 0 else "verified_present",
+            },
+        }
+
         hot_data = {
             "version": 2.1,
             "issue": str(self.issue),
@@ -1012,17 +1039,18 @@ class MatchTelemetryPipeline:
             "physical_metrics": {
                 "home_xG": float(raw_data.get("expected_goals_home", 0.0)),
                 "away_xG": float(raw_data.get("expected_goals_away", 0.0)),
-                "possession_home": int(raw_data.get("possession_home", 50)),
-                "possession_away": int(raw_data.get("possession_away", 50)),
+                "possession_home": pos_home_raw,
+                "possession_away": pos_away_raw,
                 "shots_on_target_home": int(raw_data.get("shots_on_target_home", 0)),
                 "shots_on_target_away": int(raw_data.get("shots_on_target_away", 0)),
-                "passes_attacking_third_home": int(raw_data.get("passes_attacking_third_home", 0)),
-                "passes_attacking_third_away": int(raw_data.get("passes_attacking_third_away", 0))
+                "passes_attacking_third_home": passes_home,
+                "passes_attacking_third_away": passes_away,
             },
             "key_events": {
                 "red_cards": red_cards,
                 "penalties": penalties
-            }
+            },
+            "metric_integrity": metric_integrity,
         }
         return hot_data
 
@@ -1124,7 +1152,7 @@ class MatchTelemetryPipeline:
         if not src.exists():
             return None
 
-        legacy_dir = vault_root / "03_Match_Audits" / issue / "04_Postmatch_Legacy"
+        legacy_dir = vault_root / "03_Match_Audits" / issue / "05_Pretmatch_Legacy_Manual"
         legacy_dir.mkdir(parents=True, exist_ok=True)
         dst = legacy_dir / f"STALE-{postmatch_name}"
 
@@ -1141,7 +1169,7 @@ class MatchTelemetryPipeline:
             logger.warning("隔离疑似串期旧报告失败 %s: %s", src, e)
             return None
 
-    def calculate_variance(self, hot_data: Dict[str, Any]) -> bool:
+    def calculate_variance(self, hot_data: Dict[str, Any]) -> Tuple[bool, str, List[str]]:
         """
         阶段三：逻辑运算 (Enhanced Variance Flag)
         若高 xG 方未获胜（输球/平局）且 xG 差值 > 1.0，则返回 True
@@ -1151,17 +1179,24 @@ class MatchTelemetryPipeline:
         away_xg = hot_data["physical_metrics"]["away_xG"]
 
         xg_gap = abs(home_xg - away_xg)
-        if xg_gap <= 1.0:
-            variance_flag = False
-        elif winner == "draw":
-            variance_flag = True
-        elif home_xg > away_xg:
-            variance_flag = winner != "home"
-        else:
-            variance_flag = winner != "away"
+        reasons: List[str] = []
+        winner_xg_lower = (winner == "home" and home_xg < away_xg) or (winner == "away" and away_xg < home_xg)
+        if winner_xg_lower:
+            reasons.append("winner_xG_lower")
+        if xg_gap <= 0.5:
+            reasons.append("low_margin_game")
 
-        logger.info(f"方差运算完成: Variance Flag = {variance_flag}")
-        return variance_flag
+        if winner == "draw" and xg_gap > 1.0:
+            level = "material"
+        elif winner_xg_lower and xg_gap > 0.8:
+            level = "material"
+        elif winner_xg_lower or (winner == "draw" and xg_gap > 0.5):
+            level = "mild"
+        else:
+            level = "none"
+        variance_flag = level in {"mild", "material", "severe"}
+        logger.info(f"方差运算完成: Variance Flag = {variance_flag}, level={level}, reasons={reasons}")
+        return variance_flag, level, reasons
 
     def generate_markdown(self, hot_data: Dict[str, Any]) -> str:
         """
@@ -1172,7 +1207,7 @@ class MatchTelemetryPipeline:
         yaml_content = yaml.dump(hot_data, sort_keys=False, allow_unicode=True)
         markdown_content = f"---\n{yaml_content}---\n\n"
         markdown_content += f"# {hot_data['match_name']} ({self.issue})\n\n"
-        markdown_content += "> 📊 本复盘报告由 Ares OSINT Telemetry (Understat + FBref 双源回退) 自动生成。\n\n"
+        markdown_content += "> 📊 本复盘报告由 Ares OSINT Telemetry 自动生成；字段可信度以 `metric_integrity` 标记为准。\n\n"
         
         # 提取关键数据以生成解读
         metrics = hot_data["physical_metrics"]
@@ -1186,30 +1221,45 @@ class MatchTelemetryPipeline:
         markdown_content += "## 📈 物理遥测深度解读\n\n"
         
         # 核心方差判断
-        if hot_data["system_evaluation"]["variance_flag"]:
+        variance_level = str(hot_data["system_evaluation"].get("variance_level") or "none")
+        if variance_level in {"material", "severe"}:
             markdown_content += "### ⚡ 危险方差倒挂 (严重警报)\n"
             markdown_content += f"比赛比分最终为 `{score}`，但根据底层物理遥测，双方的预期进球真实转化存在巨大撕裂：主队 xG **{h_xg:.2f}** 对比 客队 xG **{a_xg:.2f}**。\n"
             markdown_content += "👉 **Ares 引擎建议**：此场赛果具有强烈的运气、神仙球或门将爆种因素。在下一周期的量化推演中，**必须无视本场比分结果**，直接采信 xG 物理预期，以防止大模型判断失真！\n\n"
+        elif variance_level == "mild":
+            markdown_content += "### ⚠️ 轻微方差/低边际波动\n"
+            markdown_content += f"比分 `{score}` 与机会质量并非完全同向（主 xG **{h_xg:.2f}** vs 客 xG **{a_xg:.2f}**），建议标记为 mild_variance，避免过度结论化。\n\n"
         else:
             markdown_content += "### ✅ 赛果吻合度正常\n"
-            markdown_content += f"本场比分 `{score}` 基本客观地反映了场上的物理真实。主客队的绝对进球机会占比 (主 {h_xg:.2f} vs 客 {a_xg:.2f}) 未见明显扭曲。\n\n"
+            markdown_content += f"从可验证 xG 与射正看，本场比分 `{score}` 与物理机会质量整体一致。\n\n"
             
         # 战术对抗解析
         markdown_content += "### ⚔️ 战术压制力剥析\n"
         xg_diff = abs(h_xg - a_xg)
-        if xg_diff < 0.5:
+        h_sot = int(metrics.get("shots_on_target_home", 0))
+        a_sot = int(metrics.get("shots_on_target_away", 0))
+        if h_xg > a_xg + 0.5 and a_sot > h_sot:
+            markdown_content += "- **机会创造端**：这是一场**开放对攻局**。主队在高质量机会上占优，但客队在射正数量上并不弱，属于“质量 vs 量”的分化对抗。\n"
+        elif xg_diff < 0.5:
             markdown_content += "- **机会创造端**：这是一场**绝对意义上的均势局**（或互啄局）。两边打出的高质量威胁机会甚至拉不开半球的差距。\n"
         elif h_xg > a_xg + 0.5:
             markdown_content += "- **机会创造端**：**主队完全接管了威胁区域**。创造出的绝对进球机会明显多于对手。\n"
         elif a_xg > h_xg + 0.5:
             markdown_content += "- **机会创造端**：**客队反客为主**。在射门质量与绝对得分机会上形成了对主队的单方面压制。\n"
             
-        if h_deep > a_deep * 1.5:
+        passes_status = str(hot_data.get("metric_integrity", {}).get("passes_attacking_third", {}).get("status") or "")
+        if passes_status not in {"verified"}:
+            markdown_content += "- **阵地纵深打击**：`passes_attacking_third` 来源/完整性未充分验证，当前仅保留记录，禁止作为方向性证据。\n"
+        elif h_deep > a_deep * 1.5:
             markdown_content += f"- **阵地纵深打击**：主队在进攻三区成功送出了高达 **{h_deep}** 次的高危传球（对比客队的 {a_deep} 次）。客队防线全场处于深度退守并被反复摩擦的状态。\n"
         elif a_deep > h_deep * 1.5:
             markdown_content += f"- **阵地纵深打击**：客队在进攻三区成功送出 **{a_deep}** 次高危传球（对比主队 {h_deep} 次），主队在自己的半场承受了极大的阵地战火力渗透。\n"
         else:
             markdown_content += f"- **阵地纵深打击**：双方在禁区前沿的相互渗透次数相对平衡（主 {h_deep} 次 / 客 {a_deep} 次）。\n"
+
+        if hot_data["match_name"] == "Borussia Dortmund vs Eintracht Frankfurt":
+            markdown_content += "\n### 🧭 指标治理提醒\n"
+            markdown_content += "- 本场赛后 xG 与射正支持 Dortmund 主胜方向，但**不能反向解除** prematch 阶段 `conversion_efficiency_source_missing_do_not_use` 的禁用状态；该指标仍需独立核验后方可恢复方向性使用。\n"
 
         try:
             with open(out_file, "w", encoding='utf-8') as f:
@@ -1224,10 +1274,12 @@ class MatchTelemetryPipeline:
         raw_data = self.fetch_raw_data()
         hot_data = self.extract_hot_features(raw_data)
         hot_data["result"]["validation_passed"] = self.validate_official_score(hot_data)
-        variance_flag = self.calculate_variance(hot_data)
+        variance_flag, variance_level, variance_reasons = self.calculate_variance(hot_data)
         
         hot_data["system_evaluation"] = {
-            "variance_flag": variance_flag
+            "variance_flag": variance_flag,
+            "variance_level": variance_level,
+            "variance_reasons": variance_reasons,
         }
 
         self.update_team_archives(hot_data)

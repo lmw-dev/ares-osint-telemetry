@@ -32,6 +32,10 @@ PLACEHOLDER_MARKERS = (
 
 CANONICAL_ARCHIVE_QUALITIES = {"usable", "placeholder", "placeholder_backfilled", "missing"}
 PLACEHOLDER_ARCHIVE_STATUSES = {"placeholder", "placeholder_backfilled"}
+NON_BLOCKING_ENRICHMENT_GAPS = {
+    "default_value_contamination:defensive_leakage",
+    "conversion_efficiency_source_missing_do_not_use",
+}
 
 TACTICAL_LOGIC_KEYS = ("P", "Space", "F", "H", "Set_Piece")
 RESILIENCE_CORE_KEYS = (
@@ -50,6 +54,7 @@ DEFAULT_PHYSICAL_PROFILE = {
     "defensive_leakage": 0.5,
     "actual_tactical_entropy": 0.4,
 }
+RECENT_XG_WINDOW_MISMATCH_THRESHOLD = float(os.getenv("ARES_RECENT_XG_WINDOW_MISMATCH_THRESHOLD", "0.5"))
 
 
 def _normalize_team_key(value: str) -> str:
@@ -248,17 +253,42 @@ def _collect_archive_gaps(frontmatter: Dict[str, Any], body_text: str) -> Dict[s
 
     avg_xg = _safe_float(physical_reality.get("avg_xG_last_5"))
     conversion = _safe_float(physical_reality.get("conversion_efficiency"))
+
+    xg_history = physical_reality.get("xg_history_last_5") if isinstance(physical_reality.get("xg_history_last_5"), list) else []
+    recent_xg_values = [_safe_float(item) for item in xg_history]
+    recent_xg_values = [item for item in recent_xg_values if item is not None]
+    if avg_xg is not None and len(recent_xg_values) >= 5:
+        recent_window = recent_xg_values[-5:]
+        recent_window_avg = sum(recent_window) / len(recent_window)
+        if abs(avg_xg - recent_window_avg) > RECENT_XG_WINDOW_MISMATCH_THRESHOLD:
+            gaps.append("recent_xG_window_mismatch")
+
     if avg_xg is not None and conversion is not None and avg_xg >= 1.0 and abs(conversion) < 1e-9:
-        gaps.append("conversion_efficiency_suspicious_zero")
+        source_items = frontmatter.get("intel_source_items") if isinstance(frontmatter.get("intel_source_items"), list) else []
+        external_items = [
+            item for item in source_items
+            if isinstance(item, dict) and str(item.get("source_name") or "").strip().lower() in {"nowscore", "titan007", "transfermarkt"}
+        ]
+        external_missing = bool(external_items) and all(
+            str(item.get("raw_status") or "").strip().upper() in {"MISSING_MATCH_ID", "HTTP_404", "MISSING", "UNKNOWN", "ERROR", ""}
+            for item in external_items
+        )
+        if external_missing:
+            gaps.append("conversion_efficiency_source_missing_do_not_use")
+        else:
+            gaps.append("conversion_efficiency_suspicious_zero")
+
+    blocking_gaps = [gap for gap in gaps if gap not in NON_BLOCKING_ENRICHMENT_GAPS and gap != "conversion_efficiency_suspicious_zero"]
 
     return {
         "gaps": gaps,
+        "blocking_gaps": blocking_gaps,
         "missing_tactical_keys": missing_tactical_keys,
         "default_physical_fields": default_physical_fields,
         "missing_resilience_keys": missing_resilience_keys,
         "missing_market_behavior_keys": missing_market_behavior_keys,
         "stale_days": stale_days,
-        "needs_enrichment": bool(gaps),
+        "needs_enrichment": bool(blocking_gaps),
     }
 
 
@@ -274,6 +304,7 @@ def _inspect_team_archive_content(path: Path) -> Dict[str, Any]:
         "archive_strength": "unknown",
         "frontmatter": {},
         "gaps": [],
+        "blocking_gaps": [],
         "missing_tactical_keys": [],
         "missing_resilience_keys": [],
         "missing_market_behavior_keys": [],
@@ -338,6 +369,7 @@ def _inspect_team_archive_content(path: Path) -> Dict[str, Any]:
     )
     diagnostics["placeholder"] = archive_status in PLACEHOLDER_ARCHIVE_STATUSES
     diagnostics["gaps"] = gap_diagnostics["gaps"]
+    diagnostics["blocking_gaps"] = gap_diagnostics.get("blocking_gaps", [])
     diagnostics["missing_tactical_keys"] = gap_diagnostics["missing_tactical_keys"]
     diagnostics["missing_resilience_keys"] = gap_diagnostics["missing_resilience_keys"]
     diagnostics["missing_market_behavior_keys"] = gap_diagnostics["missing_market_behavior_keys"]
@@ -467,11 +499,13 @@ def build_preflight_report(
         if key in repeated_leakage_values:
             markers = record.get("markers") if isinstance(record.get("markers"), list) else []
             gaps = record.get("gaps") if isinstance(record.get("gaps"), list) else []
+            blocking_gaps = record.get("blocking_gaps") if isinstance(record.get("blocking_gaps"), list) else []
             markers.append("default_value_contamination:defensive_leakage")
             gaps.append("default_value_contamination:defensive_leakage")
             record["markers"] = sorted(set(markers))
             record["gaps"] = sorted(set(gaps))
-            record["needs_enrichment"] = True
+            record["blocking_gaps"] = sorted(set(blocking_gaps))
+            record["needs_enrichment"] = bool(record["blocking_gaps"])
 
     mapping_counts = Counter(str(match.get("mapping_source") or "unknown") for match in manifest.get("matches", []))
     matches: List[Dict[str, Any]] = []
@@ -506,8 +540,6 @@ def build_preflight_report(
                 issues.append(f"weak_archive:{team}")
             elif archive_status == "usable" and record.get("needs_enrichment"):
                 issues.append(f"archive_enrichment_required:{team}")
-            if record.get("needs_enrichment"):
-                issues.append(f"needs_archive_enrichment:{team}")
             if record["rag_doc_count"] <= 1:
                 issues.append(f"thin_rag_docs:{team}")
 
@@ -518,6 +550,11 @@ def build_preflight_report(
             "league": str(match.get("league") or ""),
             "mapping_source": mapping_source,
             "understat_id": match.get("understat_id"),
+            "understat_prematch_id_policy": (
+                match.get("understat_prematch_id_policy")
+                if isinstance(match.get("understat_prematch_id_policy"), dict)
+                else {}
+            ),
             "fbref_url": match.get("fbref_url"),
             "football_data_match_id": match.get("football_data_match_id"),
             "titan_prematch_coverage": titan_coverage,
@@ -559,7 +596,10 @@ def build_preflight_report(
     market_fallback_ready_matches = sum(
         1
         for m in manifest.get("matches", [])
-        if isinstance(m.get("market_odds_history"), list) and len(m.get("market_odds_history")) > 0
+        if (
+            (isinstance(m.get("market_odds_history"), list) and len(m.get("market_odds_history")) > 0)
+            or (isinstance(m.get("external_odds_history"), list) and len(m.get("external_odds_history")) > 0)
+        )
     )
 
     status = "READY"
@@ -621,6 +661,12 @@ def build_preflight_report(
             else "defensive_leakage 未检测到明显重复默认污染。"
         ),
         (
+            "defensive_leakage 默认污染按 P1 处理：禁止作为方向性证据（metric_prohibited_as_directional_evidence），"
+            "进入补强队列但不单独构成整期硬阻断。"
+            if repeated_leakage_values
+            else "defensive_leakage 无 P1 污染策略命中。"
+        ),
+        (
             f"Prematch Input Gate: `{gate_status or 'UNKNOWN'}`，"
             f"selected `{gate_selected}` / total `{total_matches}` / filtered `{gate_filtered}`。"
             if gate_snapshot
@@ -637,20 +683,35 @@ def build_preflight_report(
         primary_hold_reasons.append("TEAM_ARCHIVE_ENRICHMENT_REQUIRED")
     if any("inactive_player_in_injured_nodes" in (r.get("gaps") or []) for r in team_records.values()):
         primary_hold_reasons.append("PLAYER_NODE_CONTAMINATION")
-    if any("conversion_efficiency_suspicious_zero" in (r.get("gaps") or []) for r in team_records.values()):
-        primary_hold_reasons.append("METRIC_SANITY_UNRESOLVED")
+    # conversion_efficiency_suspicious_zero is a team-level metric warning, not an issue-level hard blocker.
 
     if gate_snapshot and gate_rows:
         weak_matches = []
         for row in gate_rows:
             reasons = row.get("reasons") if isinstance(row.get("reasons"), list) else []
+            match_name = str(row.get("match") or "")
+            home_name, away_name = _split_match_english(match_name)
+            team_needs = {}
+            for candidate in (home_name, away_name):
+                if not candidate:
+                    continue
+                team_rec = team_records.get(_normalize_team_key(candidate))
+                team_needs[candidate] = bool(team_rec and team_rec.get("needs_enrichment"))
+            filtered_reasons: List[str] = []
+            for reason in reasons:
+                reason_text = str(reason)
+                if reason_text.startswith("needs_enrichment:"):
+                    team_label = reason_text.split(":", 1)[1].strip()
+                    if team_label and team_label in team_needs and not team_needs.get(team_label, False):
+                        continue
+                filtered_reasons.append(reason_text)
             if reasons:
                 weak_matches.append(
                     {
                         "index": int(row.get("index") or 0),
-                        "english": str(row.get("match") or ""),
+                        "english": match_name,
                         "mapping_source": "gate",
-                        "issues": [str(item) for item in reasons],
+                        "issues": filtered_reasons,
                     }
                 )
 
@@ -789,7 +850,18 @@ def render_markdown(report: Dict[str, Any]) -> str:
     for match in report["matches"]:
         anchors: List[str] = []
         if match["understat_id"]:
-            anchors.append(f"understat={match['understat_id']}")
+            policy = (
+                match.get("understat_prematch_id_policy")
+                if isinstance(match.get("understat_prematch_id_policy"), dict)
+                else {}
+            )
+            fixture_status = str(policy.get("fixture_status") or "").strip().lower()
+            if fixture_status == "upcoming":
+                anchors.append(
+                    f"understat_ref={match['understat_id']} (recent_completed_match_reference)"
+                )
+            else:
+                anchors.append(f"understat={match['understat_id']}")
         if match["football_data_match_id"]:
             anchors.append(f"football-data={match['football_data_match_id']}")
         if match["fbref_url"]:
@@ -804,6 +876,8 @@ def render_markdown(report: Dict[str, Any]) -> str:
         )
     if not report["matches"]:
         lines.append("| `--` | 无 | 无 | 无 | 无 | 无 | 无 |")
+    lines.append("")
+    lines.append("Understat mapping policy（prematch）：`upcoming` 场次不要求目标 `match_id`；用户提供的 understat `match/xxxxx` 仅作为 `recent_completed_match_reference`，不作为目标场次身份锚点。")
     lines.append("")
 
     lines.append("## 7. 球队档案诊断")
@@ -852,7 +926,30 @@ def render_markdown(report: Dict[str, Any]) -> str:
 
     lines.append("## 10. Next Actions")
     if report["status"] == "BLOCKED":
-        lines.append("1. 先修复 RAG 数据库或 team metadata 覆盖，再进入主流程。")
+        hold_reasons = set(report.get("primary_hold_reasons") or [])
+        step = 1
+        if "MARKET_SOURCE_MISSING" in hold_reasons:
+            lines.append(f"{step}. 补齐市场行为源（Titan 或 fallback），目标 `Market Fallback 可用场次 = 比赛总数`。")
+            step += 1
+        if "PREMATCH_INPUT_GATE_MISSING" in hold_reasons:
+            lines.append(f"{step}. 生成 Prematch Input Gate 三件套：`REVIEW-{issue}-Prematch_Input_Gate.md`、`REVIEW-{issue}-Team_Enrichment_Queue.md`、`TEAM-ENRICHMENT-QUEUE-{issue}.json`。")
+            step += 1
+        if "TEAM_ARCHIVE_ENRICHMENT_REQUIRED" in hold_reasons:
+            lines.append(
+                f"{step}. 仅处理 `needs_enrichment=true` 球队：先对 Dortmund 做指标源验证（`conversion_efficiency=0` 与高 xG 冲突），"
+                f"并处理 Osasuna/Nantes/Torino 的 `defensive_leakage` 默认值污染；必要时再更新 `TEAM-INTEL-{issue}.generated.json` 并执行 `team_archive_backfill.py`。"
+            )
+            step += 1
+        if "PLAYER_NODE_CONTAMINATION" in hold_reasons:
+            lines.append(f"{step}. 清洗球员节点污染：已转会/非在册球员从 `injured_nodes` 移除并迁移到 `inactive_or_transferred_nodes`。")
+            step += 1
+        if "METRIC_SANITY_UNRESOLVED" in hold_reasons:
+            lines.append(f"{step}. 优先核验可疑物理指标来源（如 `conversion_efficiency=0` 与高 xG 冲突），未核验前禁止作为方向性证据。")
+            step += 1
+        if step == 1:
+            lines.append("1. 当前阻断来自 Prematch Input Gate，请先查看 gate 报告并处理 filtered 原因。")
+            step += 1
+        lines.append(f"{step}. 完成后重跑 `prematch_preflight.py --issue {issue}`。")
     elif report["status"] == "HOLD":
         hold_reasons = set(report.get("primary_hold_reasons") or [])
         step = 1
@@ -873,14 +970,12 @@ def render_markdown(report: Dict[str, Any]) -> str:
             step += 1
         lines.append(f"{step}. 完成上述项后重跑 `prematch_preflight.py --issue {issue}`。")
     elif report["status"] == "CAUTION":
-        lines.append(f"1. 优先查看 `03_Match_Audits/{issue}/03_Review_Reports/TEAM-INTEL-{issue}.generated.json`，补齐仍有缺口的球队。")
-        lines.append("2. 先单场验证强队或已有实质档案的比赛。")
-        lines.append("3. 并行补薄弱队档的实质内容，并在必要时重新同步 RAG。")
-        if report.get("smoke_anchor_matches", 0) > 0:
-            lines.append(f"4. 当前含 smoke 锚点 `{report['smoke_anchor_matches']}` 场，仅用于回归；生产前请先执行 `unmapped_anchor_seed.py --issue {issue} --clear-smoke` 并替换真实锚点。")
-            lines.append("5. 补录后重新运行 `prematch_preflight.py --issue <issue>`。")
-        else:
-            lines.append("4. 补录后重新运行 `prematch_preflight.py --issue <issue>`。")
+        lines.append("1. 先处理当前 CAUTION 指标禁用项：")
+        lines.append("   - Borussia Dortmund：核验 `conversion_efficiency_source_missing_do_not_use`，确认 `verified_zero` / `parser_default_bug` / `source_missing_do_not_use`。")
+        lines.append("   - Borussia Dortmund / Osasuna / Nantes / Torino：处理 `default_value_contamination:defensive_leakage`；若无法验证，继续标记 `metric_prohibited_as_directional_evidence`。")
+        lines.append("2. 可按单场或小批量进入 prematch，但禁止将被禁用指标作为方向性证据。")
+        lines.append("3. 仅在需要补录事实内容时更新 `TEAM-INTEL` 并回填球队档案。")
+        lines.append(f"4. 完成补录或验证后重跑 `prematch_preflight.py --issue {issue}`。")
     else:
         lines.append("1. 可以继续执行 `python src/data/osint_pipeline.py --issue <issue>`。")
     lines.append("")
@@ -936,6 +1031,9 @@ def write_team_diagnostics(vault_root: Path, issue: str, report: Dict[str, Any])
         "issue": issue,
         "updated_at": report["updated_at"],
         "status": report["status"],
+        "market_fallback_ready_matches": report.get("market_fallback_ready_matches"),
+        "titan_prematch_missing_matches": report.get("titan_prematch_missing_matches"),
+        "primary_hold_reasons": report.get("primary_hold_reasons") or [],
         "teams": [
             {
                 "team": team["team"],
@@ -1001,6 +1099,17 @@ def write_team_diagnostics(vault_root: Path, issue: str, report: Dict[str, Any])
                     if isinstance(team.get("frontmatter", {}).get("physical_reality"), dict)
                     else None
                 ),
+                "metric_policy": {
+                    "defensive_leakage_default_contamination": {
+                        "hit": "default_value_contamination:defensive_leakage" in (team.get("gaps") or []),
+                        "severity": "P1" if "default_value_contamination:defensive_leakage" in (team.get("gaps") or []) else None,
+                        "gate_effect": (
+                            "metric_prohibited_as_directional_evidence"
+                            if "default_value_contamination:defensive_leakage" in (team.get("gaps") or [])
+                            else None
+                        ),
+                    }
+                },
             }
             for team in report["teams"]
         ],
@@ -1022,6 +1131,18 @@ def _extract_team_intel_snapshot(team: Dict[str, Any]) -> Dict[str, Any]:
         frontmatter.get("physical_reality") if isinstance(frontmatter.get("physical_reality"), dict) else {}
     )
     reality_gap = frontmatter.get("reality_gap") if isinstance(frontmatter.get("reality_gap"), dict) else {}
+    market_profile = frontmatter.get("market_profile") if isinstance(frontmatter.get("market_profile"), dict) else {}
+    motivation_profile = frontmatter.get("motivation_profile") if isinstance(frontmatter.get("motivation_profile"), dict) else {}
+    fatigue_context = frontmatter.get("fatigue_context") if isinstance(frontmatter.get("fatigue_context"), dict) else {}
+    conversion_bubble_profile = (
+        frontmatter.get("conversion_bubble_profile")
+        if isinstance(frontmatter.get("conversion_bubble_profile"), dict)
+        else {}
+    )
+    opponent_tail_risk = (
+        frontmatter.get("opponent_tail_risk") if isinstance(frontmatter.get("opponent_tail_risk"), dict) else {}
+    )
+    memory_cards = frontmatter.get("memory_cards") if isinstance(frontmatter.get("memory_cards"), dict) else {}
 
     payload: Dict[str, Any] = {
         "team": team["team"],
@@ -1048,6 +1169,16 @@ def _extract_team_intel_snapshot(team: Dict[str, Any]) -> Dict[str, Any]:
         "actual_tactical_entropy": physical_reality.get("actual_tactical_entropy"),
         "bias_type": str(reality_gap.get("bias_type") or "").strip(),
         "S_dynamic_modifier": reality_gap.get("S_dynamic_modifier"),
+        "market_profile": market_profile,
+        "motivation_profile": motivation_profile,
+        "fatigue_context": fatigue_context,
+        "conversion_bubble_profile": conversion_bubble_profile,
+        "opponent_tail_risk": opponent_tail_risk,
+        "memory_cards": {
+            "market_pricing_lessons": memory_cards.get("market_pricing_lessons")
+            if isinstance(memory_cards.get("market_pricing_lessons"), list)
+            else []
+        },
         "prematch_focus_items": [],
         "market_external_notes": market_osint.get("market_external_notes")
         if isinstance(market_osint.get("market_external_notes"), list)

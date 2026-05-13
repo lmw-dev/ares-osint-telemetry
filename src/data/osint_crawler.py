@@ -679,6 +679,53 @@ class AresOsintCrawler:
                 continue
         return None
 
+    def _infer_understat_prematch_policy(
+        self,
+        *,
+        mapped_match_time: Optional[str],
+        understat_id: Optional[Any],
+        manual_anchor_applied: bool,
+    ) -> Dict[str, Any]:
+        target_dt = self._parse_datetime(str(mapped_match_time or ""))
+        now_dt = datetime.utcnow()
+        fixture_status = "unknown"
+        if target_dt:
+            fixture_status = "upcoming" if target_dt >= now_dt else "finished_or_live"
+
+        reference_links: List[str] = []
+        if manual_anchor_applied and isinstance(understat_id, str) and understat_id.isdigit():
+            reference_links.append(f"https://understat.com/match/{understat_id}")
+
+        if fixture_status == "upcoming":
+            return {
+                "fixture_status": "upcoming",
+                "understat_target_match_id_required": False,
+                "target_match_id_required": False,
+                "understat_match_id_status": "pending_until_postmatch",
+                "blocker": False,
+                "user_supplied_match_ids_role": (
+                    "recent_completed_match_reference" if reference_links else "not_provided"
+                ),
+                "user_supplied_match_links": reference_links,
+                "policy_note": (
+                    "Understat upcoming fixture does not require a target match id before kickoff; "
+                    "user-supplied understat match links are treated as completed-match references only."
+                ),
+            }
+
+        return {
+            "fixture_status": fixture_status,
+            "understat_target_match_id_required": True,
+            "target_match_id_required": True,
+            "understat_match_id_status": "available_or_expected",
+            "blocker": False,
+            "user_supplied_match_ids_role": (
+                "recent_completed_match_reference" if reference_links else "not_provided"
+            ),
+            "user_supplied_match_links": reference_links,
+            "policy_note": "Understat target match id is expected only once fixture is completed.",
+        }
+
     def _extract_anchor_time(self, existing_match: dict, default_dt: datetime) -> datetime:
         if not existing_match:
             return default_dt
@@ -1706,6 +1753,11 @@ class AresOsintCrawler:
                     existing_match["manual_anchor_mode"] = None
                     existing_match["manual_anchor_notes"] = None
                     existing_match["manual_anchor_source"] = None
+                existing_match["understat_prematch_id_policy"] = self._infer_understat_prematch_policy(
+                    mapped_match_time=mapped_match_time,
+                    understat_id=found_id,
+                    manual_anchor_applied=manual_anchor_applied,
+                )
                 if "market_odds_history" not in existing_match:
                     existing_match["market_odds_history"] = []
                 existing_match["match_context_flags"] = self._merge_with_defaults(
@@ -1794,6 +1846,11 @@ class AresOsintCrawler:
                     "manual_anchor_mode": manual_anchor_mode,
                     "manual_anchor_notes": manual_anchor_notes,
                     "manual_anchor_source": self._manual_anchor_source_path if manual_anchor_applied else None,
+                    "understat_prematch_id_policy": self._infer_understat_prematch_policy(
+                        mapped_match_time=mapped_match_time,
+                        understat_id=found_id,
+                        manual_anchor_applied=manual_anchor_applied,
+                    ),
                     "match_context_flags": self._build_default_match_context_flags(),
                     "market_behavior": self._build_default_market_behavior(),
                     "market_odds_history": [market_snapshot],
@@ -1945,6 +2002,28 @@ class AresOsintCrawler:
                 understat_id=understat_id,
                 cache=cn_cache,
             )
+            manual_anchor_applied = False
+            manual_anchor_mode = None
+            manual_anchor_notes = None
+            override = self._manual_anchor_overrides["by_index"].get(i)
+            if not override:
+                override_key = self._normalize_match_english(f"{home} vs {away}")
+                override = self._manual_anchor_overrides["by_english"].get(override_key)
+            if isinstance(override, dict):
+                manual_cn_match_id = str(override.get("cn_match_id") or "").strip()
+                if manual_cn_match_id.isdigit():
+                    cn_match_id = manual_cn_match_id
+                    cn_match_id_source = "manual_anchor_cn_match_id"
+                    manual_anchor_applied = True
+                    manual_anchor_mode = self._infer_anchor_mode(override)
+                    manual_anchor_notes = str(override.get("notes") or "").strip() or None
+                    logger.info(
+                        "[Date 模式][%s] 应用手工 cn_match_id 覆盖: %s vs %s -> %s",
+                        i,
+                        home,
+                        away,
+                        manual_cn_match_id,
+                    )
             external_odds_snapshot = self._enrich_external_odds_snapshot(
                 home_en=home,
                 away_en=away,
@@ -1971,10 +2050,15 @@ class AresOsintCrawler:
                     "football_data_competition": football_data_competition,
                     "mapping_source": "football-data" if self.date_source == "football-data" else "understat",
                     "league": match.get("league"),
-                    "manual_anchor_applied": False,
-                    "manual_anchor_mode": None,
-                    "manual_anchor_notes": None,
-                    "manual_anchor_source": None,
+                    "manual_anchor_applied": bool(manual_anchor_applied),
+                    "manual_anchor_mode": manual_anchor_mode,
+                    "manual_anchor_notes": manual_anchor_notes,
+                    "manual_anchor_source": self._manual_anchor_source_path if manual_anchor_applied else None,
+                    "understat_prematch_id_policy": self._infer_understat_prematch_policy(
+                        mapped_match_time=mapped_match_time,
+                        understat_id=understat_id,
+                        manual_anchor_applied=manual_anchor_applied,
+                    ),
                     "match_context_flags": self._build_default_match_context_flags(),
                     "market_behavior": self._build_default_market_behavior(),
                     "market_odds_history": [],

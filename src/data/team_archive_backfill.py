@@ -336,6 +336,99 @@ def _normalize_intel_payload(payload: Any) -> Dict[str, Any]:
                 normalized_market[key] = value
         if normalized_market:
             normalized["market_behavior_core"] = normalized_market
+
+    market_profile = payload.get("market_profile")
+    if isinstance(market_profile, dict):
+        normalized_market_profile: Dict[str, Any] = {}
+        brand = str(market_profile.get("brand_power") or "").strip().lower()
+        if brand:
+            normalized_market_profile["brand_power"] = brand
+        heat = str(market_profile.get("public_heat") or "").strip().lower()
+        if heat:
+            normalized_market_profile["public_heat"] = heat
+        anchor = market_profile.get("expected_price_anchor")
+        if isinstance(anchor, dict):
+            normalized_anchor: Dict[str, Any] = {}
+            for k in ("home_vs_mid_table", "home_vs_defensive_mid_table"):
+                v = str(anchor.get(k) or "").strip()
+                if v:
+                    normalized_anchor[k] = v
+            if normalized_anchor:
+                normalized_market_profile["expected_price_anchor"] = normalized_anchor
+        if normalized_market_profile:
+            normalized["market_profile"] = normalized_market_profile
+
+    motivation_profile = payload.get("motivation_profile")
+    if isinstance(motivation_profile, dict):
+        normalized_motivation: Dict[str, Any] = {}
+        m_types = _normalize_string_list(motivation_profile.get("type"))
+        if m_types:
+            normalized_motivation["type"] = m_types
+        intensity = _normalize_float(motivation_profile.get("intensity"))
+        if intensity is not None:
+            normalized_motivation["intensity"] = int(intensity)
+        result_need = motivation_profile.get("result_need")
+        if isinstance(result_need, dict):
+            normalized_need: Dict[str, int] = {}
+            for k in ("win_need", "draw_value", "loss_tolerance"):
+                v = _normalize_float(result_need.get(k))
+                if v is not None:
+                    normalized_need[k] = int(v)
+            if normalized_need:
+                normalized_motivation["result_need"] = normalized_need
+        if normalized_motivation:
+            normalized["motivation_profile"] = normalized_motivation
+
+    fatigue_context = payload.get("fatigue_context")
+    if isinstance(fatigue_context, dict):
+        normalized_fatigue: Dict[str, Any] = {}
+        if "played_midweek" in fatigue_context:
+            normalized_fatigue["played_midweek"] = bool(fatigue_context.get("played_midweek"))
+        for k in ("competition", "travel_burden", "emotional_result", "next_priority"):
+            v = str(fatigue_context.get(k) or "").strip()
+            if v:
+                normalized_fatigue[k] = v
+        days_rest = _normalize_float(fatigue_context.get("days_rest"))
+        if days_rest is not None:
+            normalized_fatigue["days_rest"] = int(days_rest)
+        if normalized_fatigue:
+            normalized["fatigue_context"] = normalized_fatigue
+
+    conversion_bubble_profile = payload.get("conversion_bubble_profile")
+    if isinstance(conversion_bubble_profile, dict):
+        normalized_bubble: Dict[str, Any] = {}
+        for k in ("conversion_efficiency_last_5", "goals_minus_xG_last_5"):
+            v = _normalize_float(conversion_bubble_profile.get(k))
+            if v is not None:
+                normalized_bubble[k] = v
+        bubble_status = str(conversion_bubble_profile.get("bubble_status") or "").strip().lower()
+        if bubble_status:
+            normalized_bubble["bubble_status"] = bubble_status
+        if normalized_bubble:
+            normalized["conversion_bubble_profile"] = normalized_bubble
+
+    opponent_tail_risk = payload.get("opponent_tail_risk")
+    if isinstance(opponent_tail_risk, dict):
+        normalized_tail: Dict[str, Any] = {}
+        for k in (
+            "defensive_low_block_capacity",
+            "counterattack_path",
+            "set_piece_threat",
+            "low_margin_upset_capacity",
+        ):
+            v = _normalize_float(opponent_tail_risk.get(k))
+            if v is not None:
+                normalized_tail[k] = int(v)
+        if normalized_tail:
+            normalized["opponent_tail_risk"] = normalized_tail
+
+    memory_cards = payload.get("memory_cards")
+    if isinstance(memory_cards, dict):
+        lessons = memory_cards.get("market_pricing_lessons")
+        if isinstance(lessons, list):
+            normalized_lessons = _normalize_string_list(lessons)
+            if normalized_lessons:
+                normalized["memory_cards"] = {"market_pricing_lessons": normalized_lessons}
     return normalized
 
 
@@ -655,12 +748,21 @@ def _merge_intel_into_frontmatter(frontmatter: Dict[str, Any], intel: Dict[str, 
         merged_frontmatter["intel_source_items"] = intel.get("source_items", [])
     if isinstance(intel.get("absences"), list):
         merged_frontmatter["absences"] = intel.get("absences", [])
+        inactive_keywords = ("transferred", "inactive", "loaned out", "retired", "转会", "不再")
         injured_nodes = [
             str(item.get("player")).strip()
             for item in intel.get("absences", [])
             if isinstance(item, dict)
             and str(item.get("player") or "").strip()
             and str(item.get("status") or "").upper() in {"OUT", "DOUBTFUL", "RETURNING"}
+            and not any(k in str(item.get("player") or "").lower() for k in inactive_keywords)
+        ]
+        inactive_or_transferred_nodes = [
+            str(item.get("player")).strip()
+            for item in intel.get("absences", [])
+            if isinstance(item, dict)
+            and str(item.get("player") or "").strip()
+            and any(k in str(item.get("player") or "").lower() for k in inactive_keywords)
         ]
         suspended_nodes = [
             str(item.get("player")).strip()
@@ -671,6 +773,8 @@ def _merge_intel_into_frontmatter(frontmatter: Dict[str, Any], intel: Dict[str, 
         ]
         merged_frontmatter["injured_nodes"] = sorted(set(injured_nodes))
         merged_frontmatter["suspended_nodes"] = sorted(set(suspended_nodes))
+        if inactive_or_transferred_nodes:
+            merged_frontmatter["inactive_or_transferred_nodes"] = sorted(set(inactive_or_transferred_nodes))
     if isinstance(intel.get("lineup_risk_profile"), dict):
         merged_frontmatter["lineup_risk_profile"] = intel.get("lineup_risk_profile", {})
     if isinstance(intel.get("last_match_lineup_snapshot"), dict):
@@ -700,6 +804,105 @@ def _merge_intel_into_frontmatter(frontmatter: Dict[str, Any], intel: Dict[str, 
             if value is not None:
                 market_behavior_core[key] = value
     merged_frontmatter["market_behavior_core"] = market_behavior_core
+
+    market_profile = dict(merged_frontmatter.get("market_profile") or {})
+    market_profile = merge_frontmatter_defaults(market_profile, DEFAULT_FRONTMATTER["market_profile"])
+    if isinstance(intel.get("market_profile"), dict):
+        mp = intel.get("market_profile") or {}
+        brand = str(mp.get("brand_power") or "").strip().lower()
+        if brand:
+            market_profile["brand_power"] = brand
+        heat = str(mp.get("public_heat") or "").strip().lower()
+        if heat:
+            market_profile["public_heat"] = heat
+        anchor = mp.get("expected_price_anchor") if isinstance(mp.get("expected_price_anchor"), dict) else {}
+        if anchor:
+            existing_anchor = (
+                dict(market_profile.get("expected_price_anchor"))
+                if isinstance(market_profile.get("expected_price_anchor"), dict)
+                else {}
+            )
+            market_profile["expected_price_anchor"] = merge_frontmatter_defaults(existing_anchor, anchor)
+    merged_frontmatter["market_profile"] = market_profile
+
+    motivation_profile = dict(merged_frontmatter.get("motivation_profile") or {})
+    motivation_profile = merge_frontmatter_defaults(motivation_profile, DEFAULT_FRONTMATTER["motivation_profile"])
+    if isinstance(intel.get("motivation_profile"), dict):
+        mp = intel.get("motivation_profile") or {}
+        if isinstance(mp.get("type"), list):
+            motivation_profile["type"] = [str(x).strip() for x in mp.get("type", []) if str(x).strip()]
+        intensity = _normalize_float(mp.get("intensity"))
+        if intensity is not None:
+            motivation_profile["intensity"] = int(intensity)
+        if isinstance(mp.get("result_need"), dict):
+            existing_need = (
+                dict(motivation_profile.get("result_need"))
+                if isinstance(motivation_profile.get("result_need"), dict)
+                else {}
+            )
+            for k in ("win_need", "draw_value", "loss_tolerance"):
+                v = _normalize_float((mp.get("result_need") or {}).get(k))
+                if v is not None:
+                    existing_need[k] = int(v)
+            motivation_profile["result_need"] = merge_frontmatter_defaults(
+                existing_need, DEFAULT_FRONTMATTER["motivation_profile"]["result_need"]
+            )
+    merged_frontmatter["motivation_profile"] = motivation_profile
+
+    fatigue_context = dict(merged_frontmatter.get("fatigue_context") or {})
+    fatigue_context = merge_frontmatter_defaults(fatigue_context, DEFAULT_FRONTMATTER["fatigue_context"])
+    if isinstance(intel.get("fatigue_context"), dict):
+        fc = intel.get("fatigue_context") or {}
+        if "played_midweek" in fc:
+            fatigue_context["played_midweek"] = bool(fc.get("played_midweek"))
+        for k in ("competition", "travel_burden", "emotional_result", "next_priority"):
+            v = str(fc.get(k) or "").strip()
+            if v:
+                fatigue_context[k] = v
+        days_rest = _normalize_float(fc.get("days_rest"))
+        if days_rest is not None:
+            fatigue_context["days_rest"] = int(days_rest)
+    merged_frontmatter["fatigue_context"] = fatigue_context
+
+    conversion_bubble_profile = dict(merged_frontmatter.get("conversion_bubble_profile") or {})
+    conversion_bubble_profile = merge_frontmatter_defaults(
+        conversion_bubble_profile, DEFAULT_FRONTMATTER["conversion_bubble_profile"]
+    )
+    if isinstance(intel.get("conversion_bubble_profile"), dict):
+        cb = intel.get("conversion_bubble_profile") or {}
+        for k in ("conversion_efficiency_last_5", "goals_minus_xG_last_5"):
+            v = _normalize_float(cb.get(k))
+            if v is not None:
+                conversion_bubble_profile[k] = v
+        bubble = str(cb.get("bubble_status") or "").strip().lower()
+        if bubble:
+            conversion_bubble_profile["bubble_status"] = bubble
+    merged_frontmatter["conversion_bubble_profile"] = conversion_bubble_profile
+
+    opponent_tail_risk = dict(merged_frontmatter.get("opponent_tail_risk") or {})
+    opponent_tail_risk = merge_frontmatter_defaults(opponent_tail_risk, DEFAULT_FRONTMATTER["opponent_tail_risk"])
+    if isinstance(intel.get("opponent_tail_risk"), dict):
+        tail = intel.get("opponent_tail_risk") or {}
+        for k in (
+            "defensive_low_block_capacity",
+            "counterattack_path",
+            "set_piece_threat",
+            "low_margin_upset_capacity",
+        ):
+            v = _normalize_float(tail.get(k))
+            if v is not None:
+                opponent_tail_risk[k] = int(v)
+    merged_frontmatter["opponent_tail_risk"] = opponent_tail_risk
+
+    memory_cards = dict(merged_frontmatter.get("memory_cards") or {})
+    memory_cards = merge_frontmatter_defaults(memory_cards, DEFAULT_FRONTMATTER["memory_cards"])
+    if isinstance(intel.get("memory_cards"), dict):
+        lessons = intel.get("memory_cards", {}).get("market_pricing_lessons")
+        if isinstance(lessons, list):
+            normalized_lessons = [str(x).strip() for x in lessons if str(x).strip()]
+            if normalized_lessons:
+                memory_cards["market_pricing_lessons"] = normalized_lessons
+    merged_frontmatter["memory_cards"] = memory_cards
 
     return merged_frontmatter
 

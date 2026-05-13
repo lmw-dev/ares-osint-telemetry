@@ -78,6 +78,29 @@ def main() -> int:
         str(intel_file),
     ], repo_root)
 
+    # 先生成 diagnostics，再刷新 Prematch Input Gate，最后再跑一次 preflight 读取新 gate。
+    _run([
+        py,
+        str(repo_root / "src" / "data" / "prematch_preflight.py"),
+        "--issue",
+        issue,
+    ], repo_root)
+
+    # 强制刷新 Prematch Input Gate / Team Enrichment Queue，避免复用旧快照。
+    _run([
+        py,
+        str(repo_root / "src" / "data" / "osint_pipeline.py"),
+        "--date",
+        args.date,
+        "--scope",
+        args.scope,
+        "--skip-crawler",
+        "--skip-prematch",
+        "--skip-postmatch",
+        "--skip-team-forge",
+        "--skip-team-backfill",
+    ], repo_root)
+
     _run([
         py,
         str(repo_root / "src" / "data" / "prematch_preflight.py"),

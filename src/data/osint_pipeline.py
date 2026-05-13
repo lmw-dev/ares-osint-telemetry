@@ -452,6 +452,16 @@ def enrich_manifest_with_team_archive_context(
 def _is_prematch_mapped_match(match: Dict[str, Any]) -> bool:
     mapping_source = str(match.get("mapping_source") or "").strip().lower()
     has_anchor = bool(match.get("understat_id") or match.get("fbref_url") or match.get("football_data_match_id"))
+    has_understat_time_anchor = bool(str(match.get("understat_date") or "").strip())
+    understat_policy = (
+        match.get("understat_prematch_id_policy")
+        if isinstance(match.get("understat_prematch_id_policy"), dict)
+        else {}
+    )
+    understat_upcoming_no_block = (
+        str(understat_policy.get("fixture_status") or "").strip().lower() == "upcoming"
+        and understat_policy.get("target_match_id_required") is False
+    )
     titan_snapshot = match.get("titan_prematch") if isinstance(match.get("titan_prematch"), dict) else {}
     titan_signals = titan_snapshot.get("signals") if isinstance(titan_snapshot.get("signals"), dict) else {}
     titan_ready = (
@@ -462,7 +472,10 @@ def _is_prematch_mapped_match(match: Dict[str, Any]) -> bool:
         return False
     if mapping_source == "titan":
         return titan_ready
-    if mapping_source in {"understat", "fbref", "football-data"}:
+    if mapping_source == "understat":
+        # Prematch policy: upcoming fixture does not require target Understat match id.
+        return has_anchor or has_understat_time_anchor or understat_upcoming_no_block
+    if mapping_source in {"fbref", "football-data"}:
         return has_anchor
     return has_anchor or titan_ready
 
@@ -753,6 +766,10 @@ def build_prematch_ready_manifest(
     strong_statuses = {"usable", "usable_strong"}
     weak_statuses = {"usable_weak"}
     blocked_statuses = {"missing", "placeholder", "placeholder_backfilled"}
+    non_blocking_enrichment_gaps = {
+        "default_value_contamination:defensive_leakage",
+        "conversion_efficiency_source_missing_do_not_use",
+    }
     for match in matches:
         english = str(match.get("english") or "").strip()
         home, away = _split_match_english(english)
@@ -773,6 +790,7 @@ def build_prematch_ready_manifest(
             archive_status = str(row.get("archive_status") or "").strip().lower()
             rag_docs = int(row.get("rag_doc_count") or 0)
             needs_enrichment = bool(row.get("needs_enrichment"))
+            gaps = [str(item) for item in (row.get("gaps") or []) if str(item).strip()]
             missing_resilience_keys = [str(item) for item in (row.get("missing_resilience_keys") or []) if str(item).strip()]
             missing_market_behavior_keys = [
                 str(item) for item in (row.get("missing_market_behavior_keys") or []) if str(item).strip()
@@ -793,10 +811,14 @@ def build_prematch_ready_manifest(
                 marker = f"low_rag_docs:{side_name}:{rag_docs}"
                 reasons.append(marker)
                 hard_blockers.append(marker)
-            if needs_enrichment:
+            blocking_gaps = [item for item in gaps if item not in non_blocking_enrichment_gaps]
+            if needs_enrichment and blocking_gaps:
                 marker = f"needs_enrichment:{side_name}"
                 reasons.append(marker)
                 soft_blockers.append(marker)
+            elif needs_enrichment:
+                marker = f"metric_prohibited_as_directional_evidence:{side_name}"
+                reasons.append(marker)
             if missing_resilience_keys:
                 marker = f"missing_resilience_core:{side_name}:{','.join(missing_resilience_keys)}"
                 reasons.append(marker)

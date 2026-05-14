@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -142,6 +142,16 @@ def _normalize_match_key(value: str) -> str:
 
 def _normalize_team_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", _safe_text(value).lower())
+
+
+def _split_match_english(value: str) -> Optional[Dict[str, str]]:
+    txt = _safe_text(value)
+    if " vs " not in txt:
+        return None
+    home, away = [x.strip() for x in txt.split(" vs ", 1)]
+    if not home or not away:
+        return None
+    return {"home": home, "away": away}
 
 
 def _has_confirmed_absence(nodes: List[Any]) -> bool:
@@ -865,6 +875,8 @@ class PrematchSynthesis:
         blocks: List[str] = []
         if bool(verdict.get("no_single_pick_gate")):
             blocks.append("NO_SINGLE_PICK_GATE")
+        if bool(verdict.get("home_away_integrity_gate")):
+            blocks.append("HOME_AWAY_INTEGRITY_GATE")
         if bool(verdict.get("non_elite_hot_favorite_caution")):
             blocks.append("NON_ELITE_HOT_FAVORITE_CAUTION")
         if bool(verdict.get("favorite_retreat_not_reversal_gate")):
@@ -887,6 +899,10 @@ class PrematchSynthesis:
             blocks.append("SURVIVAL_ESCAPE_SIGNAL")
         if _safe_text(verdict.get("rotation_intensity")).upper() == "HIGH":
             blocks.append("GATE_HIGH_ROTATION_RISK")
+        if bool(verdict.get("postponed_market_time_decay_gate")):
+            blocks.append("POSTPONED_MARKET_TIME_DECAY_GATE")
+        if bool(verdict.get("cup_final_context_gate")):
+            blocks.append("CUP_FINAL_CONTEXT_GATE")
         return blocks
 
     @classmethod
@@ -1451,6 +1467,85 @@ class PrematchSynthesis:
         ]
         return any(triggers)
 
+    @staticmethod
+    def _home_away_integrity_gate(
+        parsed_home_team: str,
+        parsed_away_team: str,
+        manifest_english_match: str,
+    ) -> bool:
+        pair = _split_match_english(manifest_english_match)
+        if not pair:
+            return False
+        parsed_home_key = _normalize_team_key(parsed_home_team)
+        parsed_away_key = _normalize_team_key(parsed_away_team)
+        if not parsed_home_key or not parsed_away_key:
+            return False
+        manifest_home_key = _normalize_team_key(pair["home"])
+        manifest_away_key = _normalize_team_key(pair["away"])
+        if not manifest_home_key or not manifest_away_key:
+            return False
+        return parsed_home_key != manifest_home_key or parsed_away_key != manifest_away_key
+
+    @staticmethod
+    def _postponed_market_time_decay_gate(
+        risk_tags: List[str],
+        match_context_flags: Dict[str, Any],
+        market_odds_history: List[Any],
+        external_odds_history: List[Any],
+        understat_date: str,
+    ) -> bool:
+        tags = " | ".join(_safe_text(x).lower() for x in (risk_tags or []))
+        if any(token in tags for token in ("postponed", "rescheduled", "补赛", "延期", "old_initial_line")):
+            return True
+        if isinstance(match_context_flags, dict):
+            motivation_type = _safe_text(match_context_flags.get("primary_motivation_type")).upper()
+            if motivation_type in {"POSTPONED", "RESCHEDULED"}:
+                return True
+        if isinstance(market_odds_history, list) and market_odds_history:
+            return False
+        if not (isinstance(external_odds_history, list) and external_odds_history):
+            return False
+        first_external = external_odds_history[0] if isinstance(external_odds_history[0], dict) else {}
+        fetched_at_raw = _safe_text(first_external.get("fetched_at"))
+        if not fetched_at_raw:
+            return False
+        target_time_raw = _safe_text(first_external.get("target_match_time")) or _safe_text(understat_date)
+        if not target_time_raw:
+            return False
+        fetched_at = None
+        target_time = None
+        for fmt, value in (
+            ("%Y-%m-%dT%H:%M:%S.%fZ", fetched_at_raw),
+            ("%Y-%m-%dT%H:%M:%SZ", fetched_at_raw),
+        ):
+            try:
+                fetched_at = datetime.strptime(value, fmt)
+                break
+            except Exception:
+                continue
+        for fmt, value in (
+            ("%Y-%m-%d %H:%M:%S", target_time_raw),
+            ("%Y-%m-%dT%H:%M:%S", target_time_raw),
+        ):
+            try:
+                target_time = datetime.strptime(value, fmt)
+                break
+            except Exception:
+                continue
+        if fetched_at is None or target_time is None:
+            return False
+        return fetched_at + timedelta(days=5) < target_time
+
+    @staticmethod
+    def _cup_final_context_gate(manifest_row: Dict[str, Any], row: Dict[str, Any]) -> bool:
+        league = _safe_text(manifest_row.get("league")).lower()
+        en_match = _safe_text(manifest_row.get("english")).lower()
+        cn_match = _safe_text(row.get("cn_match")).lower()
+        risk_tags = " | ".join(_safe_text(x).lower() for x in (row.get("risk_tags") or []))
+        joined = " | ".join([league, en_match, cn_match, risk_tags])
+        keywords = ("cup final", "coppa italia", "fa cup", "copa del rey", "决赛", "杯赛")
+        return any(k in joined for k in keywords)
+
     def _build_rule_based_result(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         diagnostics = inputs.get("diagnostics") or {}
         gate_snapshot = inputs.get("gate_snapshot") or {}
@@ -1486,6 +1581,14 @@ class PrematchSynthesis:
             )
             market_behavior = (
                 manifest_row.get("market_behavior") if isinstance(manifest_row.get("market_behavior"), dict) else {}
+            )
+            market_odds_history = (
+                manifest_row.get("market_odds_history") if isinstance(manifest_row.get("market_odds_history"), list) else []
+            )
+            external_odds_history = (
+                manifest_row.get("external_odds_history")
+                if isinstance(manifest_row.get("external_odds_history"), list)
+                else []
             )
 
             home_market = home.get("market_prob")
@@ -1573,6 +1676,22 @@ class PrematchSynthesis:
                 away_market,
             )
             survival_escape_signal = bool(row.get("survival_escape_signal"))
+            home_away_integrity_gate = self._home_away_integrity_gate(
+                parsed_home_team=_safe_text(row.get("home_team")),
+                parsed_away_team=_safe_text(row.get("away_team")),
+                manifest_english_match=_safe_text(manifest_row.get("english")),
+            )
+            postponed_market_time_decay_gate = self._postponed_market_time_decay_gate(
+                risk_tags=risk_tags,
+                match_context_flags=context_flags,
+                market_odds_history=market_odds_history,
+                external_odds_history=external_odds_history,
+                understat_date=_safe_text(manifest_row.get("understat_date")),
+            )
+            cup_final_context_gate = self._cup_final_context_gate(manifest_row, row)
+            if cup_final_context_gate:
+                # 杯赛决赛语境下，联赛战意权重降级，避免错误放大保级/排名信号。
+                survival_escape_signal = False
             recent_xga_risk = bool(away_fav_def_exposure)
             injuries_across_lines = bool(self._has_confirmed_xi_damage(away_profile))
             opponent_survival_pressure = bool(
@@ -1682,6 +1801,8 @@ class PrematchSynthesis:
             if brand_price_not_low_enough:
                 no_single_pick_gate = True
             if narrative_strength_cap:
+                no_single_pick_gate = True
+            if home_away_integrity_gate or postponed_market_time_decay_gate:
                 no_single_pick_gate = True
 
             suggestion = "skip"
@@ -1985,6 +2106,14 @@ class PrematchSynthesis:
                     confidence = "medium"
                 if no_single_pick_gate and confidence == "medium":
                     confidence = "low"
+                if postponed_market_time_decay_gate and confidence == "high":
+                    confidence = "medium"
+                if postponed_market_time_decay_gate and confidence == "medium":
+                    confidence = "low"
+                if home_away_integrity_gate:
+                    suggestion = "skip"
+                    confidence = "low"
+                    reason += " 触发 HOME_AWAY_INTEGRITY_GATE：审计文本主客与 manifest 不一致，禁止执行。"
             elif isinstance(home_sd, (int, float)) and isinstance(away_sd, (int, float)):
                 sd_gap = float(home_sd) - float(away_sd)
                 if sd_gap >= 0.7:
@@ -2064,6 +2193,12 @@ class PrematchSynthesis:
                     reason += " 品牌强队赔率不够低门禁已生效：强题材但价格未压到预期区间，禁止单选并补深防。"
                 if narrative_strength_cap:
                     reason += " 题材强度上限门禁已生效：战意/名气不能覆盖伤停与xG反证。"
+                if home_away_integrity_gate:
+                    reason += " 主客一致性门禁已生效：审计文本主客与 manifest 不一致，本场仅可观望。"
+                if postponed_market_time_decay_gate:
+                    reason += " 补赛旧初盘衰减门禁已生效：旧时间盘口降权，仅看临场增量。"
+                if cup_final_context_gate:
+                    reason += " 杯赛决赛上下文门禁已生效：弱化联赛战意，强化大赛执行力与阵容深度。"
                 if survival_escape_signal:
                     reason += " 即时逃生战意门禁已生效：上调不败/客胜保护。"
                 if suggestion == "skip":
@@ -2149,6 +2284,9 @@ class PrematchSynthesis:
                     "away_half_ball_no_upgrade_home_xg_risk_gate": away_half_ball_no_upgrade_gate,
                     "brand_favorite_price_not_low_enough_gate": brand_price_not_low_enough,
                     "narrative_strength_cap_gate": narrative_strength_cap,
+                    "home_away_integrity_gate": home_away_integrity_gate,
+                    "postponed_market_time_decay_gate": postponed_market_time_decay_gate,
+                    "cup_final_context_gate": cup_final_context_gate,
                     "survival_escape_signal": survival_escape_signal,
                     "edge_home": edge_home,
                     "edge_away": edge_away,
@@ -2453,6 +2591,9 @@ class PrematchSynthesis:
             "away_half_ball_no_upgrade_home_xg_risk_gate",
             "brand_favorite_price_not_low_enough_gate",
             "narrative_strength_cap_gate",
+            "home_away_integrity_gate",
+            "postponed_market_time_decay_gate",
+            "cup_final_context_gate",
             "survival_escape_signal",
             "no_single_pick_gate",
             "away_elite_conditional_only",

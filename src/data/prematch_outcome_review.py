@@ -268,6 +268,9 @@ def _classify_review_label(
         if (not single_pick_like) and xg_better == result_code and xg_gap_abs >= 0.35:
             return "PROTECTED_STRUCTURE_HIT"
         if xg_better and xg_better != result_code and xg_gap_abs >= 0.35:
+            # 结果命中但过程反向，必须降级为 result-only，不允许算高质量命中。
+            if xg_gap_abs >= 0.75:
+                return "RESULT_ONLY_HIT"
             return "RESULT_HIT_PROCESS_WARNING"
         if not single_pick_like:
             return "PROTECTED_STRUCTURE_HIT"
@@ -394,6 +397,10 @@ def main() -> int:
     lines.append(f"- Hit Rate: `{hit_rate:.1f}%`")
     lines.append(f"- Pending Results: `{pending}`")
     lines.append(f"- Skipped: `{skipped}`")
+    result_only = sum(1 for r in resolved if r.get("review_label") == "RESULT_ONLY_HIT")
+    process_warning = sum(1 for r in resolved if r.get("review_label") == "RESULT_HIT_PROCESS_WARNING")
+    lines.append(f"- Result-Only Hits: `{result_only}`")
+    lines.append(f"- Process Warnings: `{process_warning}`")
     lines.append("")
     lines.append("| # | Match | Suggestion | Confidence | Tier | Result | Status | ReviewLabel |")
     lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")

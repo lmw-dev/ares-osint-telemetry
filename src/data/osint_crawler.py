@@ -55,6 +55,9 @@ LEAGUE_TO_ODDS_SPORT_KEY: Dict[str, str] = {
     "Serie_B": "soccer_italy_serie_b",
 }
 
+DEFAULT_THE_ODDS_REGIONS = "eu,uk"
+DEFAULT_THE_ODDS_MARKETS = "h2h,spreads,totals"
+
 TITAN_PREMATCH_PAGE_TEMPLATES: Dict[str, str] = {
     "analysis": "https://zq.titan007.com/analysis/{match_id}cn.htm",
     "asian_odds": "https://vip.titan007.com/AsianOdds_n.aspx?id={match_id}&l=0",
@@ -199,6 +202,14 @@ class AresOsintCrawler:
         )
         the_odds_base_url_raw = str(os.getenv("ARES_THE_ODDS_BASE_URL", "")).strip()
         self.the_odds_base_url = (the_odds_base_url_raw or "https://api.the-odds-api.com/v4").rstrip("/")
+        self.the_odds_regions = (
+            str(os.getenv("ARES_THE_ODDS_REGIONS", DEFAULT_THE_ODDS_REGIONS)).strip()
+            or DEFAULT_THE_ODDS_REGIONS
+        )
+        self.the_odds_markets = (
+            str(os.getenv("ARES_THE_ODDS_MARKETS", DEFAULT_THE_ODDS_MARKETS)).strip()
+            or DEFAULT_THE_ODDS_MARKETS
+        )
         external_odds_raw = str(os.getenv("ARES_ENABLE_EXTERNAL_ODDS_ENRICH", "")).strip().lower()
         if external_odds_raw:
             self.enable_external_odds_enrich = external_odds_raw in {"1", "true", "yes", "on"}
@@ -1225,8 +1236,8 @@ class AresOsintCrawler:
         url = f"{self.the_odds_base_url}/sports/{sport_key}/odds"
         params = {
             "apiKey": self.the_odds_api_key,
-            "regions": "eu,uk",
-            "markets": "h2h",
+            "regions": self.the_odds_regions,
+            "markets": self.the_odds_markets,
             "oddsFormat": "decimal",
             "dateFormat": "iso",
         }
@@ -1305,27 +1316,42 @@ class AresOsintCrawler:
             return None, None
         return best_event, round(best_gap / 86400.0, 3)
 
-    def _extract_the_odds_h2h_snapshot(self, event: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_the_odds_market_snapshot(
+        self,
+        event: Dict[str, Any],
+        market_key: str,
+    ) -> Dict[str, Any]:
         bookmakers = event.get("bookmakers") or []
         for bm in bookmakers:
             markets = bm.get("markets") or []
             for mk in markets:
-                if mk.get("key") != "h2h":
+                if mk.get("key") != market_key:
                     continue
                 outcomes = mk.get("outcomes") or []
-                odds_map = {}
+                normalized_outcomes: List[Dict[str, Any]] = []
                 for out in outcomes:
                     name = out.get("name")
                     price = out.get("price")
                     if name is None or price is None:
                         continue
-                    odds_map[name] = price
-                if odds_map:
+                    row = {
+                        "name": name,
+                        "price": price,
+                    }
+                    point = out.get("point")
+                    if point is not None:
+                        row["point"] = point
+                    description = out.get("description")
+                    if description:
+                        row["description"] = description
+                    normalized_outcomes.append(row)
+                if normalized_outcomes:
                     return {
+                        "market_key": market_key,
                         "bookmaker_key": bm.get("key"),
                         "bookmaker_title": bm.get("title"),
                         "last_update": mk.get("last_update"),
-                        "odds": odds_map,
+                        "outcomes": normalized_outcomes,
                     }
         return {}
 
@@ -1389,17 +1415,27 @@ class AresOsintCrawler:
                 "commence_time_to": commence_to,
                 "fetched_at": datetime.utcnow().isoformat() + "Z",
             }
-        h2h_snapshot = self._extract_the_odds_h2h_snapshot(event)
-        if not h2h_snapshot:
+        h2h_snapshot = self._extract_the_odds_market_snapshot(event, "h2h")
+        spreads_snapshot = self._extract_the_odds_market_snapshot(event, "spreads")
+        totals_snapshot = self._extract_the_odds_market_snapshot(event, "totals")
+        if not h2h_snapshot and not spreads_snapshot and not totals_snapshot:
             return {
                 "provider": "the-odds-api.com",
-                "status": "event_found_but_no_h2h_market",
+                "status": "event_found_but_no_featured_markets",
                 "sport_key": sport_key,
                 "event_id": event.get("id"),
                 "commence_time": event.get("commence_time"),
                 "target_match_time": target_match_time,
+                "requested_markets": self.the_odds_markets,
                 "fetched_at": datetime.utcnow().isoformat() + "Z",
             }
+        market_coverage: List[str] = []
+        if h2h_snapshot:
+            market_coverage.append("h2h")
+        if spreads_snapshot:
+            market_coverage.append("spreads")
+        if totals_snapshot:
+            market_coverage.append("totals")
         return {
             "provider": "the-odds-api.com",
             "status": "ok",
@@ -1410,7 +1446,11 @@ class AresOsintCrawler:
             "home_team": event.get("home_team"),
             "away_team": event.get("away_team"),
             "target_match_time": target_match_time,
+            "requested_markets": self.the_odds_markets,
+            "market_coverage": market_coverage,
             "h2h_snapshot": h2h_snapshot,
+            "spreads_snapshot": spreads_snapshot,
+            "totals_snapshot": totals_snapshot,
             "fetched_at": datetime.utcnow().isoformat() + "Z",
         }
 

@@ -54,6 +54,169 @@ def _split_match_english(english: str) -> tuple[str, str]:
     return english.strip(), ""
 
 
+def _normalize_match_basic_payload(match: Dict[str, Any]) -> Dict[str, Any]:
+    defaults = {
+        "match": None,
+        "league": None,
+        "kickoff_time": None,
+        "round": None,
+        "home_rank_points": {"rank": None, "points": None},
+        "away_rank_points": {"rank": None, "points": None},
+        "remaining_matches": {"home": None, "away": None},
+        "table_context": {"home_objective": None, "away_objective": None},
+    }
+    payload = match.get("match_basic") if isinstance(match.get("match_basic"), dict) else {}
+    merged = dict(defaults)
+    merged.update({k: v for k, v in payload.items() if v is not None})
+
+    home, away = _split_match_english(str(match.get("english") or ""))
+    if not merged.get("match"):
+        merged["match"] = f"{home} vs {away}".strip() if home or away else None
+    if not merged.get("league"):
+        merged["league"] = str(match.get("league") or "").strip() or None
+    kickoff_candidates = [
+        match.get("understat_date"),
+        match.get("football_data_date"),
+        (((match.get("titan_prematch") or {}).get("pages") or {}).get("analysis") or {}).get("kickoff_time"),
+    ]
+    if not merged.get("kickoff_time"):
+        for candidate in kickoff_candidates:
+            text = str(candidate or "").strip()
+            if text:
+                merged["kickoff_time"] = text
+                break
+
+    home_rank_points = merged.get("home_rank_points") if isinstance(merged.get("home_rank_points"), dict) else {}
+    away_rank_points = merged.get("away_rank_points") if isinstance(merged.get("away_rank_points"), dict) else {}
+    remaining_matches = merged.get("remaining_matches") if isinstance(merged.get("remaining_matches"), dict) else {}
+    table_context = merged.get("table_context") if isinstance(merged.get("table_context"), dict) else {}
+    merged["home_rank_points"] = {
+        "rank": home_rank_points.get("rank"),
+        "points": home_rank_points.get("points"),
+    }
+    merged["away_rank_points"] = {
+        "rank": away_rank_points.get("rank"),
+        "points": away_rank_points.get("points"),
+    }
+    merged["remaining_matches"] = {
+        "home": remaining_matches.get("home"),
+        "away": remaining_matches.get("away"),
+    }
+    merged["table_context"] = {
+        "home_objective": table_context.get("home_objective"),
+        "away_objective": table_context.get("away_objective"),
+    }
+    return merged
+
+
+def _required_match_basic_missing_fields(match_basic: Dict[str, Any]) -> List[str]:
+    missing: List[str] = []
+    required_paths = [
+        ("match", match_basic.get("match")),
+        ("league", match_basic.get("league")),
+        ("kickoff_time", match_basic.get("kickoff_time")),
+        ("home_rank_points.rank", (match_basic.get("home_rank_points") or {}).get("rank")),
+        ("home_rank_points.points", (match_basic.get("home_rank_points") or {}).get("points")),
+        ("away_rank_points.rank", (match_basic.get("away_rank_points") or {}).get("rank")),
+        ("away_rank_points.points", (match_basic.get("away_rank_points") or {}).get("points")),
+        ("remaining_matches.home", (match_basic.get("remaining_matches") or {}).get("home")),
+        ("remaining_matches.away", (match_basic.get("remaining_matches") or {}).get("away")),
+    ]
+    for field, value in required_paths:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing.append(field)
+    return missing
+
+
+def _yaml_safe_text(value: Any) -> str:
+    text = str(value or "")
+    text = text.replace('"', "'")
+    return text
+
+
+def _build_prematch_frontmatter_block(*, issue: str, match: Dict[str, Any], match_basic: Dict[str, Any]) -> str:
+    home_rank_points = match_basic.get("home_rank_points") if isinstance(match_basic.get("home_rank_points"), dict) else {}
+    away_rank_points = match_basic.get("away_rank_points") if isinstance(match_basic.get("away_rank_points"), dict) else {}
+    remaining = match_basic.get("remaining_matches") if isinstance(match_basic.get("remaining_matches"), dict) else {}
+    table_context = match_basic.get("table_context") if isinstance(match_basic.get("table_context"), dict) else {}
+    lines = [
+        "---",
+        f'issue: "{_yaml_safe_text(issue)}"',
+        f'match_index: {int(match.get("index", 0) or 0)}',
+        f'chinese: "{_yaml_safe_text(match.get("chinese"))}"',
+        f'english: "{_yaml_safe_text(match.get("english"))}"',
+        f'league: "{_yaml_safe_text(match.get("league"))}"',
+        f'mapping_source: "{_yaml_safe_text(match.get("mapping_source"))}"',
+        f'understat_id: "{_yaml_safe_text(match.get("understat_id"))}"',
+        f'football_data_match_id: "{_yaml_safe_text(match.get("football_data_match_id"))}"',
+        "match_basic:",
+        f'  match: "{_yaml_safe_text(match_basic.get("match"))}"',
+        f'  league: "{_yaml_safe_text(match_basic.get("league"))}"',
+        f'  kickoff_time: "{_yaml_safe_text(match_basic.get("kickoff_time"))}"',
+        f"  round: {json.dumps(match_basic.get('round'))}",
+        "  home_rank_points:",
+        f"    rank: {json.dumps(home_rank_points.get('rank'))}",
+        f"    points: {json.dumps(home_rank_points.get('points'))}",
+        "  away_rank_points:",
+        f"    rank: {json.dumps(away_rank_points.get('rank'))}",
+        f"    points: {json.dumps(away_rank_points.get('points'))}",
+        "  remaining_matches:",
+        f"    home: {json.dumps(remaining.get('home'))}",
+        f"    away: {json.dumps(remaining.get('away'))}",
+        "  table_context:",
+        f'    home_objective: "{_yaml_safe_text(table_context.get("home_objective"))}"',
+        f'    away_objective: "{_yaml_safe_text(table_context.get("away_objective"))}"',
+        "---",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def sync_prematch_audit_frontmatter(*, issue: str, manifest: Dict[str, Any], vault_root: Path) -> Dict[str, int]:
+    issue_dir = vault_root / "03_Match_Audits" / str(issue) / "01_Prematch_Audits"
+    if not issue_dir.exists():
+        return {"updated": 0, "skipped": 0}
+
+    by_index: Dict[int, Dict[str, Any]] = {}
+    for row in manifest.get("matches", []) if isinstance(manifest.get("matches"), list) else []:
+        try:
+            idx = int(row.get("index"))
+        except Exception:
+            continue
+        normalized = _normalize_match_basic_payload(row)
+        row["match_basic"] = normalized
+        by_index[idx] = row
+
+    updated = 0
+    skipped = 0
+    for path in sorted(issue_dir.glob(f"Audit-{issue}-*.md")):
+        m = re.search(rf"^Audit-{re.escape(issue)}-(\d+)-", path.name)
+        if not m:
+            skipped += 1
+            continue
+        idx = int(m.group(1))
+        match = by_index.get(idx)
+        if not isinstance(match, dict):
+            skipped += 1
+            continue
+        content = path.read_text(encoding="utf-8")
+        body = content
+        if content.startswith("---\n"):
+            closing = content.find("\n---\n", 4)
+            if closing != -1:
+                body = content[closing + len("\n---\n") :].lstrip("\n")
+        frontmatter = _build_prematch_frontmatter_block(
+            issue=issue,
+            match=match,
+            match_basic=match.get("match_basic") if isinstance(match.get("match_basic"), dict) else {},
+        )
+        rewritten = frontmatter + body
+        if rewritten != content:
+            path.write_text(rewritten, encoding="utf-8")
+            updated += 1
+    return {"updated": updated, "skipped": skipped}
+
+
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name, "").strip()
     if not raw:
@@ -532,8 +695,9 @@ def _write_prematch_input_gate_report(
     md_target = review_dir / f"REVIEW-{issue}-Prematch_Input_Gate.md"
     json_target = review_dir / f"REVIEW-{issue}-Prematch_Input_Gate.json"
     filtered = max(0, total - selected)
+    has_hard_blocked_rows = any(bool(row.get("hard_blockers")) for row in rows)
     if selected <= 0:
-        issue_status = "BLOCKED"
+        issue_status = "BLOCKED" if has_hard_blocked_rows else "HOLD"
     elif filtered > 0:
         issue_status = "HOLD"
     else:
@@ -561,6 +725,7 @@ def _write_prematch_input_gate_report(
     lines.append(f"- Total Matches: {total}")
     lines.append(f"- Selected Matches: {selected}")
     lines.append(f"- Filtered Matches: {filtered}")
+    lines.append(f"- Hard Blocked Rows: {sum(1 for row in rows if row.get('hard_blockers'))}")
     lines.append(f"- Min Team RAG Docs: {min_team_docs}")
     lines.append(f"- Gate JSON: `{json_target.name}`")
     lines.append("")
@@ -771,6 +936,8 @@ def build_prematch_ready_manifest(
         "conversion_efficiency_source_missing_do_not_use",
     }
     for match in matches:
+        match_basic = _normalize_match_basic_payload(match)
+        match["match_basic"] = match_basic
         english = str(match.get("english") or "").strip()
         home, away = _split_match_english(english)
         resolved_home = resolve_team_name(home, alias_map)
@@ -781,6 +948,11 @@ def build_prematch_ready_manifest(
         hard_blockers: List[str] = []
         soft_blockers: List[str] = []
         team_checks: List[Dict[str, Any]] = []
+        match_basic_missing = _required_match_basic_missing_fields(match_basic)
+        for field in match_basic_missing:
+            marker = f"missing_match_basic:{field}"
+            reasons.append(marker)
+            soft_blockers.append(marker)
         for side_name, row in ((resolved_home, home_row), (resolved_away, away_row)):
             if not isinstance(row, dict):
                 marker = f"missing_team_diagnostics:{side_name}"
@@ -867,9 +1039,11 @@ def build_prematch_ready_manifest(
                 "hard_blockers": hard_blockers,
                 "soft_blockers": soft_blockers,
                 "team_checks": team_checks,
+                "match_basic_missing_fields": match_basic_missing,
+                "has_match_basic_gap": bool(match_basic_missing),
                 "has_resilience_gap": has_resilience_gap,
                 "has_market_behavior_gap": has_market_behavior_gap,
-                "has_structural_data_gap": bool(has_resilience_gap or has_market_behavior_gap),
+                "has_structural_data_gap": bool(has_resilience_gap or has_market_behavior_gap or match_basic_missing),
             }
         )
         match["prematch_input_quality"] = {
@@ -879,9 +1053,11 @@ def build_prematch_ready_manifest(
             "prematch_readiness_level": readiness_level,
             "hard_blockers": hard_blockers,
             "soft_blockers": soft_blockers,
+            "match_basic_missing_fields": match_basic_missing,
+            "has_match_basic_gap": bool(match_basic_missing),
             "has_resilience_gap": has_resilience_gap,
             "has_market_behavior_gap": has_market_behavior_gap,
-            "has_structural_data_gap": bool(has_resilience_gap or has_market_behavior_gap),
+            "has_structural_data_gap": bool(has_resilience_gap or has_market_behavior_gap or match_basic_missing),
         }
 
     filtered_manifest = dict(manifest)
@@ -1495,6 +1671,21 @@ if __name__ == "__main__":
                 logger.info("Prematch ready-gate: date 模式无比赛日，selected=0。")
             else:
                 logger.warning("Prematch ready-gate 下无可执行场次（输入质量不达标）。")
+
+    if vault_path:
+        try:
+            sync_result = sync_prematch_audit_frontmatter(
+                issue=run_id,
+                manifest=manifest,
+                vault_root=Path(normalize_vault_path(vault_path)).expanduser(),
+            )
+            logger.info(
+                "Prematch audit frontmatter 同步完成: updated=%s skipped=%s",
+                sync_result.get("updated", 0),
+                sync_result.get("skipped", 0),
+            )
+        except Exception as exc:
+            logger.warning("Prematch audit frontmatter 同步失败（不影响主流程）: %s", exc)
 
     prematch_summary = {"success": 0, "failed": 0}
     if not args.skip_prematch:

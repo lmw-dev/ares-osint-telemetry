@@ -1762,6 +1762,13 @@ class AresOsintCrawler:
                 anchor_dt=anchor_dt,
                 target_match_time=mapped_match_time,
             )
+            match_basic = self._build_match_basic(
+                home_en=home_en,
+                away_en=away_en,
+                league=found_league,
+                kickoff_time=mapped_match_time,
+                titan_snapshot=titan_prematch_snapshot,
+            )
 
             if existing_match:
                 # Merge into existing map
@@ -1803,6 +1810,10 @@ class AresOsintCrawler:
                 existing_match["match_context_flags"] = self._merge_with_defaults(
                     existing_match.get("match_context_flags"),
                     self._build_default_match_context_flags(),
+                )
+                existing_match["match_basic"] = self._merge_with_defaults(
+                    existing_match.get("match_basic"),
+                    match_basic,
                 )
                 existing_match["market_behavior"] = self._merge_with_defaults(
                     existing_match.get("market_behavior"),
@@ -1891,6 +1902,7 @@ class AresOsintCrawler:
                         understat_id=found_id,
                         manual_anchor_applied=manual_anchor_applied,
                     ),
+                    "match_basic": match_basic,
                     "match_context_flags": self._build_default_match_context_flags(),
                     "market_behavior": self._build_default_market_behavior(),
                     "market_odds_history": [market_snapshot],
@@ -2071,6 +2083,18 @@ class AresOsintCrawler:
                 anchor_dt=anchor_dt,
                 target_match_time=mapped_match_time,
             )
+            titan_prematch_snapshot = self._fetch_titan_prematch_snapshot(
+                cn_match_id,
+                expected_home_zh=home,
+                expected_away_zh=away,
+            )
+            match_basic = self._build_match_basic(
+                home_en=home,
+                away_en=away,
+                league=match.get("league"),
+                kickoff_time=mapped_match_time,
+                titan_snapshot=titan_prematch_snapshot,
+            )
             output_manifest["matches"].append(
                 {
                     "index": i,
@@ -2099,6 +2123,8 @@ class AresOsintCrawler:
                         understat_id=understat_id,
                         manual_anchor_applied=manual_anchor_applied,
                     ),
+                    "match_basic": match_basic,
+                    "titan_prematch": titan_prematch_snapshot,
                     "match_context_flags": self._build_default_match_context_flags(),
                     "market_behavior": self._build_default_market_behavior(),
                     "market_odds_history": [],
@@ -2139,6 +2165,174 @@ class AresOsintCrawler:
             "relegation_zone_rank": None,
             "future_fixture_gap_days": None,
         }
+
+    @staticmethod
+    def _build_default_match_basic() -> Dict[str, Any]:
+        return {
+            "match": None,
+            "league": None,
+            "kickoff_time": None,
+            "round": None,
+            "home_rank_points": {"rank": None, "points": None},
+            "away_rank_points": {"rank": None, "points": None},
+            "remaining_matches": {"home": None, "away": None},
+            "table_context": {"home_objective": None, "away_objective": None},
+        }
+
+    @staticmethod
+    def _league_total_rounds_hint(league: Any) -> Optional[int]:
+        key = str(league or "").strip()
+        hints = {
+            "EPL": 38,
+            "La_liga": 38,
+            "Serie_A": 38,
+            "Ligue_1": 34,
+            "Bundesliga": 34,
+        }
+        return hints.get(key)
+
+    @staticmethod
+    def _extract_int(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        m = re.search(r"-?\d+", text)
+        if not m:
+            return None
+        try:
+            return int(m.group(0))
+        except ValueError:
+            return None
+
+    def _extract_match_basic_from_titan_snapshot(
+        self,
+        *,
+        titan_snapshot: Optional[Dict[str, Any]],
+        fallback_match: str,
+        fallback_league: Optional[str],
+        fallback_kickoff: Optional[str],
+    ) -> Dict[str, Any]:
+        payload = self._build_default_match_basic()
+        payload["match"] = fallback_match or None
+        payload["league"] = fallback_league or None
+        payload["kickoff_time"] = fallback_kickoff or None
+
+        if not isinstance(titan_snapshot, dict):
+            return payload
+        analysis_page = titan_snapshot.get("pages") if isinstance(titan_snapshot.get("pages"), dict) else {}
+        analysis_payload = analysis_page.get("analysis") if isinstance(analysis_page.get("analysis"), dict) else {}
+        raw_ref = str(analysis_payload.get("raw_ref") or "").strip()
+        if not raw_ref:
+            return payload
+        try:
+            html = Path(raw_ref).read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return payload
+
+        kickoff_match = re.search(
+            r"开赛时间\s*([0-9]{4}-[0-9]{2}-[0-9]{2})[^0-9]*([0-9]{1,2}:[0-9]{2})",
+            html,
+        )
+        if kickoff_match:
+            payload["kickoff_time"] = f"{kickoff_match.group(1)} {kickoff_match.group(2)}:00"
+
+        round_match = re.search(r"第\s*(\d+)\s*轮", html)
+        if round_match:
+            payload["round"] = self._extract_int(round_match.group(1))
+
+        league_match = re.search(r">([^<]{1,24})\s*资料库<", html)
+        if league_match:
+            league_text = re.sub(r"\s+", "", league_match.group(1).strip())
+            if league_text:
+                payload["league"] = payload["league"] or league_text
+
+        soup = BeautifulSoup(html, "html.parser")
+        tables = []
+        for font in soup.select("font.vander16"):
+            title = font.get_text(" ", strip=True)
+            parent_table = font.find_parent("table")
+            if not parent_table:
+                continue
+            total_row = None
+            for row in parent_table.select("tr"):
+                tds = row.find_all("td")
+                if not tds:
+                    continue
+                first_text = tds[0].get_text(" ", strip=True)
+                if first_text == "总":
+                    cells = [td.get_text(" ", strip=True) for td in tds]
+                    if len(cells) >= 10:
+                        total_row = cells
+                        break
+            if total_row:
+                tables.append({"title": title, "total_row": total_row})
+            if len(tables) >= 2:
+                break
+
+        if len(tables) >= 1:
+            row = tables[0]["total_row"]
+            payload["home_rank_points"] = {
+                "rank": self._extract_int(row[9]) if len(row) > 9 else None,
+                "points": self._extract_int(row[8]) if len(row) > 8 else None,
+            }
+        if len(tables) >= 2:
+            row = tables[1]["total_row"]
+            payload["away_rank_points"] = {
+                "rank": self._extract_int(row[9]) if len(row) > 9 else None,
+                "points": self._extract_int(row[8]) if len(row) > 8 else None,
+            }
+
+        total_rounds = self._league_total_rounds_hint(fallback_league)
+        if total_rounds:
+            home_played = None
+            away_played = None
+            if len(tables) >= 1:
+                home_played = self._extract_int(tables[0]["total_row"][1]) if len(tables[0]["total_row"]) > 1 else None
+            if len(tables) >= 2:
+                away_played = self._extract_int(tables[1]["total_row"][1]) if len(tables[1]["total_row"]) > 1 else None
+            payload["remaining_matches"] = {
+                "home": max(0, total_rounds - home_played) if isinstance(home_played, int) else None,
+                "away": max(0, total_rounds - away_played) if isinstance(away_played, int) else None,
+            }
+        return payload
+
+    def _build_match_basic(
+        self,
+        *,
+        home_en: str,
+        away_en: str,
+        league: Optional[str],
+        kickoff_time: Optional[str],
+        titan_snapshot: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        match_label = f"{str(home_en or '').strip()} vs {str(away_en or '').strip()}".strip()
+        base = self._extract_match_basic_from_titan_snapshot(
+            titan_snapshot=titan_snapshot,
+            fallback_match=match_label,
+            fallback_league=str(league or "").strip() or None,
+            fallback_kickoff=str(kickoff_time or "").strip() or None,
+        )
+        merged = self._merge_with_defaults(base, self._build_default_match_basic())
+        home_rank = merged.get("home_rank_points") if isinstance(merged.get("home_rank_points"), dict) else {}
+        away_rank = merged.get("away_rank_points") if isinstance(merged.get("away_rank_points"), dict) else {}
+        remaining = merged.get("remaining_matches") if isinstance(merged.get("remaining_matches"), dict) else {}
+        table_context = merged.get("table_context") if isinstance(merged.get("table_context"), dict) else {}
+        merged["home_rank_points"] = self._merge_with_defaults(home_rank, {"rank": None, "points": None})
+        merged["away_rank_points"] = self._merge_with_defaults(away_rank, {"rank": None, "points": None})
+        merged["remaining_matches"] = self._merge_with_defaults(remaining, {"home": None, "away": None})
+        merged["table_context"] = self._merge_with_defaults(
+            table_context,
+            {"home_objective": None, "away_objective": None},
+        )
+        if not merged.get("match"):
+            merged["match"] = match_label or None
+        if not merged.get("league"):
+            merged["league"] = str(league or "").strip() or None
+        if not merged.get("kickoff_time"):
+            merged["kickoff_time"] = str(kickoff_time or "").strip() or None
+        return merged
 
     @staticmethod
     def _build_default_market_behavior() -> Dict[str, Any]:

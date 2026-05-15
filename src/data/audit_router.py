@@ -244,6 +244,27 @@ class AuditRouter:
     def _build_stub_content(self, issue: str, match: Dict[str, Any], english_home: str, english_away: str) -> str:
         chinese = self._safe_str(match.get("chinese"))
         english = f"{english_home} vs {english_away}"
+        match_basic = match.get("match_basic") if isinstance(match.get("match_basic"), dict) else {}
+        home_rank_points = (
+            match_basic.get("home_rank_points")
+            if isinstance(match_basic.get("home_rank_points"), dict)
+            else {}
+        )
+        away_rank_points = (
+            match_basic.get("away_rank_points")
+            if isinstance(match_basic.get("away_rank_points"), dict)
+            else {}
+        )
+        remaining_matches = (
+            match_basic.get("remaining_matches")
+            if isinstance(match_basic.get("remaining_matches"), dict)
+            else {}
+        )
+        table_context = (
+            match_basic.get("table_context")
+            if isinstance(match_basic.get("table_context"), dict)
+            else {}
+        )
         return (
             "---\n"
             f'issue: "{issue}"\n'
@@ -254,6 +275,23 @@ class AuditRouter:
             f'mapping_source: "{self._safe_str(match.get("mapping_source")).replace(chr(34), chr(39))}"\n'
             f'understat_id: "{self._safe_str(match.get("understat_id")).replace(chr(34), chr(39))}"\n'
             f'football_data_match_id: "{self._safe_str(match.get("football_data_match_id")).replace(chr(34), chr(39))}"\n'
+            "match_basic:\n"
+            f'  match: "{self._safe_str(match_basic.get("match") or english).replace(chr(34), chr(39))}"\n'
+            f'  league: "{self._safe_str(match_basic.get("league") or match.get("league")).replace(chr(34), chr(39))}"\n'
+            f'  kickoff_time: "{self._safe_str(match_basic.get("kickoff_time") or match.get("understat_date") or match.get("football_data_date")).replace(chr(34), chr(39))}"\n'
+            f"  round: {json.dumps(match_basic.get('round'))}\n"
+            "  home_rank_points:\n"
+            f"    rank: {json.dumps(home_rank_points.get('rank'))}\n"
+            f"    points: {json.dumps(home_rank_points.get('points'))}\n"
+            "  away_rank_points:\n"
+            f"    rank: {json.dumps(away_rank_points.get('rank'))}\n"
+            f"    points: {json.dumps(away_rank_points.get('points'))}\n"
+            "  remaining_matches:\n"
+            f"    home: {json.dumps(remaining_matches.get('home'))}\n"
+            f"    away: {json.dumps(remaining_matches.get('away'))}\n"
+            "  table_context:\n"
+            f'    home_objective: "{self._safe_str(table_context.get("home_objective")).replace(chr(34), chr(39))}"\n'
+            f'    away_objective: "{self._safe_str(table_context.get("away_objective")).replace(chr(34), chr(39))}"\n'
             'status: "draft"\n'
             "---\n\n"
             "## Prematch Audit\n\n"
@@ -266,6 +304,27 @@ class AuditRouter:
     def _build_manual_template_content(self, issue: str, match: Dict[str, Any], english_home: str, english_away: str) -> str:
         chinese = self._safe_str(match.get("chinese"))
         english = f"{english_home} vs {english_away}"
+        match_basic = match.get("match_basic") if isinstance(match.get("match_basic"), dict) else {}
+        home_rank_points = (
+            match_basic.get("home_rank_points")
+            if isinstance(match_basic.get("home_rank_points"), dict)
+            else {}
+        )
+        away_rank_points = (
+            match_basic.get("away_rank_points")
+            if isinstance(match_basic.get("away_rank_points"), dict)
+            else {}
+        )
+        remaining_matches = (
+            match_basic.get("remaining_matches")
+            if isinstance(match_basic.get("remaining_matches"), dict)
+            else {}
+        )
+        table_context = (
+            match_basic.get("table_context")
+            if isinstance(match_basic.get("table_context"), dict)
+            else {}
+        )
         return (
             "---\n"
             f'issue: "{issue}"\n'
@@ -274,6 +333,23 @@ class AuditRouter:
             f'english: "{english.replace(chr(34), chr(39))}"\n'
             f'league: "{self._safe_str(match.get("league")).replace(chr(34), chr(39))}"\n'
             f'mapping_source: "{self._safe_str(match.get("mapping_source")).replace(chr(34), chr(39))}"\n'
+            "match_basic:\n"
+            f'  match: "{self._safe_str(match_basic.get("match") or english).replace(chr(34), chr(39))}"\n'
+            f'  league: "{self._safe_str(match_basic.get("league") or match.get("league")).replace(chr(34), chr(39))}"\n'
+            f'  kickoff_time: "{self._safe_str(match_basic.get("kickoff_time") or match.get("understat_date") or match.get("football_data_date")).replace(chr(34), chr(39))}"\n'
+            f"  round: {json.dumps(match_basic.get('round'))}\n"
+            "  home_rank_points:\n"
+            f"    rank: {json.dumps(home_rank_points.get('rank'))}\n"
+            f"    points: {json.dumps(home_rank_points.get('points'))}\n"
+            "  away_rank_points:\n"
+            f"    rank: {json.dumps(away_rank_points.get('rank'))}\n"
+            f"    points: {json.dumps(away_rank_points.get('points'))}\n"
+            "  remaining_matches:\n"
+            f"    home: {json.dumps(remaining_matches.get('home'))}\n"
+            f"    away: {json.dumps(remaining_matches.get('away'))}\n"
+            "  table_context:\n"
+            f'    home_objective: "{self._safe_str(table_context.get("home_objective")).replace(chr(34), chr(39))}"\n'
+            f'    away_objective: "{self._safe_str(table_context.get("away_objective")).replace(chr(34), chr(39))}"\n'
             'status: "manual_draft"\n'
             "---\n\n"
             f"# Manual Prematch Audit - {english_home} vs {english_away}\n\n"
@@ -815,6 +891,14 @@ class AuditRouter:
                     encoding="utf-8",
                 )
                 created += 1
+                continue
+
+            # Keep generated stub frontmatter aligned with newest manifest fields.
+            if canonical_path.exists() and canonical_path not in real_reports:
+                canonical_path.write_text(
+                    self._build_stub_content(issue, match, english_home, english_away),
+                    encoding="utf-8",
+                )
                 continue
 
             chosen = None

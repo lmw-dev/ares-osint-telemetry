@@ -139,6 +139,17 @@ def _build_prematch_frontmatter_block(*, issue: str, match: Dict[str, Any], matc
     away_rank_points = match_basic.get("away_rank_points") if isinstance(match_basic.get("away_rank_points"), dict) else {}
     remaining = match_basic.get("remaining_matches") if isinstance(match_basic.get("remaining_matches"), dict) else {}
     table_context = match_basic.get("table_context") if isinstance(match_basic.get("table_context"), dict) else {}
+    euro_odds = match.get("euro_odds") if isinstance(match.get("euro_odds"), dict) else {}
+    asian_handicap = match.get("asian_handicap") if isinstance(match.get("asian_handicap"), dict) else {}
+    total_goals = match.get("total_goals") if isinstance(match.get("total_goals"), dict) else {}
+    euro_rows = euro_odds.get("company_rows") if isinstance(euro_odds.get("company_rows"), list) else []
+    asian_rows = asian_handicap.get("company_rows") if isinstance(asian_handicap.get("company_rows"), list) else []
+    total_rows = total_goals.get("company_rows") if isinstance(total_goals.get("company_rows"), list) else []
+    euro_logic = euro_odds.get("market_time_logic") if isinstance(euro_odds.get("market_time_logic"), dict) else {}
+    asian_init = asian_handicap.get("initial_average") if isinstance(asian_handicap.get("initial_average"), dict) else {}
+    asian_curr = asian_handicap.get("current_average") if isinstance(asian_handicap.get("current_average"), dict) else {}
+    total_init = total_goals.get("initial_average") if isinstance(total_goals.get("initial_average"), dict) else {}
+    total_curr = total_goals.get("current_average") if isinstance(total_goals.get("current_average"), dict) else {}
     lines = [
         "---",
         f'issue: "{_yaml_safe_text(issue)}"',
@@ -166,9 +177,84 @@ def _build_prematch_frontmatter_block(*, issue: str, match: Dict[str, Any], matc
         "  table_context:",
         f'    home_objective: "{_yaml_safe_text(table_context.get("home_objective"))}"',
         f'    away_objective: "{_yaml_safe_text(table_context.get("away_objective"))}"',
+        "euro_odds:",
+        f'  status: "{_yaml_safe_text(euro_odds.get("status"))}"',
+        f"  company_count: {len(euro_rows)}",
+        f'  source_url: "{_yaml_safe_text(euro_odds.get("source_url"))}"',
+        "  market_time_logic:",
+        f'    home_odds_direction: "{_yaml_safe_text(euro_logic.get("home_odds_direction"))}"',
+        f'    draw_odds_direction: "{_yaml_safe_text(euro_logic.get("draw_odds_direction"))}"',
+        f'    away_odds_direction: "{_yaml_safe_text(euro_logic.get("away_odds_direction"))}"',
+        f"    home_avg_delta: {json.dumps(euro_logic.get('home_avg_delta'))}",
+        f"    draw_avg_delta: {json.dumps(euro_logic.get('draw_avg_delta'))}",
+        f"    away_avg_delta: {json.dumps(euro_logic.get('away_avg_delta'))}",
+        "  company_rows:",
+    ]
+    for row in euro_rows[:12]:
+        init = row.get("initial") if isinstance(row.get("initial"), dict) else {}
+        curr = row.get("current") if isinstance(row.get("current"), dict) else {}
+        lines.extend(
+            [
+                f'    - company: "{_yaml_safe_text(row.get("company_name"))}"',
+                f'      update_time: "{_yaml_safe_text(row.get("update_time"))}"',
+                f"      initial: [{json.dumps(init.get('home'))}, {json.dumps(init.get('draw'))}, {json.dumps(init.get('away'))}]",
+                f"      current: [{json.dumps(curr.get('home'))}, {json.dumps(curr.get('draw'))}, {json.dumps(curr.get('away'))}]",
+            ]
+        )
+    lines.extend(
+        [
+        "asian_handicap:",
+        f'  status: "{_yaml_safe_text(asian_handicap.get("status"))}"',
+        "  initial_average:",
+        f"    home_water: {json.dumps(asian_init.get('left'))}",
+        f"    line: {json.dumps(asian_init.get('line'))}",
+        f"    away_water: {json.dumps(asian_init.get('right'))}",
+        "  current_average:",
+        f"    home_water: {json.dumps(asian_curr.get('left'))}",
+        f"    line: {json.dumps(asian_curr.get('line'))}",
+        f"    away_water: {json.dumps(asian_curr.get('right'))}",
+        "  company_rows:",
+        ]
+    )
+    for row in asian_rows[:12]:
+        init = row.get("initial") if isinstance(row.get("initial"), dict) else {}
+        curr = row.get("current") if isinstance(row.get("current"), dict) else {}
+        lines.extend(
+            [
+                f'    - company: "{_yaml_safe_text(row.get("company_name"))}"',
+                f'      update_time: "{_yaml_safe_text(row.get("update_time"))}"',
+                f"      initial: [{json.dumps(init.get('left'))}, {json.dumps(init.get('line'))}, {json.dumps(init.get('right'))}]",
+                f"      current: [{json.dumps(curr.get('left'))}, {json.dumps(curr.get('line'))}, {json.dumps(curr.get('right'))}]",
+            ]
+        )
+    lines.extend(
+        [
+        "total_goals:",
+        f'  status: "{_yaml_safe_text(total_goals.get("status"))}"',
+        f"  initial_line: {json.dumps(total_init.get('line'))}",
+        f"  current_line: {json.dumps(total_curr.get('line'))}",
+        f"  over_water: {json.dumps(total_curr.get('left'))}",
+        f"  under_water: {json.dumps(total_curr.get('right'))}",
+        "  company_rows:",
+        ]
+    )
+    for row in total_rows[:12]:
+        init = row.get("initial") if isinstance(row.get("initial"), dict) else {}
+        curr = row.get("current") if isinstance(row.get("current"), dict) else {}
+        lines.extend(
+            [
+                f'    - company: "{_yaml_safe_text(row.get("company_name"))}"',
+                f'      update_time: "{_yaml_safe_text(row.get("update_time"))}"',
+                f"      initial: [{json.dumps(init.get('left'))}, {json.dumps(init.get('line'))}, {json.dumps(init.get('right'))}]",
+                f"      current: [{json.dumps(curr.get('left'))}, {json.dumps(curr.get('line'))}, {json.dumps(curr.get('right'))}]",
+            ]
+        )
+    lines.extend(
+        [
         "---",
         "",
-    ]
+        ]
+    )
     return "\n".join(lines)
 
 

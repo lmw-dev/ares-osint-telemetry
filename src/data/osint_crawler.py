@@ -392,12 +392,15 @@ class AresOsintCrawler:
             coverage = "none"
             ok_count = 0
 
+        market_pack = self._extract_titan_market_pack(match_id=match_id, pages=pages)
+
         snapshot = {
             "source": "titan007",
             "match_id": match_id,
             "pages": pages,
             "raw_refs": raw_refs,
             "identity_check": identity_check,
+            "market_pack": market_pack,
             "signals": {
                 "coverage": coverage,
                 "ok_page_count": ok_count,
@@ -407,6 +410,330 @@ class AresOsintCrawler:
         }
         self._titan_prematch_cache[match_id] = snapshot
         return dict(snapshot)
+
+    @staticmethod
+    def _safe_float(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _parse_titan_compact_time(value: Any) -> Optional[str]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        # Example: 2016,01-1,16,14,59,00
+        parts = [p.strip() for p in text.split(",")]
+        if len(parts) >= 6:
+            year = parts[0]
+            month = parts[1].split("-", 1)[0]
+            day = parts[2]
+            hh = parts[3]
+            mm = parts[4]
+            ss = parts[5]
+            if all(x.isdigit() for x in [year, month, day, hh, mm, ss]):
+                return f"{int(year):04d}-{int(month):02d}-{int(day):02d} {int(hh):02d}:{int(mm):02d}:{int(ss):02d}"
+        return None
+
+    def _company_bucket(self, company_name: str) -> str:
+        name = str(company_name or "").lower()
+        if any(x in name for x in ("威廉", "william")):
+            return "威廉"
+        if any(x in name for x in ("澳门", "macau", "macao", "澳*")):
+            return "澳门"
+        if any(x in name for x in ("立博", "ladbrokes")):
+            return "立博"
+        if "365" in name:
+            return "365"
+        if any(x in name for x in ("易胜博", "easybets")):
+            return "易胜博"
+        if any(x in name for x in ("伟德", "betvictor")):
+            return "伟德"
+        if any(x in name for x in ("pinnacle", "平博")):
+            return "pinnacle/平博"
+        if "betfair" in name:
+            return "betfair/交易所"
+        return ""
+
+    def _prioritize_euro_rows(self, rows: List[Dict[str, Any]], limit: int = 12) -> List[Dict[str, Any]]:
+        priority_order = ["威廉", "澳门", "立博", "365", "易胜博", "伟德", "pinnacle/平博", "betfair/交易所"]
+        picked: List[Dict[str, Any]] = []
+        seen_ids: set = set()
+        for bucket in priority_order:
+            for row in rows:
+                if row.get("priority_bucket") != bucket:
+                    continue
+                key = row.get("company_id") or row.get("company_name")
+                if key in seen_ids:
+                    continue
+                picked.append(row)
+                seen_ids.add(key)
+                break
+        for row in rows:
+            if len(picked) >= limit:
+                break
+            key = row.get("company_id") or row.get("company_name")
+            if key in seen_ids:
+                continue
+            picked.append(row)
+            seen_ids.add(key)
+        return picked[:limit]
+
+    def _extract_titan_euro_js_data(self, match_id: str) -> Dict[str, Any]:
+        js_url = f"https://1x2d.titan007.com/{match_id}.js"
+        try:
+            resp = requests.get(
+                js_url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                return {"status": "http_error", "url": js_url, "http_status": resp.status_code, "rows": []}
+            text, encoding_used = self._decode_html_bytes(resp.content)
+        except Exception as exc:
+            return {"status": "error", "url": js_url, "error": str(exc), "rows": []}
+
+        game_match = re.search(r"var\s+game\s*=\s*Array\((.*?)\)\s*;", text, flags=re.S)
+        if not game_match:
+            return {"status": "missing_game_array", "url": js_url, "encoding": encoding_used, "rows": []}
+        raw_items = re.findall(r'"((?:[^"\\]|\\.)*)"', game_match.group(1))
+
+        detail_by_odds_id: Dict[str, List[Dict[str, Any]]] = {}
+        detail_match = re.search(r"var\s+gameDetail\s*=\s*Array\((.*?)\)\s*;", text, flags=re.S)
+        if detail_match:
+            detail_items = re.findall(r'"((?:[^"\\]|\\.)*)"', detail_match.group(1))
+            for item in detail_items:
+                if "^" not in item:
+                    continue
+                odds_id, seq = item.split("^", 1)
+                points: List[Dict[str, Any]] = []
+                for chunk in [x for x in seq.split(";") if x.strip()]:
+                    parts = [x.strip() for x in chunk.split("|")]
+                    if len(parts) < 4:
+                        continue
+                    points.append(
+                        {
+                            "home": self._safe_float(parts[0]),
+                            "draw": self._safe_float(parts[1]),
+                            "away": self._safe_float(parts[2]),
+                            "time": parts[3],
+                        }
+                    )
+                if points:
+                    detail_by_odds_id[str(odds_id)] = points
+
+        rows: List[Dict[str, Any]] = []
+        for raw in raw_items:
+            cols = raw.split("|")
+            if len(cols) < 22:
+                continue
+            company_id = str(cols[0]).strip()
+            odds_id = str(cols[1]).strip()
+            company_name = str(cols[21]).strip() or str(cols[2]).strip()
+            initial_home = self._safe_float(cols[3])
+            initial_draw = self._safe_float(cols[4])
+            initial_away = self._safe_float(cols[5])
+            current_home = self._safe_float(cols[10]) if len(cols) > 10 else None
+            current_draw = self._safe_float(cols[11]) if len(cols) > 11 else None
+            current_away = self._safe_float(cols[12]) if len(cols) > 12 else None
+            update_time = self._parse_titan_compact_time(cols[20] if len(cols) > 20 else "")
+            seq = detail_by_odds_id.get(odds_id, [])
+            row = {
+                "company_id": company_id,
+                "company_name": company_name,
+                "priority_bucket": self._company_bucket(company_name),
+                "initial": {"home": initial_home, "draw": initial_draw, "away": initial_away},
+                "current": {
+                    "home": current_home if current_home is not None else initial_home,
+                    "draw": current_draw if current_draw is not None else initial_draw,
+                    "away": current_away if current_away is not None else initial_away,
+                },
+                "update_time": update_time,
+                "is_mainstream": str(cols[22]).strip() == "1" if len(cols) > 22 else False,
+                "is_exchange": str(cols[23]).strip() == "1" if len(cols) > 23 else False,
+                "change_points": seq[:8],
+            }
+            rows.append(row)
+
+        rows.sort(
+            key=lambda r: (
+                0 if r.get("priority_bucket") else 1,
+                0 if r.get("is_mainstream") else 1,
+                str(r.get("company_name") or ""),
+            )
+        )
+        return {
+            "status": "ok",
+            "url": js_url,
+            "encoding": encoding_used,
+            "company_rows_all": rows,
+            "company_rows": self._prioritize_euro_rows(rows, limit=12),
+        }
+
+    def _extract_titan_asian_or_total_rows(
+        self,
+        *,
+        raw_ref: str,
+        market: str,
+        euro_rows: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        if not raw_ref:
+            return {"status": "missing_raw_ref", "company_rows": []}
+        try:
+            html = Path(raw_ref).read_text(encoding="utf-8", errors="ignore")
+        except Exception as exc:
+            return {"status": "read_error", "error": str(exc), "company_rows": []}
+        soup = BeautifulSoup(html, "html.parser")
+        table = soup.find("table", id="odds")
+        if not table:
+            return {"status": "missing_odds_table", "company_rows": []}
+
+        euro_company_by_id: Dict[str, Dict[str, Any]] = {}
+        for row in euro_rows or []:
+            cid = str(row.get("company_id") or "").strip()
+            if cid:
+                euro_company_by_id[cid] = row
+
+        rows: List[Dict[str, Any]] = []
+        for tr in table.find_all("tr"):
+            tds = tr.find_all("td")
+            if len(tds) < 13:
+                continue
+            check = tr.find("input", attrs={"name": "oddsShow"})
+            company_id = str((check.get("data-id") if check else "") or "").strip()
+            company_text = tds[1].get_text(" ", strip=True)
+            linked = euro_company_by_id.get(company_id)
+            company_name = (linked or {}).get("company_name") or company_text
+            priority_bucket = (linked or {}).get("priority_bucket") or self._company_bucket(company_name)
+            update_time = (linked or {}).get("update_time")
+            initial_left = self._safe_float(tds[3].get_text(" ", strip=True))
+            initial_line = tds[4].get("goals") or tds[4].get_text(" ", strip=True)
+            initial_right = self._safe_float(tds[5].get_text(" ", strip=True))
+
+            whole_odds = [td for td in tds if str(td.get("oddstype") or "") == "wholeOdds"]
+            current_left = self._safe_float(whole_odds[0].get_text(" ", strip=True)) if len(whole_odds) > 0 else None
+            current_line = whole_odds[1].get("goals") if len(whole_odds) > 1 else None
+            current_right = self._safe_float(whole_odds[2].get_text(" ", strip=True)) if len(whole_odds) > 2 else None
+
+            fallback_time = self._parse_titan_compact_time(tds[3].get("title") or "")
+            row = {
+                "company_id": company_id or None,
+                "company_name": company_name,
+                "company_short": company_text,
+                "priority_bucket": priority_bucket,
+                "initial": {"left": initial_left, "line": initial_line, "right": initial_right},
+                "current": {
+                    "left": current_left if current_left is not None else initial_left,
+                    "line": current_line if current_line is not None else initial_line,
+                    "right": current_right if current_right is not None else initial_right,
+                },
+                "update_time": update_time or fallback_time,
+                "market": market,
+            }
+            rows.append(row)
+        rows = self._prioritize_euro_rows(rows, limit=12)
+        return {"status": "ok", "company_rows": rows}
+
+    @staticmethod
+    def _average_numeric(values: List[Optional[float]]) -> Optional[float]:
+        nums = [float(v) for v in values if isinstance(v, (int, float))]
+        if not nums:
+            return None
+        return round(sum(nums) / len(nums), 4)
+
+    def _summarize_asian_or_total(self, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        initial_left = self._average_numeric([self._safe_float((r.get("initial") or {}).get("left")) for r in rows])
+        initial_line = self._average_numeric([self._safe_float((r.get("initial") or {}).get("line")) for r in rows])
+        initial_right = self._average_numeric([self._safe_float((r.get("initial") or {}).get("right")) for r in rows])
+        current_left = self._average_numeric([self._safe_float((r.get("current") or {}).get("left")) for r in rows])
+        current_line = self._average_numeric([self._safe_float((r.get("current") or {}).get("line")) for r in rows])
+        current_right = self._average_numeric([self._safe_float((r.get("current") or {}).get("right")) for r in rows])
+        return {
+            "initial_average": {"left": initial_left, "line": initial_line, "right": initial_right},
+            "current_average": {"left": current_left, "line": current_line, "right": current_right},
+        }
+
+    def _build_euro_market_time_logic(self, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        diffs_home = []
+        diffs_draw = []
+        diffs_away = []
+        for r in rows:
+            init = r.get("initial") if isinstance(r.get("initial"), dict) else {}
+            curr = r.get("current") if isinstance(r.get("current"), dict) else {}
+            ih = self._safe_float(init.get("home"))
+            idr = self._safe_float(init.get("draw"))
+            ia = self._safe_float(init.get("away"))
+            ch = self._safe_float(curr.get("home"))
+            cd = self._safe_float(curr.get("draw"))
+            ca = self._safe_float(curr.get("away"))
+            if isinstance(ih, float) and isinstance(ch, float):
+                diffs_home.append(ch - ih)
+            if isinstance(idr, float) and isinstance(cd, float):
+                diffs_draw.append(cd - idr)
+            if isinstance(ia, float) and isinstance(ca, float):
+                diffs_away.append(ca - ia)
+
+        def _direction(values: List[float]) -> str:
+            if not values:
+                return "unknown"
+            avg = sum(values) / len(values)
+            if avg <= -0.03:
+                return "down"
+            if avg >= 0.03:
+                return "up"
+            return "flat"
+
+        return {
+            "home_odds_direction": _direction(diffs_home),
+            "draw_odds_direction": _direction(diffs_draw),
+            "away_odds_direction": _direction(diffs_away),
+            "home_avg_delta": round(sum(diffs_home) / len(diffs_home), 4) if diffs_home else None,
+            "draw_avg_delta": round(sum(diffs_draw) / len(diffs_draw), 4) if diffs_draw else None,
+            "away_avg_delta": round(sum(diffs_away) / len(diffs_away), 4) if diffs_away else None,
+        }
+
+    def _extract_titan_market_pack(self, *, match_id: str, pages: Dict[str, Any]) -> Dict[str, Any]:
+        euro_pack = self._extract_titan_euro_js_data(match_id)
+        euro_rows_all = euro_pack.get("company_rows_all") if isinstance(euro_pack.get("company_rows_all"), list) else []
+        euro_rows = euro_pack.get("company_rows") if isinstance(euro_pack.get("company_rows"), list) else []
+
+        asian_ref = ""
+        over_ref = ""
+        if isinstance(pages.get("asian_odds"), dict):
+            asian_ref = str((pages.get("asian_odds") or {}).get("raw_ref") or "").strip()
+        if isinstance(pages.get("over_down"), dict):
+            over_ref = str((pages.get("over_down") or {}).get("raw_ref") or "").strip()
+        asian_pack = self._extract_titan_asian_or_total_rows(raw_ref=asian_ref, market="asian", euro_rows=euro_rows_all)
+        total_pack = self._extract_titan_asian_or_total_rows(raw_ref=over_ref, market="total", euro_rows=euro_rows_all)
+
+        asian_rows = asian_pack.get("company_rows") if isinstance(asian_pack.get("company_rows"), list) else []
+        total_rows = total_pack.get("company_rows") if isinstance(total_pack.get("company_rows"), list) else []
+
+        return {
+            "status": "ok" if euro_pack.get("status") == "ok" else "partial",
+            "euro_odds": {
+                "status": euro_pack.get("status"),
+                "company_rows": euro_rows,
+                "market_time_logic": self._build_euro_market_time_logic(euro_rows_all),
+                "source_url": euro_pack.get("url"),
+            },
+            "asian_handicap": {
+                "status": asian_pack.get("status"),
+                **self._summarize_asian_or_total(asian_rows),
+                "company_rows": asian_rows,
+            },
+            "total_goals": {
+                "status": total_pack.get("status"),
+                **self._summarize_asian_or_total(total_rows),
+                "company_rows": total_rows,
+            },
+        }
 
     def _normalize_match_english(self, english: str) -> str:
         home, away = [part.strip() for part in str(english or "").split(" vs ", 1)] if " vs " in str(english or "") else (str(english or "").strip(), "")
@@ -1790,6 +2117,15 @@ class AresOsintCrawler:
                     existing_match["league"] = found_league
                 if titan_prematch_snapshot:
                     existing_match["titan_prematch"] = titan_prematch_snapshot
+                    market_pack = titan_prematch_snapshot.get("market_pack") if isinstance(
+                        titan_prematch_snapshot.get("market_pack"), dict
+                    ) else {}
+                    if isinstance(market_pack.get("euro_odds"), dict):
+                        existing_match["euro_odds"] = market_pack.get("euro_odds")
+                    if isinstance(market_pack.get("asian_handicap"), dict):
+                        existing_match["asian_handicap"] = market_pack.get("asian_handicap")
+                    if isinstance(market_pack.get("total_goals"), dict):
+                        existing_match["total_goals"] = market_pack.get("total_goals")
                 if manual_anchor_applied:
                     existing_match["manual_anchor_applied"] = True
                     existing_match["manual_anchor_mode"] = manual_anchor_mode
@@ -1903,6 +2239,21 @@ class AresOsintCrawler:
                         manual_anchor_applied=manual_anchor_applied,
                     ),
                     "match_basic": match_basic,
+                    "euro_odds": (
+                        ((titan_prematch_snapshot or {}).get("market_pack") or {}).get("euro_odds")
+                        if isinstance(((titan_prematch_snapshot or {}).get("market_pack") or {}).get("euro_odds"), dict)
+                        else {}
+                    ),
+                    "asian_handicap": (
+                        ((titan_prematch_snapshot or {}).get("market_pack") or {}).get("asian_handicap")
+                        if isinstance(((titan_prematch_snapshot or {}).get("market_pack") or {}).get("asian_handicap"), dict)
+                        else {}
+                    ),
+                    "total_goals": (
+                        ((titan_prematch_snapshot or {}).get("market_pack") or {}).get("total_goals")
+                        if isinstance(((titan_prematch_snapshot or {}).get("market_pack") or {}).get("total_goals"), dict)
+                        else {}
+                    ),
                     "match_context_flags": self._build_default_match_context_flags(),
                     "market_behavior": self._build_default_market_behavior(),
                     "market_odds_history": [market_snapshot],
@@ -2125,6 +2476,21 @@ class AresOsintCrawler:
                     ),
                     "match_basic": match_basic,
                     "titan_prematch": titan_prematch_snapshot,
+                    "euro_odds": (
+                        ((titan_prematch_snapshot or {}).get("market_pack") or {}).get("euro_odds")
+                        if isinstance(((titan_prematch_snapshot or {}).get("market_pack") or {}).get("euro_odds"), dict)
+                        else {}
+                    ),
+                    "asian_handicap": (
+                        ((titan_prematch_snapshot or {}).get("market_pack") or {}).get("asian_handicap")
+                        if isinstance(((titan_prematch_snapshot or {}).get("market_pack") or {}).get("asian_handicap"), dict)
+                        else {}
+                    ),
+                    "total_goals": (
+                        ((titan_prematch_snapshot or {}).get("market_pack") or {}).get("total_goals")
+                        if isinstance(((titan_prematch_snapshot or {}).get("market_pack") or {}).get("total_goals"), dict)
+                        else {}
+                    ),
                     "match_context_flags": self._build_default_match_context_flags(),
                     "market_behavior": self._build_default_market_behavior(),
                     "market_odds_history": [],

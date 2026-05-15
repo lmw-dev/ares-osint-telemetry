@@ -374,7 +374,7 @@ def build_report(
     lines.append("")
     lines.append("## 📊 二、本期赛后物理分析")
     lines.append("")
-    lines.append("### 🚨 1) 严重方差倒挂（建议下期忽略比分、采信物理面）")
+    lines.append("### 🚨 1) 严重方差倒挂（建议下期降低比分权重、优先采信物理面）")
     if variance_rows:
         for row in variance_rows:
             lines.append(_fmt_match_line(row))
@@ -397,7 +397,7 @@ def build_report(
     lines.append("")
     lines.append("## Next Actions")
     lines.append("- 将“提升/下调评级”名单同步写入队档更新队列，下一期 prematch 前先完成回写。")
-    lines.append("- 对“方差倒挂”场次在 prematch 检索层加 `ignore_score=true` 偏置，优先读取 xG 与纵深传球证据。")
+    lines.append("- 对“方差倒挂”场次在 prematch 检索层降低比分权重，优先读取 xG 与纵深传球证据。")
     lines.append("- 若继续使用 Top5 口径，请固定只消费 Top5 对阵，避免跨口径误判。")
     lines.append("")
     return "\n".join(lines).strip() + "\n", summary_json

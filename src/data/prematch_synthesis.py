@@ -887,6 +887,8 @@ class PrematchSynthesis:
             blocks.append("CONVERSION_BUBBLE_NO_SINGLE")
         if bool(verdict.get("away_half_ball_no_upgrade_home_xg_risk_gate")):
             blocks.append("AWAY_HALF_BALL_NO_UPGRADE_HOME_XG_RISK")
+        if bool(verdict.get("compressed_table_draw_protection_gate")):
+            blocks.append("COMPRESSED_TABLE_DRAW_PROTECTION")
         if bool(verdict.get("away_elite_conditional_only")):
             blocks.append("AWAY_ELITE_CONDITIONAL_ONLY")
         if bool(verdict.get("is_insufficient_resilience")):
@@ -1423,6 +1425,62 @@ class PrematchSynthesis:
         return home_xg is not None and home_xg >= 1.35
 
     @staticmethod
+    def _compressed_table_draw_protection_gate(
+        home_market: Optional[float],
+        away_market: Optional[float],
+        home_profile: Dict[str, Any],
+        away_profile: Dict[str, Any],
+        context_flags: Dict[str, Any],
+    ) -> bool:
+        # COMPRESSED_TABLE_DRAW_PROTECTION:
+        # 赛季末压缩积分带 + 赔率浅热门（约 1.90~2.30）时，强制防平并禁单。
+        season_stage = _safe_text(context_flags.get("season_stage")).lower()
+        is_late_season = season_stage in {"late", "run_in", "closing"} or bool(
+            context_flags.get("late_season")
+        )
+        if not is_late_season:
+            # 数据不全时，允许以“目标强度 + 价格区间 + 双方可拿分空间”做弱触发。
+            is_late_season = bool(context_flags.get("opponent_survival_pressure_high")) or bool(
+                context_flags.get("title_race_pressure")
+            )
+
+        hp = _safe_float(home_profile.get("table_points"))
+        ap = _safe_float(away_profile.get("table_points"))
+        compressed_points = (
+            hp is not None
+            and ap is not None
+            and 39 <= hp <= 44
+            and 39 <= ap <= 44
+            and abs(hp - ap) <= 5
+        )
+
+        if not (isinstance(home_market, (int, float)) and isinstance(away_market, (int, float))):
+            return False
+        home_odds = 100.0 / float(home_market) if float(home_market) > 0 else 99.0
+        away_odds = 100.0 / float(away_market) if float(away_market) > 0 else 99.0
+        favorite_odds = min(home_odds, away_odds)
+        shallow_favorite = 1.90 <= favorite_odds <= 2.30
+
+        if not shallow_favorite:
+            return False
+
+        # 双方至少一侧仍存在“非死亡动机”。
+        motivation_txt = " | ".join(
+            [
+                _safe_text(context_flags.get("primary_motivation_type")).lower(),
+                " ".join(_safe_text(x).lower() for x in (context_flags.get("motivation_context_flags") or [])),
+            ]
+        )
+        non_dead_motivation = any(
+            k in motivation_txt
+            for k in ("survival", "relegation", "europe", "title", "escape", "pressure")
+        ) or bool(context_flags.get("opponent_survival_pressure_high")) or bool(
+            context_flags.get("title_race_pressure")
+        )
+
+        return (compressed_points or non_dead_motivation) and is_late_season
+
+    @staticmethod
     def _is_away_elite_conditional_only(
         away_favorite: bool,
         away_elite: bool,
@@ -1744,6 +1802,13 @@ class PrematchSynthesis:
                 handicap_deepen=handicap_deepen,
                 home_profile=home_profile,
             )
+            compressed_table_draw_protection = self._compressed_table_draw_protection_gate(
+                home_market=home_market,
+                away_market=away_market,
+                home_profile=home_profile,
+                away_profile=away_profile,
+                context_flags=context_flags,
+            )
             structural_crisis_home_survival = bool(
                 context_flags.get("structural_crisis_context") and opponent_survival_pressure
             )
@@ -1780,6 +1845,7 @@ class PrematchSynthesis:
                     favorite_conversion_bubble,
                     away_euro_fatigue_mild_gate,
                     away_half_ball_no_upgrade_gate,
+                    compressed_table_draw_protection,
                 ]
             )
             brand_price_not_low_enough = self._brand_favorite_price_not_low_enough_gate(
@@ -2028,6 +2094,17 @@ class PrematchSynthesis:
                     suggestion = "0/1/3"
                     confidence_score -= 0.5
 
+                if compressed_table_draw_protection:
+                    if suggestion == "3":
+                        suggestion = "3/1"
+                        confidence_score -= 0.5
+                    elif suggestion == "0":
+                        suggestion = "1/0"
+                        confidence_score -= 0.5
+                    elif suggestion == "3/0":
+                        suggestion = "3/1/0"
+                        confidence_score -= 0.4
+
                 if relegation_away_draw:
                     if suggestion == "3":
                         suggestion = "3/1"
@@ -2189,6 +2266,8 @@ class PrematchSynthesis:
                     reason += " 欧战消耗加权门禁已生效：客场轻盘优势降级。"
                 if away_half_ball_no_upgrade_gate:
                     reason += " 客让半球未升盘门禁已生效：主队乱战路径已纳入深覆盖。"
+                if compressed_table_draw_protection:
+                    reason += " 赛季末压缩积分带防平门禁已生效：浅热门场景强制加入平局保护。"
                 if brand_price_not_low_enough:
                     reason += " 品牌强队赔率不够低门禁已生效：强题材但价格未压到预期区间，禁止单选并补深防。"
                 if narrative_strength_cap:
@@ -2282,6 +2361,7 @@ class PrematchSynthesis:
                     "away_euro_fatigue_mild_favorite_gate": away_euro_fatigue_mild_gate,
                     "favorite_conversion_bubble_no_single_gate": favorite_conversion_bubble,
                     "away_half_ball_no_upgrade_home_xg_risk_gate": away_half_ball_no_upgrade_gate,
+                    "compressed_table_draw_protection_gate": compressed_table_draw_protection,
                     "brand_favorite_price_not_low_enough_gate": brand_price_not_low_enough,
                     "narrative_strength_cap_gate": narrative_strength_cap,
                     "home_away_integrity_gate": home_away_integrity_gate,
@@ -2589,6 +2669,7 @@ class PrematchSynthesis:
             "away_euro_fatigue_mild_favorite_gate",
             "favorite_conversion_bubble_no_single_gate",
             "away_half_ball_no_upgrade_home_xg_risk_gate",
+            "compressed_table_draw_protection_gate",
             "brand_favorite_price_not_low_enough_gate",
             "narrative_strength_cap_gate",
             "home_away_integrity_gate",

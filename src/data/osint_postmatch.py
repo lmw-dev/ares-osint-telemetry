@@ -1225,7 +1225,7 @@ class MatchTelemetryPipeline:
         if variance_level in {"material", "severe"}:
             markdown_content += "### ⚡ 危险方差倒挂 (严重警报)\n"
             markdown_content += f"比赛比分最终为 `{score}`，但根据底层物理遥测，双方的预期进球真实转化存在巨大撕裂：主队 xG **{h_xg:.2f}** 对比 客队 xG **{a_xg:.2f}**。\n"
-            markdown_content += "👉 **Ares 引擎建议**：此场赛果具有强烈的运气、神仙球或门将爆种因素。在下一周期的量化推演中，**必须无视本场比分结果**，直接采信 xG 物理预期，以防止大模型判断失真！\n\n"
+            markdown_content += "👉 **Ares 引擎建议**：此场赛果存在明显方差。下周期应**降低比分结果在球队能力更新中的权重**，并优先参考 xG 与射门质量；但赛果仍保留用于结算与结构复盘。\n\n"
         elif variance_level == "mild":
             markdown_content += "### ⚠️ 轻微方差/低边际波动\n"
             markdown_content += f"比分 `{score}` 与机会质量并非完全同向（主 xG **{h_xg:.2f}** vs 客 xG **{a_xg:.2f}**），建议标记为 mild_variance，避免过度结论化。\n\n"
@@ -1250,6 +1250,11 @@ class MatchTelemetryPipeline:
         passes_status = str(hot_data.get("metric_integrity", {}).get("passes_attacking_third", {}).get("status") or "")
         if passes_status not in {"verified"}:
             markdown_content += "- **阵地纵深打击**：`passes_attacking_third` 来源/完整性未充分验证，当前仅保留记录，禁止作为方向性证据。\n"
+        elif (h_deep > a_deep and h_xg < a_xg) or (a_deep > h_deep and a_xg < h_xg):
+            if h_deep > a_deep:
+                markdown_content += f"- **阵地纵深打击**：主队推进次数更高（主 **{h_deep}** / 客 {a_deep}），但客队机会质量更高（主 xG **{h_xg:.2f}** / 客 xG **{a_xg:.2f}**），属于“推进量与机会质量分裂”场景。\n"
+            else:
+                markdown_content += f"- **阵地纵深打击**：客队推进次数更高（主 {h_deep} / 客 **{a_deep}**），但主队机会质量更高（主 xG **{h_xg:.2f}** / 客 xG **{a_xg:.2f}**），属于“推进量与机会质量分裂”场景。\n"
         elif h_deep > a_deep * 1.5:
             markdown_content += f"- **阵地纵深打击**：主队在进攻三区成功送出了高达 **{h_deep}** 次的高危传球（对比客队的 {a_deep} 次）。客队防线全场处于深度退守并被反复摩擦的状态。\n"
         elif a_deep > h_deep * 1.5:

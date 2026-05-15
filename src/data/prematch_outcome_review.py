@@ -263,6 +263,15 @@ def _classify_review_label(
     # - RESULT_MISS_PROCESS_CLOSE
     single_pick_like = len(suggestion_set) == 1
     if result_hit:
+        # PROCESS_RIGHT_RESULT_DRAW:
+        # 结构命中且赛果为平，但 xG 明显倾向非平局一侧 -> 过程正确、结果平局方差。
+        if (
+            "1" in suggestion_set
+            and result_code == "1"
+            and xg_better in {"3", "0"}
+            and xg_gap_abs >= 0.75
+        ):
+            return "PROCESS_RIGHT_RESULT_DRAW"
         if single_pick_like and xg_better == result_code and xg_gap_abs >= 0.35:
             return "HIGH_QUALITY_HIT"
         if (not single_pick_like) and xg_better == result_code and xg_gap_abs >= 0.35:

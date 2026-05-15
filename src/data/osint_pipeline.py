@@ -134,6 +134,85 @@ def _yaml_safe_text(value: Any) -> str:
     return text
 
 
+def _build_default_team_xg_side_payload() -> Dict[str, Any]:
+    return {
+        "recent_5_results": [],
+        "season_xG": None,
+        "season_xGA": None,
+        "open_play_xG": None,
+        "open_play_xGA": None,
+        "key_players_xG": [],
+    }
+
+
+def _normalize_team_xg_payload(match: Dict[str, Any]) -> Dict[str, Any]:
+    payload = match.get("team_xg") if isinstance(match.get("team_xg"), dict) else {}
+    home_payload = payload.get("home_team") if isinstance(payload.get("home_team"), dict) else {}
+    away_payload = payload.get("away_team") if isinstance(payload.get("away_team"), dict) else {}
+
+    def _merge_side(side_payload: Dict[str, Any]) -> Dict[str, Any]:
+        merged = _build_default_team_xg_side_payload()
+        merged.update({k: v for k, v in side_payload.items() if v is not None})
+        if not isinstance(merged.get("recent_5_results"), list):
+            merged["recent_5_results"] = []
+        if not isinstance(merged.get("key_players_xG"), list):
+            merged["key_players_xG"] = []
+        return merged
+
+    return {
+        "home_team": _merge_side(home_payload),
+        "away_team": _merge_side(away_payload),
+    }
+
+
+def _merge_team_xg_payload(*, base: Dict[str, Any], fallback: Dict[str, Any]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {
+        "home_team": _build_default_team_xg_side_payload(),
+        "away_team": _build_default_team_xg_side_payload(),
+    }
+    for side in ("home_team", "away_team"):
+        side_fallback = fallback.get(side) if isinstance(fallback.get(side), dict) else {}
+        side_base = base.get(side) if isinstance(base.get(side), dict) else {}
+        side_merged = _build_default_team_xg_side_payload()
+        side_merged.update({k: v for k, v in side_fallback.items() if v is not None})
+        side_merged.update({k: v for k, v in side_base.items() if v is not None})
+        if not isinstance(side_merged.get("recent_5_results"), list):
+            side_merged["recent_5_results"] = []
+        if not isinstance(side_merged.get("key_players_xG"), list):
+            side_merged["key_players_xG"] = []
+        merged[side] = side_merged
+    return merged
+
+
+def _format_team_xg_recent(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return f"{float(value):.4f}"
+    if value is None:
+        return "null"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _team_xg_gap_markers(team_xg: Dict[str, Any]) -> List[str]:
+    markers: List[str] = []
+
+    def _side_missing(side: str, side_payload: Dict[str, Any]) -> None:
+        recent = side_payload.get("recent_5_results") if isinstance(side_payload.get("recent_5_results"), list) else []
+        if len(recent) < 5:
+            markers.append(f"team_xg_recent_window_short:{side}:{len(recent)}")
+        for key in ("season_xG", "season_xGA", "open_play_xG", "open_play_xGA"):
+            if side_payload.get(key) is None:
+                markers.append(f"team_xg_missing:{side}:{key}")
+        key_players = side_payload.get("key_players_xG") if isinstance(side_payload.get("key_players_xG"), list) else []
+        if not key_players:
+            markers.append(f"team_xg_missing:{side}:key_players_xG")
+
+    home_payload = team_xg.get("home_team") if isinstance(team_xg.get("home_team"), dict) else {}
+    away_payload = team_xg.get("away_team") if isinstance(team_xg.get("away_team"), dict) else {}
+    _side_missing("home", home_payload)
+    _side_missing("away", away_payload)
+    return markers
+
+
 def _build_prematch_frontmatter_block(*, issue: str, match: Dict[str, Any], match_basic: Dict[str, Any]) -> str:
     home_rank_points = match_basic.get("home_rank_points") if isinstance(match_basic.get("home_rank_points"), dict) else {}
     away_rank_points = match_basic.get("away_rank_points") if isinstance(match_basic.get("away_rank_points"), dict) else {}
@@ -150,6 +229,13 @@ def _build_prematch_frontmatter_block(*, issue: str, match: Dict[str, Any], matc
     asian_curr = asian_handicap.get("current_average") if isinstance(asian_handicap.get("current_average"), dict) else {}
     total_init = total_goals.get("initial_average") if isinstance(total_goals.get("initial_average"), dict) else {}
     total_curr = total_goals.get("current_average") if isinstance(total_goals.get("current_average"), dict) else {}
+    team_xg = _normalize_team_xg_payload(match)
+    home_team_xg = team_xg.get("home_team") if isinstance(team_xg.get("home_team"), dict) else {}
+    away_team_xg = team_xg.get("away_team") if isinstance(team_xg.get("away_team"), dict) else {}
+    home_recent = home_team_xg.get("recent_5_results") if isinstance(home_team_xg.get("recent_5_results"), list) else []
+    away_recent = away_team_xg.get("recent_5_results") if isinstance(away_team_xg.get("recent_5_results"), list) else []
+    home_key_players = home_team_xg.get("key_players_xG") if isinstance(home_team_xg.get("key_players_xG"), list) else []
+    away_key_players = away_team_xg.get("key_players_xG") if isinstance(away_team_xg.get("key_players_xG"), list) else []
     lines = [
         "---",
         f'issue: "{_yaml_safe_text(issue)}"',
@@ -249,6 +335,45 @@ def _build_prematch_frontmatter_block(*, issue: str, match: Dict[str, Any], matc
                 f"      current: [{json.dumps(curr.get('left'))}, {json.dumps(curr.get('line'))}, {json.dumps(curr.get('right'))}]",
             ]
         )
+    lines.extend(
+        [
+        "team_xg:",
+        "  home_team:",
+        "    recent_5_results:",
+        ]
+    )
+    for item in home_recent[:5]:
+        lines.append(f"      - {_format_team_xg_recent(item)}")
+    lines.extend(
+        [
+        f"    season_xG: {json.dumps(home_team_xg.get('season_xG'))}",
+        f"    season_xGA: {json.dumps(home_team_xg.get('season_xGA'))}",
+        f"    open_play_xG: {json.dumps(home_team_xg.get('open_play_xG'))}",
+        f"    open_play_xGA: {json.dumps(home_team_xg.get('open_play_xGA'))}",
+        "    key_players_xG:",
+        ]
+    )
+    for item in home_key_players[:5]:
+        lines.append(f"      - {json.dumps(item, ensure_ascii=False)}")
+    lines.extend(
+        [
+        "  away_team:",
+        "    recent_5_results:",
+        ]
+    )
+    for item in away_recent[:5]:
+        lines.append(f"      - {_format_team_xg_recent(item)}")
+    lines.extend(
+        [
+        f"    season_xG: {json.dumps(away_team_xg.get('season_xG'))}",
+        f"    season_xGA: {json.dumps(away_team_xg.get('season_xGA'))}",
+        f"    open_play_xG: {json.dumps(away_team_xg.get('open_play_xG'))}",
+        f"    open_play_xGA: {json.dumps(away_team_xg.get('open_play_xGA'))}",
+        "    key_players_xG:",
+        ]
+    )
+    for item in away_key_players[:5]:
+        lines.append(f"      - {json.dumps(item, ensure_ascii=False)}")
     lines.extend(
         [
         "---",
@@ -633,10 +758,32 @@ def _parse_team_archive_context(archive_path: Path) -> Dict[str, Any]:
         if block:
             summary_text_parts.append(" ".join(block))
 
+    frontmatter: Dict[str, Any] = {}
+    if text.startswith("---\n"):
+        marker = "\n---\n"
+        end_idx = text.find(marker, 4)
+        if end_idx != -1:
+            frontmatter_raw = text[4:end_idx]
+            try:
+                import yaml  # local import to avoid hard dependency for non-frontmatter paths
+
+                loaded = yaml.safe_load(frontmatter_raw) or {}
+                if isinstance(loaded, dict):
+                    frontmatter = loaded
+            except Exception:
+                frontmatter = {}
+
+    physical_reality = frontmatter.get("physical_reality") if isinstance(frontmatter.get("physical_reality"), dict) else {}
+    xg_history = physical_reality.get("xg_history_last_5") if isinstance(physical_reality.get("xg_history_last_5"), list) else []
+
     return {
         "archive_path": str(archive_path),
         "archive_quality": (archive_quality_match.group(1).strip().strip("'\"") if archive_quality_match else ""),
         "usable_level": usable_level_match.group(1).strip() if usable_level_match else "",
+        "physical_reality": {
+            "avg_xG_last_5": physical_reality.get("avg_xG_last_5"),
+            "xg_history_last_5": xg_history,
+        },
         "prematch_summary": {
             "profile": profile_lines,
             "risk": risk_lines,
@@ -687,6 +834,9 @@ def enrich_manifest_with_team_archive_context(
 
         match["team_archive_context"] = side_contexts
         match["prematch_context"] = compact_context
+        built_team_xg = _build_team_xg_from_archive_context(match)
+        existing_team_xg = match.get("team_xg") if isinstance(match.get("team_xg"), dict) else {}
+        match["team_xg"] = _merge_team_xg_payload(base=existing_team_xg, fallback=built_team_xg)
         updated_matches += 1
 
     if updated_matches:
@@ -696,6 +846,32 @@ def enrich_manifest_with_team_archive_context(
         except OSError as exc:
             logger.warning("Manifest 注入 Team Archive 摘要失败（保留内存态继续执行）: %s", exc)
     return {"updated_matches": updated_matches}
+
+
+def _build_team_xg_from_archive_context(match: Dict[str, Any]) -> Dict[str, Any]:
+    archive_context = match.get("team_archive_context") if isinstance(match.get("team_archive_context"), dict) else {}
+
+    def _side_payload(side_key: str) -> Dict[str, Any]:
+        side_ctx = archive_context.get(side_key) if isinstance(archive_context.get(side_key), dict) else {}
+        physical = side_ctx.get("physical_reality") if isinstance(side_ctx.get("physical_reality"), dict) else {}
+        recent_values = physical.get("xg_history_last_5") if isinstance(physical.get("xg_history_last_5"), list) else []
+        normalized_recent = []
+        for value in recent_values[:5]:
+            if isinstance(value, (int, float)):
+                normalized_recent.append(round(float(value), 4))
+        return {
+            "recent_5_results": normalized_recent,
+            "season_xG": None,
+            "season_xGA": None,
+            "open_play_xG": None,
+            "open_play_xGA": None,
+            "key_players_xG": [],
+        }
+
+    return {
+        "home_team": _side_payload("home"),
+        "away_team": _side_payload("away"),
+    }
 
 
 def _is_prematch_mapped_match(match: Dict[str, Any]) -> bool:
@@ -1024,6 +1200,8 @@ def build_prematch_ready_manifest(
     for match in matches:
         match_basic = _normalize_match_basic_payload(match)
         match["match_basic"] = match_basic
+        team_xg = _normalize_team_xg_payload(match)
+        match["team_xg"] = team_xg
         english = str(match.get("english") or "").strip()
         home, away = _split_match_english(english)
         resolved_home = resolve_team_name(home, alias_map)
@@ -1037,6 +1215,9 @@ def build_prematch_ready_manifest(
         match_basic_missing = _required_match_basic_missing_fields(match_basic)
         for field in match_basic_missing:
             marker = f"missing_match_basic:{field}"
+            reasons.append(marker)
+            soft_blockers.append(marker)
+        for marker in _team_xg_gap_markers(team_xg):
             reasons.append(marker)
             soft_blockers.append(marker)
         for side_name, row in ((resolved_home, home_row), (resolved_away, away_row)):

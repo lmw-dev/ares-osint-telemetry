@@ -13,7 +13,9 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
+import requests
 from audit_router import AuditRouter, load_dotenv_into_env
 from osint_crawler import AresOsintCrawler
 from osint_postmatch import MatchTelemetryPipeline
@@ -134,6 +136,161 @@ def _yaml_safe_text(value: Any) -> str:
     return text
 
 
+def _safe_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(str(value).strip())
+    except Exception:
+        return None
+
+
+def _parse_datetime_like(value: Any) -> Optional[datetime]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("T", " ")
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1]
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(normalized, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _infer_understat_season_year(match: Dict[str, Any]) -> int:
+    match_basic = match.get("match_basic") if isinstance(match.get("match_basic"), dict) else {}
+    candidates = [
+        match_basic.get("kickoff_time"),
+        match.get("understat_date"),
+        match.get("football_data_date"),
+    ]
+    for candidate in candidates:
+        parsed = _parse_datetime_like(candidate)
+        if not parsed:
+            continue
+        return parsed.year if parsed.month >= 7 else parsed.year - 1
+    now = datetime.utcnow()
+    return now.year if now.month >= 7 else now.year - 1
+
+
+def _normalize_understat_team_slugs(team_name: str) -> List[str]:
+    raw = str(team_name or "").strip()
+    if not raw:
+        return []
+    candidates = [
+        raw,
+        raw.replace("_", " "),
+        raw.replace(" ", "_"),
+    ]
+    dedup: List[str] = []
+    seen = set()
+    for item in candidates:
+        key = item.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        dedup.append(key)
+    return dedup
+
+
+def _fetch_understat_team_payload(*, team_name: str, season_year: int) -> Dict[str, Any]:
+    headers = {
+        "Referer": f"https://understat.com/team/{quote(str(team_name).replace(' ', '_'), safe='._-')}/{season_year}",
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": "Mozilla/5.0",
+    }
+    for slug in _normalize_understat_team_slugs(team_name):
+        encoded_slug = quote(slug, safe="._-")
+        url = f"https://understat.com/getTeamData/{encoded_slug}/{season_year}"
+        try:
+            response = requests.get(url, headers=headers, timeout=12)
+            if response.status_code != 200:
+                continue
+            payload = response.json()
+            if isinstance(payload, dict) and payload:
+                return payload
+        except Exception:
+            continue
+    return {}
+
+
+def _build_team_xg_side_from_understat_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    default_side = _build_default_team_xg_side_payload()
+    if not isinstance(payload, dict) or not payload:
+        return default_side
+
+    dates = payload.get("dates") if isinstance(payload.get("dates"), list) else []
+    players = payload.get("players") if isinstance(payload.get("players"), list) else []
+    statistics = payload.get("statistics") if isinstance(payload.get("statistics"), dict) else {}
+
+    recent_xg: List[float] = []
+    season_xg_total = 0.0
+    season_xga_total = 0.0
+    season_xg_count = 0
+    season_xga_count = 0
+
+    for row in dates:
+        if not isinstance(row, dict) or not row.get("isResult"):
+            continue
+        side = str(row.get("side") or "").strip().lower()
+        xg_pair = row.get("xG") if isinstance(row.get("xG"), dict) else {}
+        if side == "h":
+            xg_for = _safe_float(xg_pair.get("h"))
+            xg_against = _safe_float(xg_pair.get("a"))
+        elif side == "a":
+            xg_for = _safe_float(xg_pair.get("a"))
+            xg_against = _safe_float(xg_pair.get("h"))
+        else:
+            xg_for = None
+            xg_against = None
+        if xg_for is not None:
+            season_xg_total += xg_for
+            season_xg_count += 1
+            recent_xg.append(round(xg_for, 4))
+        if xg_against is not None:
+            season_xga_total += xg_against
+            season_xga_count += 1
+
+    open_play_xg = None
+    open_play_xga = None
+    situation = statistics.get("situation") if isinstance(statistics.get("situation"), dict) else {}
+    open_play = situation.get("OpenPlay") if isinstance(situation.get("OpenPlay"), dict) else {}
+    if open_play:
+        open_play_xg = _safe_float(open_play.get("xG"))
+        against = open_play.get("against") if isinstance(open_play.get("against"), dict) else {}
+        open_play_xga = _safe_float(against.get("xG"))
+
+    ranked_players: List[Dict[str, Any]] = []
+    for row in players:
+        if not isinstance(row, dict):
+            continue
+        xg_val = _safe_float(row.get("xG"))
+        if xg_val is None:
+            continue
+        ranked_players.append(
+            {
+                "player": str(row.get("player_name") or "").strip(),
+                "xG": round(xg_val, 4),
+                "npxG": _safe_float(row.get("npxG")),
+                "minutes": int(_safe_float(row.get("time")) or 0),
+            }
+        )
+    ranked_players.sort(key=lambda item: item.get("xG") or 0.0, reverse=True)
+
+    return {
+        "recent_5_results": recent_xg[-5:],
+        "season_xG": round(season_xg_total, 4) if season_xg_count else None,
+        "season_xGA": round(season_xga_total, 4) if season_xga_count else None,
+        "open_play_xG": round(open_play_xg, 4) if open_play_xg is not None else None,
+        "open_play_xGA": round(open_play_xga, 4) if open_play_xga is not None else None,
+        "key_players_xG": ranked_players[:5],
+    }
+
+
 def _build_default_team_xg_side_payload() -> Dict[str, Any]:
     return {
         "recent_5_results": [],
@@ -166,6 +323,13 @@ def _normalize_team_xg_payload(match: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _merge_team_xg_payload(*, base: Dict[str, Any], fallback: Dict[str, Any]) -> Dict[str, Any]:
+    def _is_meaningful_team_xg_value(key: str, value: Any) -> bool:
+        if value is None:
+            return False
+        if key in {"recent_5_results", "key_players_xG"}:
+            return isinstance(value, list) and len(value) > 0
+        return True
+
     merged: Dict[str, Any] = {
         "home_team": _build_default_team_xg_side_payload(),
         "away_team": _build_default_team_xg_side_payload(),
@@ -174,8 +338,8 @@ def _merge_team_xg_payload(*, base: Dict[str, Any], fallback: Dict[str, Any]) ->
         side_fallback = fallback.get(side) if isinstance(fallback.get(side), dict) else {}
         side_base = base.get(side) if isinstance(base.get(side), dict) else {}
         side_merged = _build_default_team_xg_side_payload()
-        side_merged.update({k: v for k, v in side_fallback.items() if v is not None})
-        side_merged.update({k: v for k, v in side_base.items() if v is not None})
+        side_merged.update({k: v for k, v in side_fallback.items() if _is_meaningful_team_xg_value(k, v)})
+        side_merged.update({k: v for k, v in side_base.items() if _is_meaningful_team_xg_value(k, v)})
         if not isinstance(side_merged.get("recent_5_results"), list):
             side_merged["recent_5_results"] = []
         if not isinstance(side_merged.get("key_players_xG"), list):
@@ -803,6 +967,7 @@ def enrich_manifest_with_team_archive_context(
     alias_map = load_team_alias_map(base_dir)
     updated_matches = 0
     cache: Dict[str, Dict[str, Any]] = {}
+    understat_cache: Dict[str, Dict[str, Any]] = {}
 
     matches = manifest.get("matches", [])
     if not isinstance(matches, list):
@@ -818,14 +983,22 @@ def enrich_manifest_with_team_archive_context(
         league = str(match.get("league") or infer_league(resolved_home, resolved_away) or "").strip()
         if not league:
             continue
+        season_year = _infer_understat_season_year(match)
 
         side_contexts: Dict[str, Any] = {}
+        understat_team_xg: Dict[str, Dict[str, Any]] = {}
         for side, team_name in (("home", resolved_home), ("away", resolved_away)):
             cache_key = f"{league}:{team_name}"
             if cache_key not in cache:
                 archive_path = build_archive_path(vault_root, team=team_name, league=league)
                 cache[cache_key] = _parse_team_archive_context(archive_path) if archive_path.exists() else {}
             side_contexts[side] = cache.get(cache_key) or {}
+
+            understat_key = f"{season_year}:{team_name}"
+            if understat_key not in understat_cache:
+                understat_cache[understat_key] = _fetch_understat_team_payload(team_name=team_name, season_year=season_year)
+            side_payload = _build_team_xg_side_from_understat_payload(understat_cache.get(understat_key) or {})
+            understat_team_xg[f"{side}_team"] = side_payload
 
         compact_context = {
             "home_summary": ((side_contexts.get("home") or {}).get("prematch_summary_text") or "").strip(),
@@ -834,9 +1007,10 @@ def enrich_manifest_with_team_archive_context(
 
         match["team_archive_context"] = side_contexts
         match["prematch_context"] = compact_context
-        built_team_xg = _build_team_xg_from_archive_context(match)
+        archive_team_xg = _build_team_xg_from_archive_context(match)
+        merged_fallback_team_xg = _merge_team_xg_payload(base=understat_team_xg, fallback=archive_team_xg)
         existing_team_xg = match.get("team_xg") if isinstance(match.get("team_xg"), dict) else {}
-        match["team_xg"] = _merge_team_xg_payload(base=existing_team_xg, fallback=built_team_xg)
+        match["team_xg"] = _merge_team_xg_payload(base=existing_team_xg, fallback=merged_fallback_team_xg)
         updated_matches += 1
 
     if updated_matches:

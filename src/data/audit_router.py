@@ -539,6 +539,7 @@ class AuditRouter:
         # CJK aliases may be substrings of another team name (e.g. "里昂" in "洛里昂");
         # require CJK token boundaries to avoid false cross-team contamination.
         cjk_boundary = r"(?<![\u3400-\u9fffA-Za-z0-9]){pat}(?![\u3400-\u9fffA-Za-z0-9])"
+        latin_boundary = r"(?<![a-z0-9]){pat}(?![a-z0-9])"
         matched: Set[str] = set()
         for pattern, canonical, has_cjk in self._team_patterns:
             if canonical in expected:
@@ -547,7 +548,9 @@ class AuditRouter:
                 if re.search(cjk_boundary.format(pat=re.escape(pattern)), text):
                     matched.add(canonical)
             else:
-                if pattern in normalized_text:
+                # Latin aliases must match by token boundary, otherwise "ginter"
+                # would falsely trigger "inter".
+                if re.search(latin_boundary.format(pat=re.escape(pattern)), normalized_text):
                     matched.add(canonical)
 
         man_city = self._canonical_team_name("Manchester City")

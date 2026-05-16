@@ -554,7 +554,7 @@ class AuditRouter:
                     matched.add(canonical)
 
         man_city = self._canonical_team_name("Manchester City")
-        if man_city not in expected and "rodri" in normalized_text:
+        if man_city not in expected and re.search(r"(?<![a-z0-9])rodri(?![a-z0-9])", normalized_text):
             matched.add(man_city)
 
         return sorted(matched)

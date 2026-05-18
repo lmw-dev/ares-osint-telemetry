@@ -39,3 +39,9 @@ build/
 # Logs
 logs/
 *.log
+
+# Local archives
+docs/skill/*.zip
+
+# Local archives
+docs/skill/*.zip

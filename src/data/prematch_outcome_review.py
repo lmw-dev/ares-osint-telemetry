@@ -85,6 +85,10 @@ def _collect_postmatch_result_by_understat_id(issue_dir: Path, issue: str) -> Di
         parsed = _parse_score(score_text)
         if parsed:
             out[understat_id] = _outcome_code(parsed[0], parsed[1])
+            continue
+        status_text = _safe_text((frontmatter.get("result") or {}).get("status")).lower()
+        if status_text in {"interrupted", "abandoned", "postponed", "pending", "void"}:
+            out[understat_id] = "__PENDING_SOURCE__"
     return out
 
 
@@ -290,6 +294,48 @@ def _classify_review_label(
     return "RESULT_MISS_PROCESS_CLOSE"
 
 
+def _derive_direction_scores(
+    *,
+    result_code: Optional[str],
+    process_payload: Optional[Dict[str, Any]],
+    review_label: str,
+) -> Dict[str, str]:
+    result_direction = "pending"
+    handicap_direction = "pending"
+    process_direction = "pending"
+    if result_code in {"3", "1", "0"}:
+        result_direction = "hit"
+        handicap_direction = "neutral"
+    if not process_payload:
+        if result_direction == "hit":
+            process_direction = "unknown"
+        return {
+            "result_direction": result_direction,
+            "handicap_direction": handicap_direction,
+            "process_direction": process_direction,
+        }
+    xg_better = _safe_text(process_payload.get("xg_better_side"))
+    xg_gap_abs = float(process_payload.get("xg_gap_abs") or 0.0)
+    process_direction = "neutral"
+    if xg_better in {"3", "0"} and xg_gap_abs >= 0.35:
+        process_direction = "strong"
+    elif xg_better in {"3", "0"} and xg_gap_abs >= 0.15:
+        process_direction = "lean"
+    if review_label in {"RESULT_HIT_PROCESS_WARNING", "RESULT_ONLY_HIT"}:
+        process_direction = "opposite"
+        handicap_direction = "downgrade"
+    if review_label in {"HIGH_QUALITY_HIT", "PROTECTED_STRUCTURE_HIT"}:
+        handicap_direction = "supported"
+    if review_label in {"CLEAR_MISS"}:
+        result_direction = "miss"
+        handicap_direction = "miss"
+    return {
+        "result_direction": result_direction,
+        "handicap_direction": handicap_direction,
+        "process_direction": process_direction,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prematch 推演赛后回测（命中率 review）")
     parser.add_argument("--issue", required=True)
@@ -366,11 +412,18 @@ def main() -> int:
                 status = "missing_postmatch_artifact"
             else:
                 status = "pending_match_result"
+        elif result == "__PENDING_SOURCE__":
+            status = "pending_source"
         elif result in picks:
             status = "hit"
         else:
             status = "miss"
-        review_label = _classify_review_label(picks, result, postmatch_process.get(uid))
+        review_label = "PENDING_SOURCE" if result == "__PENDING_SOURCE__" else _classify_review_label(picks, result, postmatch_process.get(uid))
+        direction_scores = _derive_direction_scores(
+            result_code=result if result != "__PENDING_SOURCE__" else None,
+            process_payload=postmatch_process.get(uid),
+            review_label=review_label,
+        )
         resolved.append(
             {
                 "idx": idx,
@@ -378,9 +431,12 @@ def main() -> int:
                 "suggestion": row["suggestion"],
                 "analysis_suggestion": row.get("analysis_suggestion") or row["suggestion"],
                 "confidence": row["confidence"],
-                "result": result or "-",
+                "result": "-" if result == "__PENDING_SOURCE__" else (result or "-"),
                 "status": status,
                 "review_label": review_label,
+                "result_direction_score": direction_scores["result_direction"],
+                "handicap_direction_score": direction_scores["handicap_direction"],
+                "process_direction_score": direction_scores["process_direction"],
                 "candidate_tier": row.get("candidate_tier") or "",
             }
         )
@@ -390,7 +446,9 @@ def main() -> int:
     settled = [r for r in actionable if r["status"] in {"hit", "miss"}]
     hits = sum(1 for r in settled if r["status"] == "hit")
     hit_rate = (hits / len(settled) * 100.0) if settled else 0.0
-    pending = sum(1 for r in actionable if r["status"] in {"pending_match_result", "missing_postmatch_artifact"})
+    pending = sum(
+        1 for r in actionable if r["status"] in {"pending_match_result", "missing_postmatch_artifact", "pending_source"}
+    )
     skipped = sum(1 for r in resolved if r["status"] == "skip")
 
     lines: List[str] = []
@@ -411,11 +469,11 @@ def main() -> int:
     lines.append(f"- Result-Only Hits: `{result_only}`")
     lines.append(f"- Process Warnings: `{process_warning}`")
     lines.append("")
-    lines.append("| # | Match | Suggestion | Confidence | Tier | Result | Status | ReviewLabel |")
-    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+    lines.append("| # | Match | Suggestion | Confidence | Tier | Result | Status | ReviewLabel | ResultDir | HandicapDir | ProcessDir |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for row in resolved:
         lines.append(
-            f"| {row.get('idx') or '-'} | {row['match']} | `{row['suggestion']}` | `{row['confidence']}` | `{row['candidate_tier'] or '-'}` | `{row['result']}` | `{row['status']}` | `{row['review_label']}` |"
+            f"| {row.get('idx') or '-'} | {row['match']} | `{row['suggestion']}` | `{row['confidence']}` | `{row['candidate_tier'] or '-'}` | `{row['result']}` | `{row['status']}` | `{row['review_label']}` | `{row['result_direction_score']}` | `{row['handicap_direction_score']}` | `{row['process_direction_score']}` |"
         )
 
     lines.append("")
@@ -440,6 +498,10 @@ def main() -> int:
             cause = "缺少 postmatch 产物"
             detail = "比赛可能已结束，但当前 issue 目录下未找到对应 postmatch 落盘。"
             action = "补跑 postmatch 并重跑 outcome_review。"
+        elif row["status"] == "pending_source":
+            cause = "比赛中断/待源"
+            detail = "该场已生成占位 postmatch，但结果源标记为中断或待官方结算。"
+            action = "待官方补赛/终判后重跑该场 postmatch 与 outcome_review。"
         elif row["status"] == "pending_match_result":
             cause = "赛果未结算"
             detail = "暂未匹配到可结算赛果。"

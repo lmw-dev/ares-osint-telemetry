@@ -78,6 +78,8 @@ class MatchTelemetry:
     pass_gap: int
     pass_better_team: str
     league: str
+    pending_status: str = ""
+    is_settled: bool = True
 
 
 def _parse_postmatch_file(path: Path, league: str) -> Optional[MatchTelemetry]:
@@ -95,7 +97,8 @@ def _parse_postmatch_file(path: Path, league: str) -> Optional[MatchTelemetry]:
     match_name = _safe_text(frontmatter.get("match_name") or path.stem)
     home_team, away_team = _split_match_name(match_name)
 
-    score_text = _safe_text(frontmatter.get("result", {}).get("score"))
+    result_block = frontmatter.get("result") or {}
+    score_text = _safe_text(result_block.get("score"))
     if not _parse_score(score_text):
         # 兼容 YAML 将 `1-1` 这类未加引号比分误解析为日期对象的情况：
         # 优先回退到 frontmatter 原文直接抽取 score 行。
@@ -104,6 +107,31 @@ def _parse_postmatch_file(path: Path, league: str) -> Optional[MatchTelemetry]:
             score_text = _safe_text(m_score.group(1))
     score = _parse_score(score_text)
     if not score:
+        pending_status = _safe_text(result_block.get("status")).lower()
+        if pending_status in {"interrupted", "abandoned", "postponed", "pending", "void"}:
+            return MatchTelemetry(
+                match_id=match_id or path.stem,
+                match_name=match_name,
+                home_team=home_team,
+                away_team=away_team,
+                score=pending_status.upper(),
+                home_goals=0,
+                away_goals=0,
+                winner="pending",
+                home_xg=0.0,
+                away_xg=0.0,
+                xg_gap=0.0,
+                xg_better_side="draw",
+                xg_better_team="draw",
+                variance_flag=False,
+                pass_home=0,
+                pass_away=0,
+                pass_gap=0,
+                pass_better_team="draw",
+                league=league,
+                pending_status=pending_status,
+                is_settled=False,
+            )
         return None
     home_goals, away_goals = score
 
@@ -140,6 +168,8 @@ def _parse_postmatch_file(path: Path, league: str) -> Optional[MatchTelemetry]:
         pass_gap=abs(pass_home - pass_away),
         pass_better_team=home_team if pass_home >= pass_away else away_team,
         league=league,
+        pending_status="",
+        is_settled=True,
     )
 
 
@@ -169,6 +199,13 @@ def _fmt_match_line(row: MatchTelemetry) -> str:
 
 
 def _classify_review_case(row: MatchTelemetry, manifest_row: Dict[str, Any]) -> Dict[str, str]:
+    if not row.is_settled:
+        return {
+            "case_type": "PENDING_SOURCE",
+            "error_type": "INTERRUPTED_MATCH_PENDING",
+            "hit_type": "PENDING",
+        }
+
     flags = manifest_row.get("match_context_flags") if isinstance(manifest_row.get("match_context_flags"), dict) else {}
     market = manifest_row.get("market_behavior") if isinstance(manifest_row.get("market_behavior"), dict) else {}
     survival_level = _safe_text(flags.get("survival_pressure_level")).lower()
@@ -221,21 +258,23 @@ def build_report(
     manifest_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     total = len(rows)
-    variance_rows = [r for r in rows if r.variance_flag]
+    settled_rows = [r for r in rows if r.is_settled]
+    pending_rows = [r for r in rows if not r.is_settled]
+    variance_rows = [r for r in settled_rows if r.variance_flag]
     aligned_rows = [
         r
-        for r in rows
+        for r in settled_rows
         if (not r.variance_flag)
         and (
             (r.xg_better_side == "draw" and r.winner == "draw")
             or (r.xg_better_side in {"home", "away"} and r.winner == r.xg_better_side)
         )
     ]
-    suspicious_rows = [r for r in rows if r not in variance_rows and r not in aligned_rows]
+    suspicious_rows = [r for r in settled_rows if r not in variance_rows and r not in aligned_rows]
 
     pass_dom_not_win = [
         r
-        for r in rows
+        for r in settled_rows
         if r.pass_gap >= 6
         and (
             (r.pass_home > r.pass_away and r.winner != "home")
@@ -244,7 +283,7 @@ def build_report(
     ]
 
     team_delta: Dict[str, float] = {}
-    for r in rows:
+    for r in settled_rows:
         expected = _expected_points_by_xg(r)
         actual = _actual_points(r)
         for team, exp_pt in expected.items():
@@ -303,6 +342,8 @@ def build_report(
         "scope": "top5" if top5_only else "all",
         "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ"),
         "total_matches": total,
+        "settled_matches": len(settled_rows),
+        "pending_source_matches": len(pending_rows),
         "expected_matches": len(expected_rows),
         "missing_matches": missing_matches,
         "variance_matches": len(variance_rows),
@@ -321,17 +362,23 @@ def build_report(
     lines.append(f"- Issue: `{issue}`")
     lines.append(f"- Scope: `{'Top5 Only' if top5_only else 'All'}`")
     lines.append(f"- Total Matches: `{total}`")
+    lines.append(f"- Settled Matches: `{len(settled_rows)}`")
+    lines.append(f"- Pending Source Matches: `{len(pending_rows)}`")
     lines.append(f"- Expected Matches: `{len(expected_rows)}`")
     lines.append(f"- Variance Alerts: `{len(variance_rows)}`")
     lines.append(f"- Pass-Dominance But Not Win: `{len(pass_dom_not_win)}`")
     lines.append("")
     lines.append("## 0) Coverage")
     if missing_matches:
-        lines.append(f"- Postmatch 覆盖 `{total}/{len(expected_rows)}`，仍缺 `{len(missing_matches)}` 场。")
+        lines.append(
+            f"- Postmatch 覆盖 `{total}/{len(expected_rows)}`（已结算 `{len(settled_rows)}`，待源 `{len(pending_rows)}`），仍缺 `{len(missing_matches)}` 场。"
+        )
         for item in missing_matches:
             lines.append(f"- `{item['index']}` `{item['english']}`: `{item['reason']}`")
     else:
-        lines.append(f"- Postmatch 覆盖 `{total}/{len(expected_rows)}`，本期无缺口。")
+        lines.append(
+            f"- Postmatch 覆盖 `{total}/{len(expected_rows)}`（已结算 `{len(settled_rows)}`，待源 `{len(pending_rows)}`），本期无缺口。"
+        )
     lines.append("")
     lines.append("## 0.5) Review 标准码")
     lines.append("- `case_type`: `ALIGNED` / `SUSPICIOUS` / `VARIANCE_ALERT`")

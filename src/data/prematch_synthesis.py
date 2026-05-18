@@ -354,6 +354,10 @@ class PrematchSynthesis:
         accepted_files = set(_extract_section_bullets(quality_text, "Accepted Prematch Reports"))
         low_conf_files = set(_extract_section_bullets(quality_text, "Low Confidence Reports"))
         insufficient_files = set(_extract_section_bullets(quality_text, "Insufficient Resilience Data"))
+        rejected_files = {
+            path.name.replace("REJECTED-", "", 1)
+            for path in self.review_dir.glob(f"REJECTED-Audit-{self.issue}-*.md")
+        }
 
         if selected_gate_indices:
             gate_files = set()
@@ -375,6 +379,11 @@ class PrematchSynthesis:
                 accepted_files = gate_files
         if not accepted_files and self.prematch_dir.exists():
             accepted_files = {path.name for path in self.prematch_dir.glob("Audit-*.md")}
+        # 若 accepted 为空但存在 REJECTED 记录，自动回退为 CAUTION 输入，避免 matches=0。
+        auto_include_rejected_caution = False
+        if not accepted_files and rejected_files:
+            accepted_files = set(rejected_files)
+            auto_include_rejected_caution = True
         if self.top5_only:
             filtered: List[str] = []
             for filename in sorted(accepted_files):
@@ -410,7 +419,7 @@ class PrematchSynthesis:
             path = self.prematch_dir / filename
             rejected_caution = False
             if not path.exists():
-                if not self.include_rejected_caution:
+                if not self.include_rejected_caution and not auto_include_rejected_caution:
                     continue
                 rejected_path = self.review_dir / f"REJECTED-{filename}"
                 if not rejected_path.exists():
@@ -905,6 +914,16 @@ class PrematchSynthesis:
             blocks.append("POSTPONED_MARKET_TIME_DECAY_GATE")
         if bool(verdict.get("cup_final_context_gate")):
             blocks.append("CUP_FINAL_CONTEXT_GATE")
+        if bool(verdict.get("strong_favorite_variance_guard_gate")):
+            blocks.append("STRONG_FAVORITE_VARIANCE_GUARD")
+        if bool(verdict.get("underdog_repair_win_escalation_gate")):
+            blocks.append("UNDERDOG_REPAIR_WIN_ESCALATION")
+        if bool(verdict.get("euro_asian_split_priority_gate")):
+            blocks.append("EURO_ASIAN_SPLIT_PRIORITY")
+        if bool(verdict.get("locked_target_deflation_gate")):
+            blocks.append("LOCKED_TARGET_DEFLATION")
+        if _safe_text(verdict.get("survival_win_conversion_state")) in {"can_win", "draw_only", "draw_or_win"}:
+            blocks.append(f"SURVIVAL_WIN_CONVERSION_{_safe_text(verdict.get('survival_win_conversion_state')).upper()}")
         return blocks
 
     @classmethod
@@ -1098,6 +1117,124 @@ class PrematchSynthesis:
         fav_leak = _safe_float(favorite_profile.get("defensive_leakage"))
         water_not_low = favorite_deep_handicap <= 1.05
         return injuries or (opp_xg is not None and opp_xg >= 1.25) or (fav_leak is not None and fav_leak >= 0.56) or water_not_low
+
+    @staticmethod
+    def _strong_favorite_variance_guard_gate(
+        *,
+        favorite_profile: Dict[str, Any],
+        underdog_profile: Dict[str, Any],
+        favorite_deep_handicap: float,
+        market_behavior: Dict[str, Any],
+        context_flags: Dict[str, Any],
+    ) -> bool:
+        # STRONG_FAVORITE_VARIANCE_GUARD:
+        # 强热门方向可成立，但深盘覆盖要降级，避免“过程强=穿盘稳”误判。
+        fair_like = float(favorite_deep_handicap or 0.0) <= 1.05
+        deeper_than_fair = bool(market_behavior.get("handicap_deepen")) or float(favorite_deep_handicap or 0.0) >= 1.0
+        fav_conv = _safe_float(favorite_profile.get("conversion_efficiency"))
+        conv_risk = fav_conv is not None and (fav_conv <= 0.85 or fav_conv >= 1.60)
+        opp_xg = _safe_float(underdog_profile.get("avg_xG_last_5"))
+        opp_not_zero = opp_xg is not None and opp_xg >= 0.90
+        needs_multi_goal_cover = float(favorite_deep_handicap or 0.0) >= 1.25
+        locked_target = _safe_text(context_flags.get("primary_motivation_type")).upper() in {
+            "TITLE_SECURED",
+            "UCL_SECURED",
+            "MIDTABLE_SAFE",
+        }
+        return fair_like and deeper_than_fair and (conv_risk or locked_target) and opp_not_zero and needs_multi_goal_cover
+
+    @staticmethod
+    def _underdog_repair_win_escalation_gate(
+        *,
+        market_behavior: Dict[str, Any],
+        context_flags: Dict[str, Any],
+        home_market: Optional[float],
+        away_market: Optional[float],
+    ) -> bool:
+        # UNDERDOG_REPAIR_WIN_ESCALATION:
+        # 弱方修复不能只升平局，需要显式提升弱方直胜路径。
+        euro_repair = bool(market_behavior.get("market_retreat_against_favorite")) and bool(
+            market_behavior.get("handicap_retreat")
+        )
+        motivation_flip = bool(context_flags.get("opponent_survival_pressure_high")) or _safe_text(
+            context_flags.get("survival_pressure_level")
+        ).lower() in {"high", "extreme"}
+        favorite_locked = _safe_text(context_flags.get("primary_motivation_type")).upper() in {
+            "TITLE_SECURED",
+            "UCL_SECURED",
+            "MIDTABLE_SAFE",
+        } or _safe_text(context_flags.get("rotation_intensity")).upper() == "HIGH"
+        close_market = (
+            isinstance(home_market, (int, float))
+            and isinstance(away_market, (int, float))
+            and abs(float(home_market) - float(away_market)) <= 6.0
+        )
+        return euro_repair and motivation_flip and (favorite_locked or close_market)
+
+    @staticmethod
+    def _euro_asian_split_priority_gate(
+        *,
+        market_behavior: Dict[str, Any],
+        favorite_strengthened: bool,
+    ) -> bool:
+        # EURO_ASIAN_SPLIT_PRIORITY:
+        # 欧赔退热门 vs 亚盘仍挺热门时，优先识别分裂并降让球置信。
+        euro_drift = bool(market_behavior.get("market_retreat_against_favorite"))
+        asian_still_support = bool(market_behavior.get("handicap_deepen")) or bool(favorite_strengthened)
+        return euro_drift and asian_still_support
+
+    @staticmethod
+    def _locked_target_deflation_enhanced(
+        *,
+        context_flags: Dict[str, Any],
+    ) -> Dict[str, float]:
+        # LOCKED_TARGET_DEFLATION 加强版：主要降让球强度，次降赛果强度。
+        mt = _safe_text(context_flags.get("primary_motivation_type")).upper()
+        rotation_high = _safe_text(context_flags.get("rotation_intensity")).upper() == "HIGH"
+        europe_sandwich = bool(context_flags.get("europe_sandwich"))
+        if mt == "TITLE_SECURED":
+            return {"handicap": 0.50, "result": 0.20}
+        if mt == "UCL_SECURED":
+            return {"handicap": 0.35, "result": 0.15}
+        if mt == "MIDTABLE_SAFE":
+            return {"handicap": 0.25, "result": 0.10}
+        if rotation_high or europe_sandwich:
+            return {"handicap": 0.30, "result": 0.15}
+        return {"handicap": 0.0, "result": 0.0}
+
+    @staticmethod
+    def _survival_win_conversion_gate(
+        *,
+        survival_escape_signal: bool,
+        market_behavior: Dict[str, Any],
+        context_flags: Dict[str, Any],
+        survival_side_profile: Dict[str, Any],
+        opponent_profile: Dict[str, Any],
+    ) -> str:
+        # SURVIVAL_WIN_CONVERSION_GATE:
+        # 区分“只能保平”与“可直接赢”。
+        if not survival_escape_signal:
+            return "none"
+        survival_xg = _safe_float(survival_side_profile.get("avg_xG_last_5"))
+        survival_conv = _safe_float(survival_side_profile.get("conversion_efficiency"))
+        opp_leak = _safe_float(opponent_profile.get("defensive_leakage"))
+        repaired = bool(market_behavior.get("market_retreat_against_favorite")) or bool(
+            market_behavior.get("handicap_retreat")
+        )
+        opponent_locked = _safe_text(context_flags.get("primary_motivation_type")).upper() in {
+            "TITLE_SECURED",
+            "UCL_SECURED",
+            "MIDTABLE_SAFE",
+        }
+        if repaired and opponent_locked and (survival_xg is not None and survival_xg >= 0.90) and (
+            opp_leak is not None and opp_leak >= 0.52
+        ):
+            return "can_win"
+        if (survival_xg is not None and survival_xg < 0.80) or (
+            survival_conv is not None and survival_conv >= 1.45
+        ) or (opp_leak is not None and opp_leak <= 0.45):
+            return "draw_only"
+        return "draw_or_win"
 
     @staticmethod
     def _has_confirmed_xi_damage(profile: Optional[Dict[str, Any]]) -> bool:
@@ -1802,6 +1939,26 @@ class PrematchSynthesis:
                 handicap_deepen=handicap_deepen,
                 home_profile=home_profile,
             )
+            strong_favorite_variance_guard = self._strong_favorite_variance_guard_gate(
+                favorite_profile=favorite_profile,
+                underdog_profile=underdog_profile,
+                favorite_deep_handicap=favorite_deep_handicap,
+                market_behavior=market_behavior,
+                context_flags=context_flags,
+            )
+            underdog_repair_win_escalation = self._underdog_repair_win_escalation_gate(
+                market_behavior=market_behavior,
+                context_flags=context_flags,
+                home_market=home_market,
+                away_market=away_market,
+            )
+            euro_asian_split_priority = self._euro_asian_split_priority_gate(
+                market_behavior=market_behavior,
+                favorite_strengthened=favorite_strengthened,
+            )
+            locked_target_deflation = self._locked_target_deflation_enhanced(
+                context_flags=context_flags,
+            )
             compressed_table_draw_protection = self._compressed_table_draw_protection_gate(
                 home_market=home_market,
                 away_market=away_market,
@@ -1878,6 +2035,7 @@ class PrematchSynthesis:
             upgrade_reason = None
             conv_penalty = 0.0
             reverse_block_note = ""
+            survival_gate_state = "none"
 
             if isinstance(edge_home, (int, float)) and isinstance(edge_away, (int, float)):
                 # 仅基于主客两侧边际，避免“1 - (主+客)”带来的平局伪信号。
@@ -2138,10 +2296,76 @@ class PrematchSynthesis:
                         suggestion = "1/0"
                     confidence_score = max(confidence_score, 2.5)
 
+                # v2.2 STRONG_FAVORITE_VARIANCE_GUARD:
+                # 强热门深盘降级，不否定结果方向但限制让球激进度。
+                if strong_favorite_variance_guard:
+                    if suggestion == "3":
+                        suggestion = "3/1"
+                    elif suggestion == "0":
+                        suggestion = "1/0"
+                    confidence_score -= 0.5
+
+                # v2.2 UNDERDOG_REPAIR_WIN_ESCALATION:
+                # 弱方修复场景下，直胜权重上调，不再只保平。
+                if underdog_repair_win_escalation:
+                    if suggestion == "3/1":
+                        suggestion = "3/1/0"
+                    elif suggestion == "1/0":
+                        suggestion = "3/1/0"
+                    elif suggestion == "1":
+                        suggestion = "1/0" if away_favorite else "3/1"
+                    confidence_score -= 0.2
+
+                # v2.2 EURO_ASIAN_SPLIT_PRIORITY:
+                # 欧亚分裂优先降让球置信并补保护腿。
+                if euro_asian_split_priority:
+                    if suggestion == "3":
+                        suggestion = "3/1"
+                    elif suggestion == "0":
+                        suggestion = "1/0"
+                    elif suggestion == "3/0":
+                        suggestion = "3/1/0"
+                    confidence_score -= 0.3
+
+                # v2.2 LOCKED_TARGET_DEFLATION:
+                # 已锁目标球队的让球与结果强度下调。
+                if locked_target_deflation.get("handicap", 0.0) > 0:
+                    confidence_score -= float(locked_target_deflation.get("result", 0.0)) * 2.0
+                    if suggestion in {"3", "0"} and float(locked_target_deflation.get("handicap", 0.0)) >= 0.35:
+                        suggestion = "3/1" if suggestion == "3" else "1/0"
+
                 # ARES_SCHEDULE_SANDWICH_RULE:
                 # 赛程风险默认只降置信，不可单独翻转方向。
                 if schedule_risk_flag and not (home_xi_damage or away_xi_damage):
                     confidence_score -= 0.6
+
+                # v2.2 SURVIVAL_WIN_CONVERSION_GATE:
+                # 保级方从“保平”到“可直接赢”的条件转化。
+                survival_side_profile = home_profile if survival_escape_signal else {}
+                opponent_side_profile = away_profile if survival_escape_signal else {}
+                if away_favorite and survival_escape_signal:
+                    survival_side_profile = home_profile
+                    opponent_side_profile = away_profile
+                elif home_favorite and survival_escape_signal:
+                    survival_side_profile = away_profile
+                    opponent_side_profile = home_profile
+                survival_gate_state = self._survival_win_conversion_gate(
+                    survival_escape_signal=survival_escape_signal,
+                    market_behavior=market_behavior,
+                    context_flags=context_flags,
+                    survival_side_profile=survival_side_profile,
+                    opponent_profile=opponent_side_profile,
+                )
+                if survival_gate_state == "can_win":
+                    if suggestion == "1":
+                        suggestion = "1/0" if away_favorite else "3/1"
+                    elif suggestion == "3/1":
+                        suggestion = "3/1/0"
+                    elif suggestion == "1/0":
+                        suggestion = "3/1/0"
+                elif survival_gate_state == "draw_only":
+                    if suggestion == "3/1/0":
+                        suggestion = "3/1" if home_favorite else "1/0"
 
                 provisional_verdict = {
                     "suggestion": suggestion,
@@ -2364,6 +2588,11 @@ class PrematchSynthesis:
                     "compressed_table_draw_protection_gate": compressed_table_draw_protection,
                     "brand_favorite_price_not_low_enough_gate": brand_price_not_low_enough,
                     "narrative_strength_cap_gate": narrative_strength_cap,
+                    "strong_favorite_variance_guard_gate": strong_favorite_variance_guard,
+                    "underdog_repair_win_escalation_gate": underdog_repair_win_escalation,
+                    "euro_asian_split_priority_gate": euro_asian_split_priority,
+                    "locked_target_deflation_gate": bool(locked_target_deflation.get("handicap", 0.0) > 0),
+                    "survival_win_conversion_state": survival_gate_state,
                     "home_away_integrity_gate": home_away_integrity_gate,
                     "postponed_market_time_decay_gate": postponed_market_time_decay_gate,
                     "cup_final_context_gate": cup_final_context_gate,
@@ -2380,6 +2609,61 @@ class PrematchSynthesis:
                     if isinstance(context_flags.get("lineup_stability_precheck"), dict)
                     else {"home": "UNKNOWN", "away": "UNKNOWN"},
                     "rotation_intensity": str(context_flags.get("rotation_intensity") or "UNKNOWN").upper(),
+                    "result_direction": {
+                        "order": suggestion,
+                        "confidence": confidence,
+                    },
+                    "handicap_direction": {
+                        "best_line": f"{'-' if home_favorite else '+' if away_favorite else ''}{favorite_deep_handicap:.2f}"
+                        if favorite_deep_handicap
+                        else "NA",
+                        "avoid_line": "deep_handicap"
+                        if (
+                            strong_favorite_variance_guard
+                            or bool(locked_target_deflation.get("handicap", 0.0) > 0)
+                            or euro_asian_split_priority
+                        )
+                        else "NA",
+                        "confidence": "medium"
+                        if (
+                            strong_favorite_variance_guard
+                            or bool(locked_target_deflation.get("handicap", 0.0) > 0)
+                            or euro_asian_split_priority
+                        )
+                        else confidence,
+                    },
+                    "game_script_direction": {
+                        "main_script": "favorite_pressure"
+                        if suggestion in {"3", "3/1", "3/1/0", "0", "1/0"}
+                        else "balanced_or_draw",
+                        "danger_script": "process_right_result_risk"
+                        if strong_favorite_variance_guard
+                        else "underdog_repair_live"
+                        if underdog_repair_win_escalation
+                        else "normal_variance",
+                    },
+                    "risk_labels": sorted(
+                        set(
+                            [
+                                "PROCESS_RIGHT_RESULT_RISK" if strong_favorite_variance_guard else "",
+                                "UNDERDOG_WIN_LIVE" if underdog_repair_win_escalation else "",
+                                "EURO_ASIAN_SPLIT" if euro_asian_split_priority else "",
+                                "LOCKED_TARGET_DEFLATION" if bool(locked_target_deflation.get("handicap", 0.0) > 0) else "",
+                                f"SURVIVAL_WIN_CONVERSION_{survival_gate_state.upper()}"
+                                if survival_gate_state and survival_gate_state != "none"
+                                else "",
+                            ]
+                        )
+                        - {""}
+                    ),
+                    "euro_asian_split": {
+                        "euro_signal": "favorite_drift" if bool(market_behavior.get("market_retreat_against_favorite")) else "neutral",
+                        "asian_signal": "favorite_support"
+                        if (bool(market_behavior.get("handicap_deepen")) or bool(favorite_strengthened))
+                        else "neutral",
+                        "priority_read": "euro_first_caution" if euro_asian_split_priority else "aligned_or_no_split",
+                        "final_effect": "reduce_handicap_confidence_and_add_cover" if euro_asian_split_priority else "none",
+                    },
                     "ready_level": _safe_text(row.get("ready_level")) or None,
                 }
             )
@@ -2630,7 +2914,7 @@ class PrematchSynthesis:
     @staticmethod
     def _normalize_result(result: Dict[str, Any], matches: List[Dict[str, Any]]) -> Dict[str, Any]:
         allowed_posture = {"READY", "CAUTION", "HOLD"}
-        allowed_pick = {"skip", "3", "1", "0", "3/1", "3/0", "1/0"}
+        allowed_pick = {"skip", "3", "1", "0", "3/1", "3/0", "1/0", "3/1/0", "0/1/3", "0/1", "1/3"}
         allowed_conf = {"low", "medium", "high"}
 
         normalized = {
@@ -2683,6 +2967,16 @@ class PrematchSynthesis:
             "single_pick_rank",
             "decision_type",
             "combo_type",
+            "strong_favorite_variance_guard_gate",
+            "underdog_repair_win_escalation_gate",
+            "euro_asian_split_priority_gate",
+            "locked_target_deflation_gate",
+            "survival_win_conversion_state",
+            "result_direction",
+            "handicap_direction",
+            "game_script_direction",
+            "risk_labels",
+            "euro_asian_split",
         ]
         fixed_verdicts: List[Dict[str, Any]] = []
         for item in normalized["match_verdicts"]:

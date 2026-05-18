@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.lmw.youtube-monitor</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <!-- 请根据实际环境修改 python 路径, 例如 /Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/venv/bin/python -->
+      <string>/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/venv/bin/python</string>
+      <string>/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/src/data/youtube_monitor.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key>
+      <integer>8</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/data/youtube_monitor/logs/run.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/data/youtube_monitor/logs/error.log</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+  </dict>
+</plist>

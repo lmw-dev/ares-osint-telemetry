@@ -4,6 +4,7 @@ venv/
 .venv/
 env/
 ENV/
+.python-version
 
 # Python
 __pycache__/
@@ -12,11 +13,19 @@ __pycache__/
 *.so
 *.egg-info/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
 
 # Data Outputs
 raw_reports/
 draft_reports/
 3_Resources/3.x_Match_Reports/
+data/youtube_monitor/
+tmp/
+dist/
+build/
 
 # IDE configurations
 .idea/
@@ -27,6 +36,6 @@ draft_reports/
 .AppleDouble
 .LSOverride
 
-
-# log
+# Logs
 logs/
+*.log

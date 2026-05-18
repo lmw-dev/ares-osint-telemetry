@@ -55,6 +55,14 @@ LEAGUE_TO_ODDS_SPORT_KEY: Dict[str, str] = {
     "Serie_B": "soccer_italy_serie_b",
 }
 
+LEAGUE_TO_FOOTBALL_DATA_CODE: Dict[str, str] = {
+    "EPL": "PL",
+    "La_liga": "PD",
+    "Bundesliga": "BL1",
+    "Serie_A": "SA",
+    "Ligue_1": "FL1",
+}
+
 DEFAULT_THE_ODDS_REGIONS = "eu,uk"
 DEFAULT_THE_ODDS_MARKETS = "h2h,spreads,totals"
 
@@ -1306,6 +1314,155 @@ class AresOsintCrawler:
             )
         return matches
 
+    def _fetch_football_data_comp_standings(
+        self,
+        *,
+        competition_code: str,
+        league_name: str,
+    ) -> Dict[str, Dict[str, Optional[int]]]:
+        if not self.football_data_api_key:
+            return {}
+
+        url = f"{self.football_data_base_url}/competitions/{competition_code}/standings"
+        headers = {"X-Auth-Token": self.football_data_api_key}
+
+        def _load_cached_payload() -> Optional[Dict[str, Any]]:
+            try:
+                cold_path_local = self.raw_reports_dir / f"{self.run_id}_football_data_{competition_code}_standings_raw.json"
+                if not cold_path_local.exists():
+                    candidates = sorted(
+                        self.raw_reports_dir.glob(f"*_football_data_{competition_code}_standings_raw.json"),
+                        key=lambda p: p.stat().st_mtime,
+                        reverse=True,
+                    )
+                else:
+                    candidates = [cold_path_local]
+                for fp in candidates:
+                    cached = json.loads(fp.read_text(encoding="utf-8"))
+                    payload = cached.get("response")
+                    if isinstance(payload, dict):
+                        return payload
+            except Exception:
+                return None
+            return None
+
+        data = None
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                resp = requests.get(url, headers=headers, timeout=20)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    break
+                last_error = f"HTTP {resp.status_code}"
+                if resp.status_code in {429, 500, 502, 503, 504}:
+                    time.sleep(0.8 * attempt)
+                    continue
+                logger.warning(
+                    "football-data standings 抓取失败 %s(%s) HTTP %s",
+                    league_name,
+                    competition_code,
+                    resp.status_code,
+                )
+                cached = _load_cached_payload()
+                if cached:
+                    logger.info(
+                        "football-data standings 使用缓存回退 %s(%s)",
+                        league_name,
+                        competition_code,
+                    )
+                    data = cached
+                    break
+                return {}
+            except Exception as e:
+                last_error = str(e)
+                time.sleep(0.8 * attempt)
+        if not isinstance(data, dict):
+            cached = _load_cached_payload()
+            if cached:
+                logger.info(
+                    "football-data standings 使用缓存回退 %s(%s)",
+                    league_name,
+                    competition_code,
+                )
+                data = cached
+            else:
+                logger.warning(
+                    "football-data standings 抓取异常 %s(%s): %s",
+                    league_name,
+                    competition_code,
+                    last_error or "unknown",
+                )
+                return {}
+        if not isinstance(data, dict):
+            logger.warning(
+                "football-data standings 抓取异常 %s(%s): %s",
+                league_name,
+                competition_code,
+                last_error or "unknown",
+            )
+            return {}
+
+        cold_path = self.raw_reports_dir / f"{self.run_id}_football_data_{competition_code}_standings_raw.json"
+        try:
+            with open(cold_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "issue": self.run_id,
+                        "source": "football-data.org",
+                        "source_ref": url,
+                        "fetched_at": datetime.utcnow().isoformat() + "Z",
+                        "competition_code": competition_code,
+                        "league_name": league_name,
+                        "response": data,
+                    },
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            self._football_data_cold_refs.append(str(cold_path))
+        except Exception as e:
+            logger.warning("football-data standings 原始 JSON 冷存储失败 %s: %s", competition_code, e)
+
+        standings = data.get("standings") or []
+        table_rows: List[Dict[str, Any]] = []
+        for block in standings:
+            if not isinstance(block, dict):
+                continue
+            if str(block.get("type") or "").strip().upper() in {"TOTAL", "REGULAR_SEASON"}:
+                table_rows = block.get("table") or []
+                if table_rows:
+                    break
+        if not table_rows and standings:
+            first_block = standings[0] if isinstance(standings[0], dict) else {}
+            table_rows = first_block.get("table") or []
+
+        rows: Dict[str, Dict[str, Optional[int]]] = {}
+        alias_rows: Dict[str, Dict[str, Optional[int]]] = {}
+        for row in table_rows:
+            if not isinstance(row, dict):
+                continue
+            team_name = ((row.get("team") or {}).get("name") or "").strip()
+            if not team_name:
+                continue
+            team_key = self._normalize_team_name(team_name)
+            payload = {
+                "rank": self._extract_int(row.get("position")),
+                "points": self._extract_int(row.get("points")),
+                "played": self._extract_int(row.get("playedGames")),
+            }
+            rows[team_key] = payload
+            alias_key = re.sub(r"[^a-z0-9]+", "", str(team_name).strip().lower())
+            if alias_key:
+                alias_rows[alias_key] = payload
+            compact_key = re.sub(r"[^a-z0-9]+", "", str(team_name).strip().lower())
+            if compact_key.endswith("fc") and len(compact_key) > 4:
+                alias_rows[compact_key[:-2]] = payload
+            if compact_key.startswith("fc") and len(compact_key) > 4:
+                alias_rows[compact_key[2:]] = payload
+        rows.update(alias_rows)
+        return rows
+
     def build_football_data_db(self, anchor_dt: Optional[datetime] = None) -> List[Dict[str, Any]]:
         if not self.football_data_api_key:
             return []
@@ -2354,6 +2511,7 @@ class AresOsintCrawler:
                 )
 
         football_data_index: Dict[str, List[Dict[str, Any]]] = {}
+        standings_index: Dict[str, Dict[str, Dict[str, Optional[int]]]] = {}
         if self.football_data_api_key:
             try:
                 football_data_db = self.build_football_data_db(anchor_dt=anchor_dt)
@@ -2362,6 +2520,21 @@ class AresOsintCrawler:
                     football_data_index.setdefault(key, []).append(row)
             except Exception as exc:
                 logger.warning("[Date 模式] football-data 映射补充失败: %s", exc)
+            try:
+                top5_codes = ("PL", "PD", "BL1", "SA", "FL1")
+                for code in top5_codes:
+                    league_name = FOOTBALL_DATA_COMPETITIONS.get(code) or code
+                    standings_index[code] = self._fetch_football_data_comp_standings(
+                        competition_code=code,
+                        league_name=league_name,
+                    )
+                    time.sleep(0.08)
+                logger.info(
+                    "[Date 模式] football-data standings 构建完成: %s",
+                    {code: len(table or {}) for code, table in standings_index.items()},
+                )
+            except Exception as exc:
+                logger.warning("[Date 模式] football-data standings 补充失败: %s", exc)
 
         output_manifest = {
             "issue": self.run_id,
@@ -2386,6 +2559,8 @@ class AresOsintCrawler:
             football_data_date = match.get("date") if self.date_source == "football-data" else None
             football_data_gap_days = 0 if self.date_source == "football-data" else None
             football_data_competition = match.get("competition_code") if self.date_source == "football-data" else None
+            if not football_data_competition:
+                football_data_competition = LEAGUE_TO_FOOTBALL_DATA_CODE.get(str(match.get("league") or "").strip())
             if self.date_source != "football-data" and football_data_index:
                 lookup_key = f"{self._normalize_team_name(home)}vs{self._normalize_team_name(away)}"
                 fd_candidates = football_data_index.get(lookup_key, [])
@@ -2396,6 +2571,8 @@ class AresOsintCrawler:
                     _football_data_league,
                     football_data_competition,
                 ) = self._pick_football_data_match_by_time(fd_candidates, anchor_dt, max_gap_days=self.mapping_max_gap_days)
+                if not football_data_competition:
+                    football_data_competition = LEAGUE_TO_FOOTBALL_DATA_CODE.get(str(match.get("league") or "").strip())
             mapped_match_time = understat_date or football_data_date
             cn_match_id, cn_match_id_source = self._resolve_cn_match_id_for_date_match(
                 league=match.get("league"),
@@ -2445,6 +2622,8 @@ class AresOsintCrawler:
                 league=match.get("league"),
                 kickoff_time=mapped_match_time,
                 titan_snapshot=titan_prematch_snapshot,
+                football_data_competition=football_data_competition,
+                standings_index=standings_index,
             )
             output_manifest["matches"].append(
                 {
@@ -2672,6 +2851,8 @@ class AresOsintCrawler:
         league: Optional[str],
         kickoff_time: Optional[str],
         titan_snapshot: Optional[Dict[str, Any]],
+        football_data_competition: Optional[str] = None,
+        standings_index: Optional[Dict[str, Dict[str, Dict[str, Optional[int]]]]] = None,
     ) -> Dict[str, Any]:
         match_label = f"{str(home_en or '').strip()} vs {str(away_en or '').strip()}".strip()
         base = self._extract_match_basic_from_titan_snapshot(
@@ -2698,6 +2879,43 @@ class AresOsintCrawler:
             merged["league"] = str(league or "").strip() or None
         if not merged.get("kickoff_time"):
             merged["kickoff_time"] = str(kickoff_time or "").strip() or None
+
+        comp_code = str(football_data_competition or "").strip().upper()
+        if comp_code and isinstance(standings_index, dict):
+            comp_table = standings_index.get(comp_code) or {}
+            if comp_table:
+                home_key = self._normalize_team_name(home_en)
+                away_key = self._normalize_team_name(away_en)
+                home_raw_key = re.sub(r"[^a-z0-9]+", "", str(home_en).strip().lower())
+                away_raw_key = re.sub(r"[^a-z0-9]+", "", str(away_en).strip().lower())
+                home_row = comp_table.get(home_key) or comp_table.get(home_raw_key) or {}
+                away_row = comp_table.get(away_key) or comp_table.get(away_raw_key) or {}
+
+                home_rank_points = merged.get("home_rank_points") if isinstance(merged.get("home_rank_points"), dict) else {}
+                away_rank_points = merged.get("away_rank_points") if isinstance(merged.get("away_rank_points"), dict) else {}
+                if home_rank_points.get("rank") is None:
+                    home_rank_points["rank"] = self._extract_int(home_row.get("rank"))
+                if home_rank_points.get("points") is None:
+                    home_rank_points["points"] = self._extract_int(home_row.get("points"))
+                if away_rank_points.get("rank") is None:
+                    away_rank_points["rank"] = self._extract_int(away_row.get("rank"))
+                if away_rank_points.get("points") is None:
+                    away_rank_points["points"] = self._extract_int(away_row.get("points"))
+                merged["home_rank_points"] = self._merge_with_defaults(home_rank_points, {"rank": None, "points": None})
+                merged["away_rank_points"] = self._merge_with_defaults(away_rank_points, {"rank": None, "points": None})
+
+                total_rounds = self._league_total_rounds_hint(league)
+                if total_rounds:
+                    remaining = merged.get("remaining_matches") if isinstance(merged.get("remaining_matches"), dict) else {}
+                    if remaining.get("home") is None:
+                        home_played = self._extract_int(home_row.get("played"))
+                        if isinstance(home_played, int):
+                            remaining["home"] = max(0, total_rounds - home_played)
+                    if remaining.get("away") is None:
+                        away_played = self._extract_int(away_row.get("played"))
+                        if isinstance(away_played, int):
+                            remaining["away"] = max(0, total_rounds - away_played)
+                    merged["remaining_matches"] = self._merge_with_defaults(remaining, {"home": None, "away": None})
         return merged
 
     @staticmethod

@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/football-team-news-flags.schema.json",
+  "title": "Football Team News Flags Report",
+  "type": "object",
+  "required": ["meta", "teams"],
+  "additionalProperties": false,
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["league", "date", "round", "generated_at", "flag_taxonomy"],
+      "additionalProperties": false,
+      "properties": {
+        "league": {"type": "string"},
+        "season": {"type": ["string", "null"]},
+        "round": {"type": ["string", "null"]},
+        "date": {"type": "string", "description": "YYYY-MM-DD or date range"},
+        "generated_at": {"type": "string"},
+        "scope_note": {"type": ["string", "null"]},
+        "flag_taxonomy": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/canonical_flag"},
+          "minItems": 8,
+          "uniqueItems": true
+        }
+      }
+    },
+    "teams": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/team_record"}
+    }
+  },
+  "$defs": {
+    "canonical_flag": {
+      "type": "string",
+      "enum": [
+        "主帅下课/更衣室问题",
+        "核心球员伤停",
+        "多名主力轮换",
+        "杯赛前后",
+        "欧战资格已锁定",
+        "已降级/已夺冠/已无欲无求",
+        "球队近期负面舆论明显",
+        "临场阵容确认后有重大变化"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "required": ["title", "url", "evidence_type"],
+      "additionalProperties": false,
+      "properties": {
+        "title": {"type": "string"},
+        "url": {"type": "string"},
+        "publisher": {"type": ["string", "null"]},
+        "published_at": {"type": ["string", "null"]},
+        "retrieved_at": {"type": ["string", "null"]},
+        "evidence_type": {
+          "type": "string",
+          "enum": ["official", "press_conference", "reliable_media", "standings", "injury_database", "weak_lead", "local_media", "other"]
+        },
+        "supports_flags": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/canonical_flag"},
+          "uniqueItems": true
+        }
+      }
+    },
+    "team_record": {
+      "type": "object",
+      "required": ["team", "fixture", "news_status", "news_flags", "key_abnormalities", "sources", "confidence", "review_notes"],
+      "additionalProperties": false,
+      "properties": {
+        "team": {"type": "string"},
+        "opponent": {"type": ["string", "null"]},
+        "home_away": {"type": "string", "enum": ["home", "away", "neutral", "unknown"]},
+        "fixture": {"type": "string"},
+        "kickoff": {"type": ["string", "null"]},
+        "news_status": {"type": "string", "enum": ["暂无明显异常", "有异常"]},
+        "news_flags": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/canonical_flag"},
+          "uniqueItems": true
+        },
+        "key_abnormalities": {"type": "string"},
+        "sources": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/source"}
+        },
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "review_notes": {"type": "string"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"news_status": {"const": "暂无明显异常"}}},
+          "then": {"properties": {"news_flags": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"news_status": {"const": "有异常"}}},
+          "then": {"properties": {"news_flags": {"minItems": 1}}}
+        }
+      ]
+    }
+  }
+}

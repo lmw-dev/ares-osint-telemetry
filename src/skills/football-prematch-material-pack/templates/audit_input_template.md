@@ -8,6 +8,10 @@ material_status:
   abnormal_json: "{abnormal_json_status}"
   home_card: "{home_card_status}"
   away_card: "{away_card_status}"
+fact_gate:
+  status: "{fact_gate_status}"
+  final_confidence: "{fact_gate_confidence}"
+  reason: {fact_gate_reason_yaml}
 sanity_check:
   home: "{home_resolved}"
   away: "{away_resolved}"
@@ -15,16 +19,18 @@ sanity_check:
 fair_line_seed:
   process_edge:
     side: "{process_edge_side}"
+    confidence: "{process_edge_confidence}"
     reason: {process_edge_reason}
   home_advantage:
     side: "{home_team}"
     strength: "small"
-market_seed:
-  status: "{market_seed_status}"
-  note: "{market_seed_note}"
-abnormal_seed:
-  status: "{abnormal_seed_status}"
-  note: "{abnormal_seed_note}"
+market_internal_divergence:
+  status: {market_internal_divergence_status}
+  note: "{market_internal_divergence_note}"
+market_process_divergence:
+  status: {market_process_divergence_status}
+  severity: "{market_process_divergence_severity}"
+  note: "{market_process_divergence_note}"
 auto_risk_tags: {auto_risk_tags}
 ---
 
@@ -40,8 +46,8 @@ auto_risk_tags: {auto_risk_tags}
 > [!WARNING]
 > **自动冲突检测 (Sanity Audit Tags)**：以下为基于底座过程数据（avg_xG_last_5 / defensive_leakage）对比赔率盘口让格，自动洗涤暴露出的博弈裂痕与风险标签。
 
-- **博弈冲突标签 (Auto Risk Tags)**: `{auto_risk_tags_formatted}`
-- **底座过程优势方 (Process Edge)**: **{process_edge_side}**  
+- **博弈冲突标签 (Auto Risk Tags)**: {auto_risk_tags_formatted}
+- **底座过程优势方 (Process Edge)**: **{process_edge_side}** (置信度: `{process_edge_confidence}`)  
   *过程优势研判逻辑*: {process_edge_reason_formatted}
 
 ---
@@ -49,7 +55,8 @@ auto_risk_tags: {auto_risk_tags}
 ## 1. 赔率现实与市场状态 (Market Reality)
 
 - **赔率数据状态 (market_json)**: `{market_json_status}`
-- **博弈大裂缝预警 (Divergence Warning)**: `{bookmaker_divergence_warning}`
+- **市场内部偏离预警 (Market Internal Divergence)**: {market_internal_divergence_formatted}
+- **市场过程背离预警 (Market Process Divergence)**: {market_process_divergence_formatted}
 
 ### 赔率市场实时数据 (数据分发: `{match_no}_market.json`)
 {market_data_block}
@@ -58,8 +65,9 @@ auto_risk_tags: {auto_risk_tags}
 
 ## 2. 事实门禁与置信度审核 (Fact Gate & Team Abnormalities)
 
-- **事实门禁置信度 (Fact Gate Status)**: `{fact_gate_status}`
-- **降级防卫原因 (Fact Gate Reason)**: {fact_gate_reason_formatted}
+- **事实门禁置信度 (Fact Gate Status)**: `{fact_gate_status}` (总置信度: `{fact_gate_confidence}`)
+- **降级防卫原因 (Fact Gate Reason)**: 
+{fact_gate_reason_formatted}
 
 ### 🚨 临场特异噪点与存疑伤停 (数据分发: `{match_no}_abnormal.json`)
 {abnormal_suspicious_block}

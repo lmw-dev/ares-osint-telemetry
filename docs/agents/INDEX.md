@@ -14,6 +14,8 @@
 - [team intel schema v2（2026-04-26）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/team_intel_schema_v2_2026-04-26.md)
 - [team_forge v4.2 升级记录（2026-04-21）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/team_forge_v4.2_升级记录_2026-04-21.md)
 - [intel_sweeper backfill v4.2 记录（2026-04-21）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/intel_sweeper_backfill_v4.2_记录_2026-04-21.md)
+- [team archive 审计与流程优化报告（2026-05-20）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/team_archive_audit_and_flow_optimization.md)
+- [球队物理画像与一键打包交付报告（2026-05-20）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/handover_physical_profile_and_material_pack_20260520.md)
 
 ## 3. Pipeline / Crawler
 - [osint pipeline consistency alignment（2026-04-29）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/osint_pipeline_consistency_alignment_2026-04-29.md)

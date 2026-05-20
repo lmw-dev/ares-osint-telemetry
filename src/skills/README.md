@@ -11,12 +11,14 @@
 
 ## 🛰️ 智能 Skills 快速索引
 
-目前已在 `src/skills/` 下注册以下两大核心 OSINT 技能：
+目前已在 `src/skills/` 下注册以下四大核心 OSINT 技能：
 
 | 技能名称 | 目录路径 | 核心定位 | 最终落盘路径 (Obsidian Vault) |
 | :--- | :--- | :--- | :--- |
 | **football-team-news-flags** | `src/skills/football-team-news-flags/` | 赛前球队关键异常情报抓取 (伤停/发布会口径/舆论) | `03_Match_Audits/DATE-{date}-top5/` |
 | **football-prematch-odds-intelligence** | `src/skills/football-prematch-odds-intelligence/` | 赛前盘口与赔率异动分析 (欧赔/亚盘/大小球) | `03_Match_Audits/DATE-{date}-top5/` |
+| **football-physical-profile** | `src/skills/football-physical-profile/` | 物理期望进球（xG/xGA）画像智能剪枝与无损 Soft Update | `02_Team_Archives/{league}/{team}.md` |
+| **football-prematch-material-pack** | `src/skills/football-prematch-material-pack/` | 赛前空白资料包/材料包一键生成与 Obsidian 对齐交付 | `03_Match_Audits/AresMatchday_{date}/` |
 
 ---
 
@@ -52,6 +54,32 @@ AI 助手读取到该路径后，会隐式使用 `view_file` 工具的 `IsSkillF
 - league: 西甲
 - round_or_date: 第37轮
 - matches: [巴塞罗那 vs 皇家马德里]
+```
+
+### 3. 唤醒 `football-physical-profile`（期望数据画像智能提炼）
+
+> 💡 **复制以下指令至 Antigravity 聊天框：**
+
+```text
+请加载并以 IsSkillFile 方式执行以下技能，为指定球队进行物理画像数据提炼与智能剪枝：
+技能路径: /Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/src/skills/football-physical-profile/SKILL.md
+
+输入参数：
+- team_name: 热刺 (或者阿森纳、曼城等)
+- league: 英超 (可选)
+- year: 2025 (可选，默认为当前赛季)
+```
+
+### 4. 唤醒 `football-prematch-material-pack`（空白推演资料包一键生成）
+
+> 💡 **复制以下指令至 Antigravity 聊天框：**
+
+```text
+请加载并以 IsSkillFile 方式执行以下技能，为指定比赛日一键打包生成 Obsidian 交付材料：
+技能路径: /Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/src/skills/football-prematch-material-pack/SKILL.md
+
+输入参数：
+- date: 20260520 (比赛日日期，格式 YYYYMMDD)
 ```
 
 ---

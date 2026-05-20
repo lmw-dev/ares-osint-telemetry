@@ -1,0 +1,99 @@
+# 🤖 Antigravity 智能 Skills 使用手册
+
+> **“以大模型为执行引擎，在 Antigravity 中直接闭环运行。”**
+
+在 `Ares v4.1` 的全新架构中，我们移除了旧版繁琐的外部 Python 执行脚本（即不需要外部 DeepSeek/OpenAI 的 API Key 和网络请求管道）。
+所有的 Skill 均已被重构为 **模型无关的 Agent 规范文件 (SKILL.md)**。
+
+当您在 Antigravity 中加载并执行这些 Skill 时，**您当前对话的 AI 模型（无论是 Claude、Gemini 还是其他模型）将直接扮演分析引擎的角色**，并利用本地的 `search_web` 和 `read_url_content` 工具，完成实时情报的抓取、交叉比对、异常标志判定，并最终输出格式化的 Markdown 报告与 JSON 数据至 `AresVault`。
+
+---
+
+## 🛰️ 智能 Skills 快速索引
+
+目前已在 `src/skills/` 下注册以下两大核心 OSINT 技能：
+
+| 技能名称 | 目录路径 | 核心定位 | 最终落盘路径 (Obsidian Vault) |
+| :--- | :--- | :--- | :--- |
+| **football-team-news-flags** | `src/skills/football-team-news-flags/` | 赛前球队关键异常情报抓取 (伤停/发布会口径/舆论) | `03_Match_Audits/DATE-{date}-top5/` |
+| **football-prematch-odds-intelligence** | `src/skills/football-prematch-odds-intelligence/` | 赛前盘口与赔率异动分析 (欧赔/亚盘/大小球) | `03_Match_Audits/DATE-{date}-top5/` |
+
+---
+
+## ⚡️ 在 Antigravity 对话框中一键唤醒与使用
+
+如果您在 Antigravity 的 `@` 下拉菜单中暂时看不到技能（可能是由于插件更新、索引重置导致），您可以通过**“文件即技能（File-as-a-Skill）”**机制，在对话中直接发送以下 **黄金提问模板**。
+
+AI 助手读取到该路径后，会隐式使用 `view_file` 工具的 `IsSkillFile: true` 标记加载文件，从而被 SKILL 的规则完全接管，在后台自动执行全流程。
+
+### 1. 唤醒 `football-team-news-flags`（赛前新闻异常情报收集）
+
+> 💡 **复制以下指令至 Antigravity 聊天框：**
+
+```text
+请加载并以 IsSkillFile 方式执行以下技能，开始我的足球赛前关键异常扫描：
+技能路径: /Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/src/skills/football-team-news-flags/SKILL.md
+
+输入参数：
+- league: 英超
+- round_or_date: 2026-05-20 (可以使用 YYYY-MM-DD 日期或轮次，如 第38轮)
+- matches: [阿森纳 vs 切尔西, 曼城 vs 利物浦]  # 可选。若不指定，AI 会自动搜索本轮的完整五大联赛对阵。
+```
+
+### 2. 唤醒 `football-prematch-odds-intelligence`（赔率市场情报分析）
+
+> 💡 **复制以下指令至 Antigravity 聊天框：**
+
+```text
+请加载并以 IsSkillFile 方式执行以下技能，分析指定比赛的盘口与赔率异动：
+技能路径: /Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/src/skills/football-prematch-odds-intelligence/SKILL.md
+
+输入参数：
+- league: 西甲
+- round_or_date: 第37轮
+- matches: [巴塞罗那 vs 皇家马德里]
+```
+
+---
+
+## 🛠️ Python 编程式调用与集成
+
+除了直接在 Antigravity 中让 AI 跑之外，该设计同样保留了强大的**本地 Python 管道集成能力**。在 `src/skills/skill_runner.py` 中，我们提供了 `SkillRunner` 类，供您的自动化脚本加载和装配 Skill 上下文。
+
+### 本地 Python 调用示例：
+```python
+from pathlib import Path
+from src.skills.skill_runner import SkillRunner
+
+# 1. 实例化执行器
+runner = SkillRunner("football-team-news-flags")
+
+# 2. 组装输入上下文，自动映射 Ares 规范路径
+context = runner.build_context(
+    league="英超",
+    season="2025/26",
+    round="第38轮",
+    date="2026-05-20",
+    matches=["阿森纳 vs 切尔西", "曼城 vs 利物浦"]
+)
+
+# 3. 获取装配好的 System 与 User Prompt
+system_prompt = runner.get_system_prompt()
+user_prompt = runner.render_user_prompt(context)
+
+# 4. 打印中间输出产物路径（符合 OSINT 规范路由）
+print(f"原始中间数据路径: {runner.raw_output_path('英超', '2026-05-20')}")
+print(f"最终 Obsidian 报告路径: {runner.draft_output_path('英超', '2026-05-20')}")
+```
+
+---
+
+## 📐 底层核心原则
+
+1. **绝对零幻觉（Zero-Hallucination Lock）**：在注入本技能后，AI 将被施加**强力锁机制**。任何未经 `search_web` 或 `read_url_content` 搜索到的“小道消息”、“猜测”均被禁止入选，以确保数据的绝对真实性。
+2. **证据分层系统（Evidence Source Tiers）**：
+   - **T1 - 官方发布会与官网**：主帅亲口言论、伤缺名单。
+   - **T2 - 可靠跟队与主流媒体**：跟队记者爆料、伤停确证。
+   - **T3 - 伤停/数据站**：数据交叉核准。
+   - *（T4/T5 社交媒体、论坛等线索严禁单独入旗）*。
+3. **输出闭环**：生成的 Markdown 报告和 JSON 数据会自动写入 `$ARES_VAULT_PATH/03_Match_Audits/DATE-{date}-top5/` 目录，供 `Ares` 量化系统直接读取。

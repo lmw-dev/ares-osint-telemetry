@@ -131,6 +131,12 @@ export ARES_VAULT_PATH="/path/to/your/Vault"
 - 近期交付总览（P0/P0.3/回归结果）：[`docs/agents/osint_recent_delivery_summary_2026-05-06.md`](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/osint_recent_delivery_summary_2026-05-06.md)
 - Team Intel 字段规范：[`docs/agents/team_intel_schema_v2_2026-04-26.md`](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/team_intel_schema_v2_2026-04-26.md)
 
+### 0.2 🤖 Antigravity 智能 Skills (AI Copilot 唤醒)
+
+- 智能 Skills 使用手册与唤醒模板（极力推荐）：[`src/skills/README.md`](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/src/skills/README.md)
+  > *本项目现已全面集成全新 V2.0 智能 Skills（赛前异常新闻扫描 & 赛前盘口赔率研判）。在 Antigravity 中，当前活跃大模型（Gemini/Claude 等）将直接作为闭环分析引擎，通过 `search_web` 工具实施零幻觉实时情报抓取。无需配置外部 LLM API，详情及一键唤醒指令模板请参阅该手册。*
+
+
 ### 1. 赛前映射（Crawler）
 获取中国足彩期号并从海外数据库寻找比赛映射 ID。
 *(内置高级网络爬取：利用逆向工程提取了 Understat 的私有隐密接口，无需 Selenium/代理池即可无痕获取数据且避免 API-Football 等授权费)*。

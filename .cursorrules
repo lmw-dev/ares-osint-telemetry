@@ -1,0 +1,33 @@
+# Ares OSINT Telemetry - Antigravity 全局规则 (Global Rules)
+
+## 1. 语言与风格 (Language & Style)
+- **简体中文优先**：在本项目的所有对话、解释、方案设计、代码注释和 docstring 中，一律强制使用**简体中文**。技术专有名词可保留英文。
+- **技术专家风范**：回答应当条理清晰、技术向、精炼、无冗余废话，采用“问题分析 -> 方案设计 -> 代码实现 -> 部署建议”的结构。
+- **交接文档（P0）**：在完成任何较大的系统性修改前，必须在 `docs/agents/` 目录下生成一份 Markdown 格式的交接文档（Handover Doc），总结修改点和后续升级建议。
+
+## 2. 技术栈与工程规范 (Engineering Standards)
+- **Python 3.10+ 规范**：
+  - 强制声明 `Type Hinting` 类型提示。
+  - 全局使用标准 `logging` 输出日志，禁止使用 `print()` 破坏系统日志管道。
+  - 严格保持数据“单向流动”原则，禁止在同一个脚本中循环反复读取底层数据。
+- **UI/CSS 限制**：
+  - 若涉及 Web 或 HTML 开发，除非明确要求，否则一律采用原生 Vanilla CSS。严禁使用 TailwindCSS。
+  - UI 设计风格需偏向“暗黑极客控制台”、“微动画交互”，保障视觉卓越。
+
+## 3. Obsidian Vault 数据落地约定
+- 所有的报告、遥测和情报持久化路径必须严格接入 Obsidian Vault，默认基于 `ARES_VAULT_PATH` 环境变量或 `.env` 配置文件定位：
+  - 赛前预检：`$ARES_VAULT_PATH/03_Match_Audits/{issue}/Audit-{issue}.md`
+  - 赛后遥测：`$ARES_VAULT_PATH/03_Match_Audits/{issue}/04_Postmatch_Telemetry/`
+  - 球队底座：`$ARES_VAULT_PATH/02_Team_Archives/`
+  - 智能 Skills 输出：`/vaults/AresVault/03_Match_Audits/DATE-{date}-top5/`
+- 所有生成的 Markdown 文件必须具备严格、规范的 YAML Frontmatter。
+
+## 4. 智能 Skills 协同机制 (Model-as-Engine)
+- **内置两大 V2.0 技能**：
+  - `football-team-news-flags`：赛前关键新闻异常标志扫描。
+  - `football-prematch-odds-intelligence`：赛前赔率/盘口时间逻辑分析。
+- **执行规范**：当用户要求加载并执行这两大 Skill 时，作为 AI 助手的你即是 **执行引擎**。应当使用自身的 `search_web` 和 `read_url_content` 工具抓取最新的赛前情报，进行“零幻觉”的多源交叉核验，并最终将报告格式化写入 AresVault。
+
+## 5. Ares 量化核心价值观
+- **Truth > Completeness (真相比完整更重要)**：宁可输出“暂无明显异常”，也绝不为了凑数而编造、幻觉或采信未经证实的低强度小道消息。
+- **收集与判定分离**：先通过搜刮/搜索聚拢事实依据并保留原始来源，再根据规则卡门槛，最后进行异常入旗判定。

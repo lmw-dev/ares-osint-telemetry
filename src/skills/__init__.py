@@ -19,6 +19,19 @@ football-team-news-flags
 football-prematch-odds-intelligence
     赛前公司级赔率市场情报工作流（欧赔/亚盘/大小球/盘口时间逻辑）。
     触发词：赔率报告、欧赔分析、亚盘移动、prematch odds、盘口时间逻辑
+
+football-physical-profile
+    足球战力物理画像智能修正（xG/xGA 剪枝 + 无损 Soft Update 回填 Team Archives）。
+    触发词：物理画像、xG 修正、期望进球、physical profile、战力画像
+
+football-prematch-material-pack
+    赛前空白推演资料包一键生成与 Obsidian 对齐交付。
+    触发词：材料包、推演资料包、prematch material pack、一键打包
+
+recurring-team-signal-collection
+    定期球队异常信号采集工作流（weekly_baseline / matchday_live / postmatch_validation）。
+    建立"定期采集 → 信号入库 → prematch 调用 → post-match 验证 → durable learning"闭环。
+    触发词：信号采集、球队信号、recurring signal、异常信号入库、durable learning、信号巡检
 """
 
 import os

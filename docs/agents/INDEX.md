@@ -42,6 +42,17 @@
 - [governance sop v4.2 对齐更新（2026-04-22）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/governance_sop_v4.2_对齐更新_2026-04-22.md)
 - [governance sop 双项目协同修正（2026-04-22）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/governance_sop_双项目协同修正_2026-04-22.md)
 
-## 6. 使用建议
+## 7. Skills 体系
+
+### 已落地 Skills（src/skills/）
+- [football-team-news-flags v2.0 落地记录（2026-05-19）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/football_team_news_flags_20260519.md)
+- [football-prematch-odds-intelligence v2.1 升级记录](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/handover_odds_intelligence_v2.1_refinement.md)
+- [football-physical-profile & football-prematch-material-pack 交付（2026-05-20）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/handover_physical_profile_and_material_pack_20260520.md)
+- [recurring-team-signal-collection v1.0 落地记录（2026-05-21）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/handover_recurring_team_signal_collection_2026-05-21.md)
+- [recurring-team-signal-collection 一周试运行评估（2026-05-21）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/handover_recurring_signal_trial_2026-05-21.md)
+- [recurring-team-signal-collection v1.1 硬化记录（2026-05-21）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/handover_recurring_signal_hardening_2026-05-21.md) ← **最新**
+
+## 8. 使用建议
 - 新 Agent 接手时，先读「当前总览」+「Prematch 门禁与预检」+「Team Archive / Team Intel」。
 - 做日期批次（如 `DATE-YYYYMMDD-top5`）时，优先复用当前总览中的推荐执行顺序。
+- 使用 Skills 时，参考 `src/skills/README.md` 中的唤醒模板。

@@ -73,6 +73,13 @@ def is_team_match(name_a: str, name_b: str) -> bool:
     norm_b = re.sub(r"[^a-zA-Z0-9]", "", name_b).lower()
     if norm_a == norm_b:
         return True
+    # 特例防卫映射，例如 PSG 与 Paris Saint Germain 的无损对齐
+    special_cases = {
+        "psg": "parissaintgermain",
+        "parissaintgermain": "psg"
+    }
+    if special_cases.get(norm_a) == norm_b:
+        return True
     if len(norm_a) >= 4 and len(norm_b) >= 4:
         if norm_a in norm_b or norm_b in norm_a:
             return True
@@ -337,8 +344,9 @@ def extract_abnormal_blocks(
         fg_status = "PARTIAL_PASS"
         fg_confidence = "medium_low"
         fg_reasons = [
-            "abnormal_json_present",
-            "all_player_items_need_latest_confirmation"
+            "no_confirmed_absences",
+            "player_availability_requires_latest_team_news",
+            "abnormal_info_usable_only_as_context"
         ]
 
     return abnormal_suspicious, abnormal_rotation, fg_status, fg_confidence, fg_reasons
@@ -401,10 +409,12 @@ def calculate_auto_risk_tags(
 
     # 欧亚内部裂缝
     has_split = bool(market_move_raw.get("euro_asian_split", False))
+    if has_split:
+        tags.append("EURO_ASIAN_SPLIT")
     market_internal_div = {
         "status": has_split,
         "note": (
-            "检测到欧亚板块走向分裂，存在操盘手欧亚反向引导痕迹！"
+            "欧赔与亚盘方向不一致，盘口信号分裂；让球方向置信度需降级。"
             if has_split else
             "欧赔与亚盘同向移动，未发现内部水位异常裂痕。"
         )
@@ -420,28 +430,91 @@ def calculate_auto_risk_tags(
     if market_status == "MISSING":
         market_process_div["note"] = "MARKET_JSON_MISSING: 博弈大裂缝研判强挂起。"
     else:
-        if is_home_fav:
-            if home_avg_xg < 1.1 or home_defensive_leakage > 1.8:
-                tags.append("MARKET_OVERPRICES_HOME")
-            if away_defensive_leakage <= 0.8:
-                tags.append("FAVORITE_DEEP_HANDICAP_CAUTION")
-            if p_side == "Away":
-                tags.append("MARKET_PROCESS_CONFLICT")
+        euro_sig = str(market_move_raw.get("euro_signal", "")).upper()
+        asian_sig = str(market_move_raw.get("asian_signal", "")).upper()
+
+        # 1. 强热门方差保护 (STRONG_FAVORITE_VARIANCE_GUARD) 物理规则 (尤文场)
+        # 主队是深盘强热门，客队防守下限极高且主队过程优势并非压倒性时
+        if is_home_fav and handicap <= -0.75 and away_defensive_leakage <= 0.8:
+            tags.append("STRONG_FAVORITE_VARIANCE_GUARD")
+            tags.append("PROCESS_RIGHT_RESULT_RISK")
+
+        # 2. 亚盘深但欧赔主胜修复冲突 (ASIAN_DEEP_EURO_REPAIR_CONFLICT) 物理规则 (Nice场)
+        if handicap <= -1.0 and ("HOME_WEAKENED" in euro_sig or "AWAY_STRENGTHENED" in euro_sig):
+            tags.append("ASIAN_DEEP_EURO_REPAIR_CONFLICT")
+            market_process_div = {
+                "status": True,
+                "severity": "medium",
+                "note": "亚盘深让但欧赔主胜指数呈现弱化修复趋势，形成深盘与欧赔反向冲突。"
+            }
+
+        # 3. 平局过度压缩 (DRAW_COMPRESSED & LOW_EVENT_GAME) 物理规则 (奥萨苏纳场)
+        # 通过 market_move 的 total_signal 判断大小球界限
+        total_sig = str(market_move_raw.get("total_signal", "")).upper()
+        if "TOTAL_DOWN" in total_sig and abs(handicap) <= 0.25:
+            tags.append("DRAW_COMPRESSED")
+            tags.append("LOW_TOTAL_REPAIR")
+            tags.append("LOW_EVENT_GAME")
+
+        # 逻辑 1：过程偏强方但市场退水/大让步降权 (PROCESS_EDGE_FAVORITE_BUT_MARKET_RETREAT)
+        fav_retreat_detected = False
+        if p_side == "Away" and ("AWAY_WEAKENED" in euro_sig or "AWAY_SHALLOW" in asian_sig):
+            fav_retreat_detected = True
+        elif p_side == "Home" and ("HOME_WEAKENED" in euro_sig or "HOME_SHALLOW" in asian_sig):
+            fav_retreat_detected = True
+
+        # 逻辑 2：欧亚分裂，且过程与欧赔同向、但亚盘反向 (PROCESS_AND_EURO_SUPPORT_FAVORITE_ASIAN_SUPPORTS_UNDERDOG)
+        euro_asian_process_split = False
+        if has_split:
+            if p_side == "Away" and ("AWAY_DOWN" in euro_sig or "AWAY_STRENGTHENED" in euro_sig) and ("HOME_DEEPENED" in asian_sig or "HOME_SUPPORTED" in asian_sig):
+                euro_asian_process_split = True
+                tags.append("PROCESS_AND_EURO_SUPPORT_AWAY_ASIAN_SUPPORTS_HOME")
                 market_process_div = {
-                    "status": True, "severity": "high",
-                    "note": f"【强警告】市场深让主队（让 `{handicap}`），但底座过程优势在客队，市场与物理过程严重大分裂！"
+                    "status": True,
+                    "severity": "medium",
+                    "note": "过程与欧赔均偏客队，但亚盘仍加深主队，形成 process/euro vs asian 分裂。"
                 }
-        elif is_away_fav:
-            if away_avg_xg < 1.1 or away_defensive_leakage > 1.8:
-                tags.append("MARKET_OVERPRICES_AWAY")
-            if home_defensive_leakage <= 0.8:
-                tags.append("FAVORITE_DEEP_HANDICAP_CAUTION")
-            if p_side == "Home":
-                tags.append("MARKET_PROCESS_CONFLICT")
+            elif p_side == "Home" and ("HOME_DOWN" in euro_sig or "HOME_STRENGTHENED" in euro_sig) and ("AWAY_DEEPENED" in asian_sig or "AWAY_SUPPORTED" in asian_sig):
+                euro_asian_process_split = True
+                tags.append("PROCESS_AND_EURO_SUPPORT_HOME_ASIAN_SUPPORTS_AWAY")
                 market_process_div = {
-                    "status": True, "severity": "high",
-                    "note": f"【强警告】市场深让客队（让 `{handicap}`），但底座过程优势在主队，市场与物理过程严重大分裂！"
+                    "status": True,
+                    "severity": "medium",
+                    "note": "过程与欧赔均偏主队，但亚盘仍加深客队，形成 process/euro vs asian 分裂。"
                 }
+
+        # 逻辑 3：若不是上述特殊分裂，再进入常规主/客强过程冲突判定
+        if not euro_asian_process_split and not market_process_div.get("status"):
+            if fav_retreat_detected:
+                tags.append("PROCESS_EDGE_FAVORITE_BUT_MARKET_RETREAT")
+                market_process_div = {
+                    "status": True,
+                    "severity": "medium",
+                    "note": f"过程仍偏{p_side}队，但市场显著削弱{p_side}队，修复对手；属于过程强方被市场降权。"
+                }
+            else:
+                if is_home_fav:
+                    if home_avg_xg < 1.1 or home_defensive_leakage > 1.8:
+                        tags.append("MARKET_OVERPRICES_HOME")
+                    if away_defensive_leakage <= 0.8:
+                        tags.append("FAVORITE_DEEP_HANDICAP_CAUTION")
+                    if p_side == "Away":
+                        tags.append("MARKET_PROCESS_CONFLICT")
+                        market_process_div = {
+                            "status": True, "severity": "high",
+                            "note": f"【强警告】市场深让主队（让 `{handicap}`），但底座过程优势在客队，市场与物理过程严重大分裂！"
+                        }
+                elif is_away_fav:
+                    if away_avg_xg < 1.1 or away_defensive_leakage > 1.8:
+                        tags.append("MARKET_OVERPRICES_AWAY")
+                    if home_defensive_leakage <= 0.8:
+                        tags.append("FAVORITE_DEEP_HANDICAP_CAUTION")
+                    if p_side == "Home":
+                        tags.append("MARKET_PROCESS_CONFLICT")
+                        market_process_div = {
+                            "status": True, "severity": "high",
+                            "note": f"【强警告】市场深让客队（让 `{handicap}`），但底座过程优势在主队，市场与物理过程严重大分裂！"
+                        }
 
     return (
         sorted(list(set(tags))),
@@ -462,17 +535,43 @@ def calculate_prematch_mode(
     根据风险标签与裂缝信号，计算 prematch_mode 和 deep_queue_score。
     HALT(0-1) / LIGHT(2-4) / STANDARD(5-7) / DEEP(8+)
     """
-    # HALT 条件：两项关键数据均缺失
     if market_status == "MISSING" and ab_status == "MISSING":
         return "HALT", 0
 
     score = 0
 
-    HIGH_TAGS   = {"MARKET_PROCESS_CONFLICT", "MARKET_OVERPRICES_HOME", "MARKET_OVERPRICES_AWAY"}
-    MEDIUM_TAGS = {"FAVORITE_DEEP_HANDICAP_CAUTION", "HOME_DEFENSIVE_LEAKAGE_HIGH",
-                   "AWAY_DEFENSIVE_LEAKAGE_HIGH", "HOME_DEFENSIVE_FLOOR_HIGH", "AWAY_DEFENSIVE_FLOOR_HIGH"}
-    LOW_TAGS    = {"TEAM_ARCHIVE_WEAK", "CONTAMINATION_HISTORY",
-                   "ABNORMAL_DATA_MISSING", "MARKET_DATA_MISSING"}
+    HIGH_TAGS   = {
+        "MARKET_PROCESS_CONFLICT", "MARKET_OVERPRICES_HOME", "MARKET_OVERPRICES_AWAY",
+        "FAVORITE_RETREAT", "EURO_ASIAN_SPLIT", "SURVIVAL_WIN_CONVERSION_GATE",
+        "PROCESS_EDGE_FAVORITE_BUT_MARKET_RETREAT",
+        "PROCESS_AND_EURO_SUPPORT_AWAY_ASIAN_SUPPORTS_HOME",
+        "PROCESS_AND_EURO_SUPPORT_HOME_ASIAN_SUPPORTS_AWAY",
+        # V2.3 扩容 10 场测试集新增高危博弈大门禁
+        "STRONG_FAVORITE_VARIANCE_GUARD",
+        "ROTATION_RISK",
+        "MARKET_OVERPRICES_MOTIVATION_SIDE",
+        "SURVIVAL_PRICE_OVERCOMPRESSION",
+        "DRAW_COMPRESSED",
+        "ASIAN_DEEP_EURO_REPAIR_CONFLICT",
+        "LOCKED_TARGET_DEFLATION"
+    }
+    MEDIUM_TAGS = {
+        "FAVORITE_DEEP_HANDICAP_CAUTION", "HOME_DEFENSIVE_LEAKAGE_HIGH",
+        "AWAY_DEFENSIVE_LEAKAGE_HIGH", "HOME_DEFENSIVE_FLOOR_HIGH", "AWAY_DEFENSIVE_FLOOR_HIGH",
+        "UNDERDOG_WIN_LIVE", "EURO_ASIAN_SPLIT_PRIORITY",
+        "AWAY_REPAIR", "HANDICAP_CONFIDENCE_DOWNGRADE", "DRAW_PROTECTION",
+        # V2.3 扩容中危标签
+        "PROCESS_RIGHT_RESULT_RISK",
+        "LOW_TOTAL_REPAIR",
+        "LOW_EVENT_GAME"
+    }
+    LOW_TAGS    = {
+        "TEAM_ARCHIVE_WEAK", "CONTAMINATION_HISTORY",
+        "ABNORMAL_DATA_MISSING", "MARKET_DATA_MISSING",
+        "CLEAN_STRONG_FAVORITE", "PROCESS_AND_MOTIVATION_ALIGNED", "MARKET_SUPPORTS_STRONG_HOME",
+        # V2.3 扩容低危标签
+        "STRONG_HOME_DIRECTION"
+    }
 
     for t in risk_tags:
         if t in HIGH_TAGS:
@@ -483,8 +582,11 @@ def calculate_prematch_mode(
             score += 1
 
     # 大裂缝加权
-    if market_process_div.get("status") and market_process_div.get("severity") == "high":
-        score += 3
+    if market_process_div.get("status"):
+        if market_process_div.get("severity") == "high":
+            score += 3
+        elif market_process_div.get("severity") == "medium":
+            score += 2
     if market_internal_div.get("status"):
         score += 2
 
@@ -502,8 +604,6 @@ def calculate_prematch_mode(
         mode = "DEEP"
     elif score >= 5:
         mode = "STANDARD"
-    elif score >= 2:
-        mode = "LIGHT"
     else:
         mode = "LIGHT"
 
@@ -776,6 +876,15 @@ def main():
         ab_status = "READY" if (abnormal_data_present and ab_match) else "MISSING"
 
         if ab_status == "READY":
+            # 4.3.1 战意物理防卫降级：非 standings_context 的异常模块推导强制限制置信度为 medium_low
+            if isinstance(ab_match, dict) and "teams" in ab_match:
+                for t_data in ab_match.get("teams", []):
+                    t_status = t_data.get("target_status")
+                    if isinstance(t_status, dict):
+                        t_status["source"] = "abnormal_inference"
+                        if t_status.get("confidence") in ["high", "medium"]:
+                            t_status["confidence"] = "medium_low"
+
             (match_dir / f"{m_id_str}_abnormal.json").write_text(
                 json.dumps(ab_match, ensure_ascii=False, indent=2), encoding="utf-8"
             )
@@ -810,6 +919,11 @@ def main():
             handicap_val, euro_h_val, euro_a_val,
             m_status, ab_status, market_move
         )
+
+        # 合并 market.json 里的自定义 risk_tags，保障保级/强热门/冷门等语义标签弹性融合
+        extra_tags = m.get("risk_tags", [])
+        if extra_tags:
+            risk_tags = sorted(list(set(risk_tags + extra_tags)))
 
         # 4.6 Prematch Mode + Deep Queue Score
         prematch_mode, deep_queue_score = calculate_prematch_mode(

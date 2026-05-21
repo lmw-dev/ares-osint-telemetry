@@ -8,6 +8,7 @@
 - [prematch 输入诊断与软门禁恢复记录（2026-04-24）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/prematch_input_readiness_and_soft_gate_2026-04-24.md)
 - [prematch 预检总揽脚本记录（2026-04-24）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/prematch_preflight_overview_2026-04-24.md)
 - [prematch smoke anchor guardrails（2026-04-25）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/prematch_smoke_anchor_guardrails_2026-04-25.md)
+- [Ares Prematch 料包生产引擎 V2.3 核心分流与 10 场量化压测交接文档（2026-05-21）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/handover_prematch_material_pack_v23_testing_20260520.md)
 
 ## 2. Team Archive / Team Intel
 - [team archive backfill（2026-04-24）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/team_archive_backfill_2026-04-24.md)

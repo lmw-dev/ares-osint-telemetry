@@ -11,7 +11,7 @@
 
 ## 🛰️ 智能 Skills 快速索引
 
-目前已在 `src/skills/` 下注册以下四大核心 OSINT 技能：
+目前已在 `src/skills/` 下注册以下六大核心 OSINT 技能：
 
 | 技能名称 | 目录路径 | 核心定位 | 最终落盘路径 (Obsidian Vault) |
 | :--- | :--- | :--- | :--- |
@@ -19,6 +19,8 @@
 | **football-prematch-odds-intelligence** | `src/skills/football-prematch-odds-intelligence/` | 赛前盘口与赔率异动分析 (欧赔/亚盘/大小球) | `03_Match_Audits/DATE-{date}-top5/` |
 | **football-physical-profile** | `src/skills/football-physical-profile/` | 物理期望进球（xG/xGA）画像智能剪枝与无损 Soft Update | `02_Team_Archives/{league}/{team}.md` |
 | **football-prematch-material-pack** | `src/skills/football-prematch-material-pack/` | 赛前空白资料包/材料包一键生成与 Obsidian 对齐交付 | `03_Match_Audits/AresMatchday_{date}/` |
+| **recurring-team-signal-collection** | `src/skills/recurring-team-signal-collection/` | 定期球队异常信号采集（weekly_baseline / matchday_live / postmatch_validation），建立 durable learning 闭环 | `draft_reports/recurring-team-signal-collection_{league}_{date}.{md,json}` |
+| **youtube-tactical-url-discovery** | `src/skills/youtube-tactical-url-discovery/` | YouTube 战术视频 URL 发现与筛选，输出候选清单供用户确认后进入 NotebookLM synthesis | `AresVault/04_RAG_Raw_Data/youtube_tactical_sources/candidates/` |
 
 ---
 
@@ -80,6 +82,37 @@ AI 助手读取到该路径后，会隐式使用 `view_file` 工具的 `IsSkillF
 
 输入参数：
 - date: 20260520 (比赛日日期，格式 YYYYMMDD)
+```
+
+### 5. 唤醒 `recurring-team-signal-collection`（定期球队异常信号采集）
+
+> 💡 **复制以下指令至 Antigravity 聊天框：**
+
+```text
+请加载并以 IsSkillFile 方式执行以下技能，开始定期球队异常信号采集：
+技能路径: /Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/src/skills/recurring-team-signal-collection/SKILL.md
+
+输入参数：
+- league: 英超
+- scan_type: weekly_baseline  # weekly_baseline / matchday_live / postmatch_validation
+- reference_date: 2026-05-22
+- teams: []  # 留空则全量扫描
+```
+
+### 6. 唤醒 `youtube-tactical-url-discovery`（YouTube 战术视频 URL 发现）
+
+> 💡 **复制以下指令至 Antigravity 聊天框：**
+
+```text
+请加载并以 IsSkillFile 方式执行以下技能，发现并筛选 YouTube 战术视频候选来源：
+技能路径: /Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/src/skills/youtube-tactical-url-discovery/SKILL.md
+
+输入参数：
+- target_team: Arsenal
+- target_league: EPL
+- coach_name: Mikel Arteta
+- search_focus: tactical_analysis  # tactical_analysis / coach_system / postmatch_review / set_piece / pressing
+- reference_date: 2026-05-22
 ```
 
 ---

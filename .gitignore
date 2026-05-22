@@ -30,6 +30,7 @@ build/
 # IDE configurations
 .idea/
 .vscode/
+.kiro/
 
 # OS generated files
 .DS_Store

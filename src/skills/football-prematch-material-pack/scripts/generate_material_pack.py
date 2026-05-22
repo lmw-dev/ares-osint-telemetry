@@ -359,7 +359,8 @@ def calculate_auto_risk_tags(
     away_strength: str, away_contaminated: bool,
     handicap: float, euro_h: float, euro_a: float,
     market_status: str, abnormal_status: str,
-    market_move_raw: Dict[str, Any]
+    market_move_raw: Dict[str, Any],
+    ab_match: Dict[str, Any] = None
 ) -> Tuple[List[str], str, str, str, Dict[str, Any], Dict[str, Any]]:
     """
     V2.3 Auto Risk Tags + 双轨大裂缝研判。
@@ -433,11 +434,63 @@ def calculate_auto_risk_tags(
         euro_sig = str(market_move_raw.get("euro_signal", "")).upper()
         asian_sig = str(market_move_raw.get("asian_signal", "")).upper()
 
-        # 1. 强热门方差保护 (STRONG_FAVORITE_VARIANCE_GUARD) 物理规则 (尤文场)
-        # 主队是深盘强热门，客队防守下限极高且主队过程优势并非压倒性时
-        if is_home_fav and handicap <= -0.75 and away_defensive_leakage <= 0.8:
-            tags.append("STRONG_FAVORITE_VARIANCE_GUARD")
-            tags.append("PROCESS_RIGHT_RESULT_RISK")
+        # 1. 解析伤停战意
+        home_survival = False
+        away_survival = False
+        if ab_match and "teams" in ab_match:
+            for t in ab_match.get("teams", []):
+                label_str = str(t.get("target_status", {}).get("label", "")).lower()
+                mot_str = str(t.get("target_status", {}).get("motivation_level", "")).lower()
+                if "survival" in label_str or mot_str == "extreme":
+                    if t.get("side") == "home":
+                        home_survival = True
+                    elif t.get("side") == "away":
+                        away_survival = True
+
+        # ============================================================
+        # 5 类经典高敏感度博弈门禁通用自动推导物理规则
+        # ============================================================
+
+        # (1) 强热门方差保护门禁 (STRONG_FAVORITE_VARIANCE_GUARD / PROCESS_RIGHT_RESULT_RISK) (尤文场)
+        if is_home_fav and (-1.25 <= handicap <= -0.75) and (away_defensive_leakage <= 1.5):
+            if home_net - away_net < 1.3:
+                tags.append("STRONG_FAVORITE_VARIANCE_GUARD")
+                tags.append("PROCESS_RIGHT_RESULT_RISK")
+
+        # (2) 强热门同向正样本门禁 (CLEAN_STRONG_FAVORITE 等) (罗马场)
+        if is_home_fav and (handicap <= -0.5) and p_side == "Home":
+            if "HOME_STRENGTHENED" in euro_sig or "HOME_DEEPENED" in asian_sig or "HANDICAP_STABLE" in asian_sig:
+                tags.append("CLEAN_STRONG_FAVORITE")
+                tags.append("PROCESS_AND_MOTIVATION_ALIGNED")
+                tags.append("MARKET_SUPPORTS_STRONG_HOME")
+                tags.append("STRONG_HOME_DIRECTION")
+
+        # (3) 保级方客胜转换门禁 (SURVIVAL_WIN_CONVERSION_GATE & UNDERDOG_WIN_LIVE & DRAW_PROTECTION) (洛里昂场)
+        if away_survival and abs(handicap) <= 0.25:
+            if "AWAY_DOWN" in euro_sig or "HOME_UP" in euro_sig or "AWAY_SUPPORTED" in asian_sig or "AWAY_STRENGTHENED" in euro_sig:
+                tags.append("SURVIVAL_WIN_CONVERSION_GATE")
+                tags.append("UNDERDOG_WIN_LIVE")
+                tags.append("DRAW_PROTECTION")
+
+        # (4) 战意过度定价门禁 (MARKET_OVERPRICES_MOTIVATION_SIDE & SURVIVAL_PRICE_OVERCOMPRESSION) (卡利亚里场)
+        if home_survival and p_side != "Home":
+            if "HOME_STRENGTHENED" in euro_sig or "HOME_DEEPENED" in asian_sig:
+                tags.append("MARKET_OVERPRICES_MOTIVATION_SIDE")
+                tags.append("SURVIVAL_PRICE_OVERCOMPRESSION")
+                tags.append("FAVORITE_DEEP_HANDICAP_CAUTION")
+        elif away_survival and p_side != "Away":
+            if "AWAY_STRENGTHENED" in euro_sig or "AWAY_DEEPENED" in asian_sig:
+                tags.append("MARKET_OVERPRICES_MOTIVATION_SIDE")
+                tags.append("SURVIVAL_PRICE_OVERCOMPRESSION")
+                tags.append("FAVORITE_DEEP_HANDICAP_CAUTION")
+
+        # (5) 保级客队修复门禁 (MARKET_REPAIRS_SURVIVAL_SIDE & DRAW_PROTECTION) (乌迪内斯场)
+        if away_survival and handicap <= -0.25:
+            if "AWAY_STRENGTHENED" in euro_sig or "AWAY_DOWN" in euro_sig or "HOME_WEAKENED" in euro_sig:
+                tags.append("MARKET_REPAIRS_SURVIVAL_SIDE")
+                tags.append("DRAW_PROTECTION")
+
+        # ============================================================
 
         # 2. 亚盘深但欧赔主胜修复冲突 (ASIAN_DEEP_EURO_REPAIR_CONFLICT) 物理规则 (Nice场)
         if handicap <= -1.0 and ("HOME_WEAKENED" in euro_sig or "AWAY_STRENGTHENED" in euro_sig):
@@ -530,84 +583,172 @@ def calculate_prematch_mode(
     market_internal_div: Dict[str, Any],
     market_status: str,
     ab_status: str
-) -> Tuple[str, int]:
+) -> Tuple[str, int, Dict[str, int]]:
     """
-    根据风险标签与裂缝信号，计算 prematch_mode 和 deep_queue_score。
-    HALT(0-1) / LIGHT(2-4) / STANDARD(5-7) / DEEP(8+)
+    根据风险标签与裂缝信号，计算 prematch_mode 和 deep_queue_score，同时输出得分细目 deep_queue_breakdown。
     """
+    breakdown = {
+        "market_process_conflict": 0,
+        "euro_asian_split": 0,
+        "favorite_retreat": 0,
+        "survival_gate": 0,
+        "deep_handicap_caution": 0,
+        "locked_target_deflation": 0,
+        "archive_weak": 0,
+        "abnormal_partial": 0
+    }
+
     if market_status == "MISSING" and ab_status == "MISSING":
-        return "HALT", 0
+        breakdown["abnormal_partial"] += 1
+        return "HALT", 0, breakdown
 
-    score = 0
-
-    HIGH_TAGS   = {
+    # 1. 标签分类细目计分
+    conflict_tags_high = {
         "MARKET_PROCESS_CONFLICT", "MARKET_OVERPRICES_HOME", "MARKET_OVERPRICES_AWAY",
-        "FAVORITE_RETREAT", "EURO_ASIAN_SPLIT", "SURVIVAL_WIN_CONVERSION_GATE",
-        "PROCESS_EDGE_FAVORITE_BUT_MARKET_RETREAT",
-        "PROCESS_AND_EURO_SUPPORT_AWAY_ASIAN_SUPPORTS_HOME",
-        "PROCESS_AND_EURO_SUPPORT_HOME_ASIAN_SUPPORTS_AWAY",
-        # V2.3 扩容 10 场测试集新增高危博弈大门禁
-        "STRONG_FAVORITE_VARIANCE_GUARD",
-        "ROTATION_RISK",
-        "MARKET_OVERPRICES_MOTIVATION_SIDE",
-        "SURVIVAL_PRICE_OVERCOMPRESSION",
-        "DRAW_COMPRESSED",
-        "ASIAN_DEEP_EURO_REPAIR_CONFLICT",
-        "LOCKED_TARGET_DEFLATION"
+        "PROCESS_EDGE_FAVORITE_BUT_MARKET_RETREAT", "PROCESS_AND_EURO_SUPPORT_AWAY_ASIAN_SUPPORTS_HOME",
+        "PROCESS_AND_EURO_SUPPORT_HOME_ASIAN_SUPPORTS_AWAY", "STRONG_FAVORITE_VARIANCE_GUARD"
     }
-    MEDIUM_TAGS = {
-        "FAVORITE_DEEP_HANDICAP_CAUTION", "HOME_DEFENSIVE_LEAKAGE_HIGH",
-        "AWAY_DEFENSIVE_LEAKAGE_HIGH", "HOME_DEFENSIVE_FLOOR_HIGH", "AWAY_DEFENSIVE_FLOOR_HIGH",
-        "UNDERDOG_WIN_LIVE", "EURO_ASIAN_SPLIT_PRIORITY",
-        "AWAY_REPAIR", "HANDICAP_CONFIDENCE_DOWNGRADE", "DRAW_PROTECTION",
-        # V2.3 扩容中危标签
-        "PROCESS_RIGHT_RESULT_RISK",
-        "LOW_TOTAL_REPAIR",
-        "LOW_EVENT_GAME"
+    conflict_tags_med = {
+        "PROCESS_RIGHT_RESULT_RISK", "MARKET_REPAIRS_HOME"
     }
-    LOW_TAGS    = {
-        "TEAM_ARCHIVE_WEAK", "CONTAMINATION_HISTORY",
-        "ABNORMAL_DATA_MISSING", "MARKET_DATA_MISSING",
-        "CLEAN_STRONG_FAVORITE", "PROCESS_AND_MOTIVATION_ALIGNED", "MARKET_SUPPORTS_STRONG_HOME",
-        # V2.3 扩容低危标签
-        "STRONG_HOME_DIRECTION"
+
+    split_tags_high = {
+        "EURO_ASIAN_SPLIT", "ASIAN_DEEP_EURO_REPAIR_CONFLICT"
+    }
+    split_tags_med = {
+        "EURO_ASIAN_SPLIT_PRIORITY"
+    }
+
+    retreat_tags_high = {
+        "FAVORITE_RETREAT", "BRAND_FAVORITE_DOWNGRADE"
+    }
+
+    survival_tags_high = {
+        "SURVIVAL_WIN_CONVERSION_GATE", "SURVIVAL_PRICE_OVERCOMPRESSION", 
+        "MARKET_OVERPRICES_MOTIVATION_SIDE", "PROCESS_VS_MOTIVATION_CONFLICT", 
+        "MARKET_REPAIRS_SURVIVAL_SIDE", "PICKEM_COMPRESSION"
+    }
+    survival_tags_med = {
+        "UNDERDOG_WIN_LIVE", "DRAW_PROTECTION"
+    }
+
+    handicap_tags_high = {
+        "WIN_DIRECTION_HANDICAP_OVERPRICED"
+    }
+    # V2.3 调参：handicap_tags_med 降为 +1，防止防守/盘口标签叠加虚高 deep_handicap_caution 维度
+    handicap_tags_med = {
+        "FAVORITE_DEEP_HANDICAP_CAUTION", "HOME_DEFENSIVE_LEAKAGE_HIGH", "AWAY_DEFENSIVE_LEAKAGE_HIGH",
+        "HOME_DEFENSIVE_FLOOR_HIGH", "AWAY_DEFENSIVE_FLOOR_HIGH", "AWAY_REPAIR", 
+        "HANDICAP_CONFIDENCE_DOWNGRADE", "LOW_TOTAL_REPAIR", "LOW_EVENT_GAME", 
+        "MONACO_NOT_STRONG_AWAY_FAVORITE"
+    }
+    handicap_tags_low = {
+        "BTTS_OR_OPEN_GAME"
+    }
+
+    locked_tags_high = {
+        "LOCKED_TARGET_DEFLATION", "ROTATION_RISK"
     }
 
     for t in risk_tags:
-        if t in HIGH_TAGS:
-            score += 3
-        elif t in MEDIUM_TAGS:
-            score += 2
-        elif t in LOW_TAGS:
-            score += 1
+        # 分类注入 breakdown 字典中
+        if t in conflict_tags_high:
+            breakdown["market_process_conflict"] += 3
+        elif t in conflict_tags_med:
+            breakdown["market_process_conflict"] += 2
 
-    # 大裂缝加权
+        elif t in split_tags_high:
+            breakdown["euro_asian_split"] += 3
+        elif t in split_tags_med:
+            breakdown["euro_asian_split"] += 2
+
+        elif t in retreat_tags_high:
+            breakdown["favorite_retreat"] += 3
+
+        elif t in survival_tags_high:
+            breakdown["survival_gate"] += 3
+        elif t in survival_tags_med:
+            breakdown["survival_gate"] += 2
+
+        elif t in handicap_tags_high:
+            breakdown["deep_handicap_caution"] += 3
+        elif t in handicap_tags_med:
+            # V2.3 调参：降为 +1，防止多个防守/盘口标签叠加推高该维度（防线稳固不应等价于博弈裂缝）
+            breakdown["deep_handicap_caution"] += 1
+        elif t in handicap_tags_low:
+            breakdown["deep_handicap_caution"] += 1
+
+        elif t in locked_tags_high:
+            breakdown["locked_target_deflation"] += 3
+
+        # V2.3 调参：TEAM_ARCHIVE_WEAK 计 1 分（置信度降级标签）；
+        # TEAM_ARCHIVE_WEAK_CRITICAL 计 3 分（底座弱 + 大分裂联合惩罚，提升权重避免漏判）
+        elif t == "TEAM_ARCHIVE_WEAK":
+            breakdown["archive_weak"] += 1
+        elif t == "TEAM_ARCHIVE_WEAK_CRITICAL":
+            breakdown["archive_weak"] += 3
+        elif t == "CONTAMINATION_HISTORY":
+            breakdown["archive_weak"] += 1
+        elif t in {"CLEAN_STRONG_FAVORITE", "PROCESS_AND_MOTIVATION_ALIGNED", "MARKET_SUPPORTS_STRONG_HOME", "STRONG_HOME_DIRECTION"}:
+            # 保底低分标签（常规正向同向场景，计极低分维持一致性）
+            breakdown["archive_weak"] += 1
+
+    # 2. 赔率大盘/内部裂缝加权计分
     if market_process_div.get("status"):
         if market_process_div.get("severity") == "high":
-            score += 3
+            breakdown["market_process_conflict"] += 3
         elif market_process_div.get("severity") == "medium":
-            score += 2
+            breakdown["market_process_conflict"] += 2
     if market_internal_div.get("status"):
-        score += 2
+        breakdown["euro_asian_split"] += 2
 
-    # 事实门禁不完整
+    # 3. 事实门禁不完整加分（PASS计0分，PARTIAL_PASS计1分，NEEDS_VERIFICATION计2分）
     if fg_status == "PARTIAL_PASS":
-        score += 1
+        breakdown["abnormal_partial"] += 1
     elif fg_status == "NEEDS_VERIFICATION":
-        score += 2
+        breakdown["abnormal_partial"] += 2
 
-    # 单边缺失
+    # 4. 单边数据缺失防护
     if market_status == "MISSING" or ab_status == "MISSING":
-        score += 1
+        breakdown["abnormal_partial"] += 1
 
-    if score >= 8:
+    # 5. 加总计算 total_score
+    total_score = sum(v for k, v in breakdown.items() if k != "total")
+
+    # Score Floor 保底机制
+    score_floor_rules = {
+        "STRONG_FAVORITE_VARIANCE_GUARD": 7,
+        "SURVIVAL_WIN_CONVERSION_GATE": 10,
+        "MARKET_OVERPRICES_MOTIVATION_SIDE": 10,
+        "UNDERDOG_WIN_LIVE": 10,
+        "CLEAN_STRONG_FAVORITE": 7,
+        "MARKET_REPAIRS_SURVIVAL_SIDE": 10,
+    }
+
+    applied_floor = 0
+    for tag, floor_val in score_floor_rules.items():
+        if tag in risk_tags:
+            if floor_val > applied_floor:
+                applied_floor = floor_val
+
+    if applied_floor > total_score:
+        breakdown["floor_boost"] = applied_floor - total_score
+        total_score = applied_floor
+    else:
+        breakdown["floor_boost"] = 0
+
+    breakdown["total"] = total_score
+
+    # 6. 分流模式判定（V2.3 调参：DEEP >= 13 / STANDARD 7~12 / LIGHT < 7）
+    # 目的：正式比赛日 DEEP 不过多，普通低风险场次能落入 STANDARD 或 LIGHT
+    if total_score >= 13:
         mode = "DEEP"
-    elif score >= 5:
+    elif total_score >= 7:
         mode = "STANDARD"
     else:
         mode = "LIGHT"
 
-    return mode, score
+    return mode, total_score, breakdown
 
 
 def _extract_handicap_euro(odds: Dict[str, Any]) -> Tuple[float, float, float]:
@@ -764,6 +905,7 @@ def main():
     audit_template = template_path.read_text(encoding="utf-8")
 
     csv_rows = []
+    root_market_enriched = []  # P0 修复：收集每场完整富化后的 market_out，循环后回写根目录 market.json
 
     # 4. 遍历比赛打包
     for idx, m in enumerate(market_matches):
@@ -815,10 +957,16 @@ def main():
                     home_strength = fm.get("archive_strength", "unknown")
                     home_contaminated = "CONTAMINATED" in str(fm.get("contamination_status", "")) or "contamination_note" in fm
                     if isinstance(pr, dict):
-                        home_avg_xg  = float(pr.get("avg_xG_last_5", 1.0))
-                        home_def_leak = float(pr.get("defensive_leakage", 1.0))
-                        home_conv_eff = float(pr.get("conversion_efficiency", 0.05))
-                        home_tact_entropy = float(pr.get("actual_tactical_entropy", 0.40))
+                        def _sf(v, default):
+                            """安全浮点转换：非数值字符串自动降级为 default。"""
+                            try:
+                                return float(v)
+                            except (TypeError, ValueError):
+                                return float(default)
+                        home_avg_xg  = _sf(pr.get("avg_xG_last_5", 1.0), 1.0)
+                        home_def_leak = _sf(pr.get("defensive_leakage", 1.0), 1.0)
+                        home_conv_eff = _sf(pr.get("conversion_efficiency", 0.05), 0.05)
+                        home_tact_entropy = _sf(pr.get("actual_tactical_entropy", 0.40), 0.40)
                 else:
                     away_coach = fm.get("coach", "未知")
                     away_formation = fm.get("base_formation", "4-3-3")
@@ -826,10 +974,15 @@ def main():
                     away_strength = fm.get("archive_strength", "unknown")
                     away_contaminated = "CONTAMINATED" in str(fm.get("contamination_status", "")) or "contamination_note" in fm
                     if isinstance(pr, dict):
-                        away_avg_xg  = float(pr.get("avg_xG_last_5", 1.0))
-                        away_def_leak = float(pr.get("defensive_leakage", 1.0))
-                        away_conv_eff = float(pr.get("conversion_efficiency", 0.05))
-                        away_tact_entropy = float(pr.get("actual_tactical_entropy", 0.40))
+                        def _sf(v, default):
+                            try:
+                                return float(v)
+                            except (TypeError, ValueError):
+                                return float(default)
+                        away_avg_xg  = _sf(pr.get("avg_xG_last_5", 1.0), 1.0)
+                        away_def_leak = _sf(pr.get("defensive_leakage", 1.0), 1.0)
+                        away_conv_eff = _sf(pr.get("conversion_efficiency", 0.05), 0.05)
+                        away_tact_entropy = _sf(pr.get("actual_tactical_entropy", 0.40), 0.40)
             else:
                 logger.warning(f"     [!] 缺失{'主' if side=='home' else '客'}队底座: {en_name}")
                 (match_dir / f"{prefix}.md").write_text(
@@ -847,12 +1000,7 @@ def main():
         market_move_detail = calculate_market_move_detail(odds) if (m_status == "READY" and is_new_odds) else {}
 
         if m_status == "READY":
-            # 写 market.json（附加 market_move_detail）
-            market_out = dict(m)
-            market_out["market_move_detail"] = market_move_detail
-            (match_dir / f"{m_id_str}_market.json").write_text(
-                json.dumps(market_out, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+            # 只生成 market.md，market.json 延后到计分完成后写入（含 breakdown）
             md_details = format_market_data(odds, market_move, market_move_detail, "READY")
             market_md = (
                 f"# 赔率市场速览卡 (Market Reality Card)\n\n"
@@ -862,7 +1010,7 @@ def main():
                 f"## 欧赔与亚盘让手细目\n{md_details}\n"
             )
             (match_dir / f"{m_id_str}_market.md").write_text(market_md, encoding="utf-8")
-            logger.info(f"     [market] {m_id_str}_market.json / .md")
+            logger.info(f"     [market.md] {m_id_str}_market.md 生成（JSON 延后写入）")
         else:
             odds, market_move, market_move_detail = {}, {}, {}
             (match_dir / f"{m_id_str}_market.md").write_text(
@@ -917,7 +1065,8 @@ def main():
             home_avg_xg, home_def_leak, home_strength, home_contaminated,
             away_avg_xg, away_def_leak, away_strength, away_contaminated,
             handicap_val, euro_h_val, euro_a_val,
-            m_status, ab_status, market_move
+            m_status, ab_status, market_move,
+            ab_match=ab_match
         )
 
         # 合并 market.json 里的自定义 risk_tags，保障保级/强热门/冷门等语义标签弹性融合
@@ -925,15 +1074,66 @@ def main():
         if extra_tags:
             risk_tags = sorted(list(set(risk_tags + extra_tags)))
 
-        # 4.6 Prematch Mode + Deep Queue Score
-        prematch_mode, deep_queue_score = calculate_prematch_mode(
+        # 4.6 TEAM_ARCHIVE_WEAK_CRITICAL 升级判定
+        is_weak = "TEAM_ARCHIVE_WEAK" in risk_tags
+        has_major_div = any(t in risk_tags for t in [
+            "MARKET_PROCESS_CONFLICT", "EURO_ASIAN_SPLIT", "ASIAN_DEEP_EURO_REPAIR_CONFLICT",
+            "PROCESS_AND_EURO_SUPPORT_AWAY_ASIAN_SUPPORTS_HOME",
+            "PROCESS_AND_EURO_SUPPORT_HOME_ASIAN_SUPPORTS_AWAY"
+        ])
+        no_lineup = (ab_status == "MISSING" or fg_status == "NEEDS_VERIFICATION")
+        if is_weak and (has_major_div or no_lineup):
+            if "TEAM_ARCHIVE_WEAK_CRITICAL" not in risk_tags:
+                risk_tags.append("TEAM_ARCHIVE_WEAK_CRITICAL")
+                risk_tags = sorted(list(set(risk_tags)))
+                logger.info(f"     [WEAK_CRITICAL] 底座弱化 + 大分裂/无阵容 → 追加 TEAM_ARCHIVE_WEAK_CRITICAL")
+
+        # 4.7 Prematch Mode + Deep Queue Score + Breakdown
+        prematch_mode, deep_queue_score, breakdown = calculate_prematch_mode(
             risk_tags, fg_status, m_proc_div, m_int_div, m_status, ab_status
         )
         logger.info(f"     [auto_tags] {risk_tags}")
         logger.info(f"     [prematch_mode] {prematch_mode} (score={deep_queue_score}) | process_edge={p_side}({p_conf})")
+        logger.info(f"     [breakdown] {breakdown}")
+
+        # 前台显示与输出降噪过滤：过滤隐藏 TEAM_ARCHIVE_WEAK
+        display_risk_tags = [t for t in risk_tags if t != "TEAM_ARCHIVE_WEAK"]
+
+        # 4.8 延后写入 market.json（注入完整决策字段）
+        if m_status == "READY":
+            market_out = dict(m)
+            market_out["market_move_detail"] = market_move_detail
+            # 确保 market_tags 字段统一存在（无则为空列表）
+            market_out["market_tags"] = m.get("market_tags", [])
+            market_out["risk_tags"] = display_risk_tags
+            market_out["prematch_mode"] = prematch_mode
+            market_out["deep_queue_score"] = deep_queue_score
+            market_out["deep_queue_breakdown"] = breakdown
+            (match_dir / f"{m_id_str}_market.json").write_text(
+                json.dumps(market_out, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            logger.info(f"     [market.json] 延后写入完成，已注入 breakdown 字段")
+            root_market_enriched.append(market_out)  # P0 修复：收集用于回写根目录
+
+        # 4.9 构造 breakdown 可视化表格块
+        breakdown_block = (
+            "### 📊 异常分值来源细目 (Deep Queue Breakdown)\n\n"
+            "| 物理与博弈门禁项 | 得分值 |\n"
+            "|-----------------|-------|\n"
+            f"| 过程与大盘冲突 (market_process_conflict) | {breakdown.get('market_process_conflict', 0)} |\n"
+            f"| 欧亚大盘信号偏离 (euro_asian_split) | {breakdown.get('euro_asian_split', 0)} |\n"
+            f"| 热门退水/冷门警报 (favorite_retreat) | {breakdown.get('favorite_retreat', 0)} |\n"
+            f"| 保级战意/生死门禁 (survival_gate) | {breakdown.get('survival_gate', 0)} |\n"
+            f"| 深盘大让步保护 (deep_handicap_caution) | {breakdown.get('deep_handicap_caution', 0)} |\n"
+            f"| 锁定目标/动机降解 (locked_target_deflation) | {breakdown.get('locked_target_deflation', 0)} |\n"
+            f"| 底座物理画像弱化 (archive_weak) | {breakdown.get('archive_weak', 0)} |\n"
+            f"| 事实伤停门禁缺陷 (abnormal_partial) | {breakdown.get('abnormal_partial', 0)} |\n"
+            f"| 经典门禁保底加成 (floor_boost) | {breakdown.get('floor_boost', 0)} |\n"
+            f"| **总得分 (Total Score)** | **{deep_queue_score}** |\n"
+        )
 
         # 4.7 格式化模板参数
-        auto_risk_tags_fmt = " | ".join([f"`{t}`" for t in risk_tags]) if risk_tags else "`Aligned`"
+        display_risk_tags_fmt = " | ".join([f"`{t}`" for t in display_risk_tags]) if display_risk_tags else "`Aligned`"
         fg_reason_yaml = json.dumps(fg_reasons, ensure_ascii=False)
         fg_reason_fmt  = "\n".join([f"  - {r}" for r in fg_reasons])
 
@@ -953,7 +1153,7 @@ def main():
         # 生成 Game Script Seed 变量块（变量式推演）
         game_script_seed_block = _build_game_script_seed(
             home, away, home_avg_xg, home_def_leak, away_avg_xg, away_def_leak,
-            handicap_val, p_side, risk_tags
+            handicap_val, p_side, display_risk_tags
         )
 
         filled_audit = audit_template.format(
@@ -974,10 +1174,12 @@ def main():
             market_process_divergence_severity=m_proc_div.get("severity", "none"),
             market_process_divergence_note=m_proc_div.get("note", ""),
             market_process_divergence_formatted=proc_div_fmt,
-            auto_risk_tags=json.dumps(risk_tags),
-            auto_risk_tags_formatted=auto_risk_tags_fmt,
+            auto_risk_tags=json.dumps(display_risk_tags),
+            auto_risk_tags_formatted=display_risk_tags_fmt,
             prematch_mode=prematch_mode,
             deep_queue_score=deep_queue_score,
+            deep_queue_breakdown=json.dumps(breakdown, ensure_ascii=False),
+            deep_queue_breakdown_block=breakdown_block,
             market_data_block=market_data_block,
             fact_gate_status=fg_status, fact_gate_confidence=fg_conf,
             fact_gate_reason_yaml=fg_reason_yaml,
@@ -1002,7 +1204,7 @@ def main():
         audit_path.write_text(filled_audit, encoding="utf-8")
         logger.info(f"     [audit_input] {m_id_str}_audit_input.md")
 
-        # 4.8 CSV 行
+        # 4.10 CSV 行
         status_code = "READY"
         if m_status == "MISSING" and ab_status == "MISSING":
             status_code = "HALT"
@@ -1012,6 +1214,8 @@ def main():
             status_code = "MISSING_ABNORMAL"
         elif fg_status == "PARTIAL_PASS":
             status_code = "PARTIAL_PASS"
+        elif fg_status == "NEEDS_VERIFICATION":
+            status_code = "NEEDS_VERIFICATION"
 
         csv_rows.append({
             "match_no": m_id_str,
@@ -1026,24 +1230,40 @@ def main():
             "abnormal_json": f"{match_folder}/{m_id_str}_abnormal.json",
             "fact_gate_status": fg_status,
             "process_edge": p_side,
-            "risk_tags": "|".join(risk_tags),
+            "risk_tags": "|".join(display_risk_tags),
             "prematch_mode": prematch_mode,
             "deep_queue_score": deep_queue_score,
-            "status": status_code
+            "status": status_code,
+            "deep_queue_breakdown": json.dumps(breakdown, ensure_ascii=False)
         })
 
-    # 5. 输出 00_match_list.csv
+    # 5. 输出 00_match_list.csv（按 deep_queue_score 降序重排，大裂缝置顶）
+    csv_rows = sorted(csv_rows, key=lambda x: int(x.get("deep_queue_score", 0)), reverse=True)
     csv_path = matchday_dir / "00_match_list.csv"
     csv_headers = [
         "match_no", "match_id", "league", "kickoff", "home", "away",
         "audit_file", "home_card", "away_card", "market_json", "abnormal_json",
         "fact_gate_status", "process_edge", "risk_tags",
-        "prematch_mode", "deep_queue_score", "status"
+        "prematch_mode", "deep_queue_score", "status", "deep_queue_breakdown"
     ]
     with open(csv_path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=csv_headers)
         writer.writeheader()
         writer.writerows(csv_rows)
+    logger.info(f"     [CSV] 已按 deep_queue_score 降序重排，大裂缝场次置顶")
+
+    # 6. P0 修复：回写根目录 market.json，确保与单场 market.json 字段完全一致
+    # 不再保留原始输入文件（缺少 market_move_detail / market_tags / risk_tags / deep_queue_breakdown）
+    # 而是直接将每场完整富化后的 market_out 收集回写
+    if root_market_enriched:
+        root_market_out = {"matches": root_market_enriched}
+        root_market_path = matchday_dir / "market.json"
+        root_market_path.write_text(
+            json.dumps(root_market_out, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.info(f"     [root market.json] P0 修复回写完成，{len(root_market_enriched)} 场完整字段已同步")
+    else:
+        logger.warning("     [root market.json] 无 READY 场次可回写，根目录保持原文件")
 
     logger.info("=" * 60)
     logger.info("Ares Prematch 引擎 V2.3 (BATCH_READY + DEEP_QUEUE) 运行完成！")

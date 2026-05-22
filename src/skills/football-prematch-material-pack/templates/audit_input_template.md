@@ -34,6 +34,7 @@ market_process_divergence:
 auto_risk_tags: {auto_risk_tags}
 prematch_mode: "{prematch_mode}"
 deep_queue_score: {deep_queue_score}
+deep_queue_breakdown: {deep_queue_breakdown}
 ---
 
 # {home_team} vs {away_team} 前瞻材料卡 (Prematch Audit Input v2.3)
@@ -53,6 +54,8 @@ deep_queue_score: {deep_queue_score}
 | **Market JSON** | `{market_json_status}` |
 | **Abnormal JSON** | `{abnormal_json_status}` |
 | **Fact Gate** | `{fact_gate_status}` (`{fact_gate_confidence}`) |
+
+{deep_queue_breakdown_block}
 
 > [!WARNING]
 > **Auto Risk Tags**：{auto_risk_tags_formatted}

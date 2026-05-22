@@ -32,6 +32,12 @@ recurring-team-signal-collection
     定期球队异常信号采集工作流（weekly_baseline / matchday_live / postmatch_validation）。
     建立"定期采集 → 信号入库 → prematch 调用 → post-match 验证 → durable learning"闭环。
     触发词：信号采集、球队信号、recurring signal、异常信号入库、durable learning、信号巡检
+
+youtube-tactical-url-discovery
+    YouTube 战术视频 URL 发现与筛选工作流。
+    从 YouTube 中发现、筛选高质量战术分析 / 赛后战术复盘 / 教练体系解析视频 URL，
+    供用户确认后进入 NotebookLM tactical synthesis 流程。
+    触发词：YouTube 战术、tactical video、战术视频、URL discovery、NotebookLM handoff、频道白名单
 """
 
 import os

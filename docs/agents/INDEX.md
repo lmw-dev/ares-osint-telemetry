@@ -50,7 +50,8 @@
 - [football-physical-profile & football-prematch-material-pack 交付（2026-05-20）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/handover_physical_profile_and_material_pack_20260520.md)
 - [recurring-team-signal-collection v1.0 落地记录（2026-05-21）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/handover_recurring_team_signal_collection_2026-05-21.md)
 - [recurring-team-signal-collection 一周试运行评估（2026-05-21）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/handover_recurring_signal_trial_2026-05-21.md)
-- [recurring-team-signal-collection v1.1 硬化记录（2026-05-21）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/handover_recurring_signal_hardening_2026-05-21.md) ← **最新**
+- [recurring-team-signal-collection v1.1 硬化记录（2026-05-21）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/handover_recurring_signal_hardening_2026-05-21.md)
+- [youtube-tactical-url-discovery v1.0 落地记录（2026-05-22）](/Users/liumingwei/01-project/12-liumw/21-ares-osint-telemetry/docs/agents/tactical_youtube_channel_whitelist.md) ← **最新**
 
 ## 8. 使用建议
 - 新 Agent 接手时，先读「当前总览」+「Prematch 门禁与预检」+「Team Archive / Team Intel」。

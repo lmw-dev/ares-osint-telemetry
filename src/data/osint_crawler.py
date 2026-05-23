@@ -11,6 +11,19 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
 from bs4 import BeautifulSoup, Comment
 from audit_router import AuditRouter
+import sys
+import asyncio
+
+# 注入项目根目录及 utils 目录到 sys.path，保证无痛导入
+_proj_root = Path(__file__).resolve().parent.parent.parent
+if str(_proj_root) not in sys.path:
+    sys.path.insert(0, str(_proj_root))
+_utils_dir = _proj_root / "src"
+if str(_utils_dir) not in sys.path:
+    sys.path.insert(0, str(_utils_dir))
+
+from utils.scraper_v2 import fetch_html_via_playwright_v2
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -271,9 +284,31 @@ class AresOsintCrawler:
             )
         }
         try:
+            # 第一层防护：极速 requests.get 尝试
             resp = requests.get(url, headers=headers, timeout=20)
             status_code = resp.status_code
             text, encoding_used = self._decode_html_bytes(resp.content)
+            
+            # WAF 反爬/阻断检测
+            is_blocked = (status_code == 403) or ("checking your browser" in text.lower()) or ("table" not in text.lower() and "tr" not in text.lower())
+            
+            if is_blocked:
+                logger.warning(f"[Crawler] Requests 请求 {url} 遭遇阻断或返回空数据(status={status_code})。自动启用 ScraperV2 无头浏览器自适应接管...")
+                try:
+                    # 使用 asyncio 桥接，在同步上下文里跑异步的 Playwright V2 抓取
+                    try:
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    text = loop.run_until_complete(fetch_html_via_playwright_v2(url))
+                    status_code = 200
+                    encoding_used = "utf-8"
+                    logger.info("[Crawler] ScraperV2 成功绕过防线抓取回渲染数据！")
+                except Exception as playwright_exc:
+                    logger.error(f"[Crawler] ScraperV2 无头接管失败，引发错误: {playwright_exc}")
+                    # 若接管也失败，仍保留 requests 的原始 text 以便后续容错或降级
+            
             raw_path = self.raw_reports_dir / f"{self.run_id}_titan_{match_id}_{page_key}.html"
             raw_path.write_text(text, encoding="utf-8")
             raw_ref = str(raw_path)
@@ -286,7 +321,7 @@ class AresOsintCrawler:
             has_ah_keyword = ("亚盘" in text) or ("让球" in text)
             has_ou_keyword = "欧赔" in text
             has_ouu_keyword = ("大小" in text) or ("Over/Under" in text)
-            status = "ok" if status_code == 200 else "http_error"
+            status = "ok" if (status_code == 200 and not is_blocked) or (is_blocked and "table" in text.lower()) else "http_error"
             if raw_ref not in self._titan_cold_refs:
                 self._titan_cold_refs.append(raw_ref)
             return {
@@ -2479,6 +2514,18 @@ class AresOsintCrawler:
                 db_matches.extend(comp_matches)
                 time.sleep(0.12)
         else:
+            # 载入时间纠偏审核配置
+            calibrations = []
+            try:
+                config_path = Path(__file__).parent / "prematch_date_audit_config.json"
+                if config_path.exists():
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        config_data = json.load(f)
+                        calibrations = config_data.get("date_audits", {}).get(self.analysis_date, {}).get("calibrations", [])
+                    logger.info(f"[Date Audit] 成功载入 {self.analysis_date} 赛期纠偏审核规则 {len(calibrations)} 条")
+            except Exception as exc:
+                logger.warning(f"[Date Audit] 载入时间纠偏审核配置失败: {exc}")
+
             understat_db: List[Dict[str, Any]] = []
             for year in self._get_target_understat_years():
                 season_rows = self.build_understat_db(year=year)
@@ -2486,6 +2533,24 @@ class AresOsintCrawler:
                     understat_db.extend(season_rows)
             seen = set()
             for match in understat_db:
+                # 纠偏审核拦截
+                m_id = str(match.get("id") or "").strip()
+                m_h = str(match.get("home_en") or "").strip()
+                m_a = str(match.get("away_en") or "").strip()
+                m_name = f"{m_h} vs {m_a}"
+                
+                for cal in calibrations:
+                    cal_id = str(cal.get("understat_id") or "").strip()
+                    cal_match = str(cal.get("match") or "").strip()
+                    if (cal_id and cal_id == m_id) or (cal_match and (cal_match.lower() in m_name.lower() or m_name.lower() in cal_match.lower())):
+                        old_date = match.get("date")
+                        match["date"] = cal.get("correct_date")
+                        logger.warning(
+                            f"[Date Audit] 📢 拦截到 Understat 错标比赛 {m_name} (ID: {m_id})！"
+                            f"已将开球时间重映射校准: {old_date} -> {match['date']}"
+                        )
+                        break
+
                 league = str(match.get("league") or "").strip()
                 raw_date = str(match.get("date") or "").strip()
                 if league not in top5_understat or not raw_date.startswith(date_key):

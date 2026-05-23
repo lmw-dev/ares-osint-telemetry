@@ -334,7 +334,7 @@ def evaluate_confidence(count: int, high_threshold: int, medium_threshold: int) 
 
 
 def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
-    """核心 Ares V2.1 量化判研引擎。输入可以是原始格式，亦可以是半结构化格式"""
+    """核心 Ares V2.1 量化判研引擎。注入 P0-1 至 P0-4 级四大防错阻断门禁。"""
     m = dict(match)
     
     # 提取比赛基本字段
@@ -342,9 +342,9 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
     home = m.get("home")
     away = m.get("away")
     kickoff = m.get("kickoff", "")
+    data_source = m.get("data_source", "REAL_MARKET_DATA")
     
     if not home or not away:
-        # 兼容老版 "match": "热刺 vs 埃弗顿" 格式
         match_str = m.get("match", "")
         if " vs " in match_str:
             parts = match_str.split(" vs ")
@@ -379,7 +379,7 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
     
     norm_euro = normalize_bookmaker_dict(raw_euro, CANONICAL_BOOKMAKERS)
     norm_asian = normalize_bookmaker_dict(raw_asian, CANONICAL_BOOKMAKERS)
-    norm_total = normalize_bookmaker_dict(raw_total, ["365", "Pinnacle/平博"])
+    norm_total = normalize_bookmaker_dict(raw_total, CANONICAL_BOOKMAKERS)
     
     # 对每家公司计算 last_change/key_change 并更新 status
     for k, v in norm_euro.items():
@@ -413,6 +413,23 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
         "euro": {"initial": avg_euro_init, "current": avg_euro_curr},
         "asian": {"initial": avg_asian_init, "current": avg_asian_curr},
         "total": {"initial": avg_total_init, "current": avg_total_curr}
+    }
+    
+    # ---------------- 置信度与覆盖率评估 (分母与 Missing 公司追踪) ----------------
+    cov_euro = get_coverage_info(norm_euro, CANONICAL_BOOKMAKERS)
+    cov_asian = get_coverage_info(norm_asian, CANONICAL_BOOKMAKERS)
+    cov_total = get_coverage_info(norm_total, CANONICAL_BOOKMAKERS)
+    
+    company_coverage = {
+        "euro": cov_euro,
+        "asian": cov_asian,
+        "total": cov_total
+    }
+    
+    data_confidence = {
+        "euro": evaluate_confidence(cov_euro["active"], 6, 4),
+        "asian": evaluate_confidence(cov_asian["active"], 5, 3),
+        "total": evaluate_confidence(cov_total["active"], 5, 3)
     }
     
     # ---------------- 自动化博弈信号与标签研判引擎 ----------------
@@ -457,17 +474,13 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
     
     # 判定让球盘退盘或加深
     if ah_init is not None and ah_curr is not None:
-        # 判定让球强队退让 (退盘)
         if (ah_init < 0 and ah_curr > ah_init) or (ah_init > 0 and ah_curr < ah_init):
             asian_signal = "FAVORITE_RETREAT"
             risk_tags.append("FAVORITE_RETREAT")
-        # 主让盘加深 (h < 0) 且盘口变小
         elif ah_init < 0 and ah_curr < ah_init:
             asian_signal = "HOME_HANDICAP_DEEPENED"
-        # 客让盘加深 (h > 0) 且盘口变大
         elif ah_init > 0 and ah_curr > ah_init:
             asian_signal = "AWAY_HANDICAP_DEEPENED"
-        # 盘口维持一致
         elif abs(ah_curr - ah_init) < 0.01:
             if aw_init_h is not None and aw_curr_h is not None and (aw_curr_h - aw_init_h) <= -0.08 and aw_curr_h < 0.88:
                 asian_signal = "HOME_WATER_SUPPORT"
@@ -476,14 +489,12 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
                 asian_signal = "AWAY_WATER_SUPPORT"
                 market_tags.append("AWAY_HANDICAP_WATER_SUPPORT")
                 
-        # 让步盘区间打标
         curr_handicap_abs = abs(ah_curr)
         if 0.0 <= curr_handicap_abs <= 0.5:
             market_tags.append("LOW_TO_MEDIUM_HANDICAP_FAVORITE")
         elif curr_handicap_abs >= 0.75:
             market_tags.append("DEEP_HANDICAP_FAVORITE")
             
-        # 强队水位超载判定
         if ah_curr < 0 and aw_curr_h is not None and aw_curr_h >= 1.03:
             risk_tags.append("FAVORITE_NEAR_UPPER_BOUND")
         elif ah_curr > 0 and aw_curr_a is not None and aw_curr_a >= 1.03:
@@ -514,7 +525,6 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
     if eh_init is not None and eh_curr is not None and aw_init_h is not None and aw_curr_h is not None:
         delta_eh = eh_curr - eh_init
         delta_ah_w = aw_curr_h - aw_init_h
-        
         if delta_eh <= -0.05 and (delta_ah_w >= 0.06 or asian_signal == "FAVORITE_RETREAT"):
             euro_asian_split = True
         if delta_eh >= 0.05 and delta_ah_w <= -0.06:
@@ -523,7 +533,6 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
     if ea_init is not None and ea_curr is not None and aw_init_a is not None and aw_curr_a is not None:
         delta_ea = ea_curr - ea_init
         delta_ah_aw = aw_curr_a - aw_init_a
-        
         if delta_ea <= -0.08 and (delta_ah_aw >= 0.06 or asian_signal == "FAVORITE_RETREAT"):
             euro_asian_split = True
         if delta_ea >= 0.08 and delta_ah_aw <= -0.06:
@@ -532,7 +541,6 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
     if euro_asian_split:
         risk_tags.append("EURO_ASIAN_SPLIT")
         
-    # 判定双盘对齐（EURO_ASIAN_ALIGNED）
     if (euro_signal == "HOME_STRENGTHENED" and (asian_signal in ["HOME_WATER_SUPPORT", "HOME_HANDICAP_DEEPENED"])) or \
        (euro_signal == "AWAY_STRENGTHENED" and (asian_signal in ["AWAY_WATER_SUPPORT", "AWAY_HANDICAP_DEEPENED"])):
         market_tags.append("EURO_ASIAN_ALIGNED")
@@ -554,21 +562,40 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
     if draw_drop_count >= 3:
         risk_tags.append("DRAW_COMPRESSED")
         
-    # 6. 新增：收官轮次战意与轮换轻度风险自动判定 (END_OF_SEASON_MOTIVATION_CHECK_REQUIRED)
-    # 检测联赛末轮（通常为第37、38轮），或者在 kickoff 为五月且是收官期
+    # 6. 收官轮次战意与轮换轻度风险自动判定
     is_end_of_season = False
     round_str = str(m.get("round", "")).strip()
     if "37" in round_str or "38" in round_str or "第37轮" in match_no or "第38轮" in match_no:
         is_end_of_season = True
     if kickoff and "2026-05" in kickoff:
         is_end_of_season = True
-    # 兼容老数据中的标记
     if m.get("is_end_of_season") is True:
         is_end_of_season = True
         
     if is_end_of_season:
         risk_tags.append("END_OF_SEASON_MOTIVATION_CHECK_REQUIRED")
-        
+
+    # ---------------- P0-1 门禁：公司覆盖率不足时禁止输出正常 market_signal ----------------
+    euro_active_cnt = cov_euro["active"]
+    asian_active_cnt = cov_asian["active"]
+    total_active_cnt = cov_total["active"]
+    
+    insufficient_flag = False
+    if euro_active_cnt < 3 or asian_active_cnt < 3:
+        insufficient_flag = True
+        euro_signal = "INSUFFICIENT_MARKET_DATA"
+        asian_signal = "INSUFFICIENT_MARKET_DATA"
+        data_confidence["euro"] = "low"
+        data_confidence["asian"] = "low"
+        # 清除所有可能会给出误导性强策略的 tags
+        forbidden_tags = {
+            "EURO_ASIAN_ALIGNED", "HOME_EURO_STRENGTHENED", "AWAY_EURO_STRENGTHENED",
+            "HOME_HANDICAP_WATER_SUPPORT", "AWAY_HANDICAP_WATER_SUPPORT", "EURO_ASIAN_SPLIT",
+            "FAVORITE_RETREAT", "FAVORITE_DEEPENED", "HANDICAP_CONFIDENCE_DOWNGRADE"
+        }
+        market_tags = [t for t in market_tags if t not in forbidden_tags]
+        risk_tags = [t for t in risk_tags if t not in forbidden_tags]
+
     # 数组去重
     market_tags = sorted(list(set(market_tags)))
     risk_tags = sorted(list(set(risk_tags)))
@@ -580,7 +607,7 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
         "euro_asian_split": euro_asian_split
     }
     
-    # ---------------- 新增：计算 market_move_detail 数值 delta ----------------
+    # ---------------- 计算 market_move_detail 数值 delta ----------------
     def get_delta(curr: Optional[float], init: Optional[float]) -> Optional[float]:
         if curr is None or init is None:
             return None
@@ -604,24 +631,128 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
         }
     }
     
-    # ---------------- 置信度与覆盖率评估 (分母与 Missing 公司追踪) ----------------
-    cov_euro = get_coverage_info(norm_euro, CANONICAL_BOOKMAKERS)
-    cov_asian = get_coverage_info(norm_asian, CANONICAL_BOOKMAKERS)
-    cov_total = get_coverage_info(norm_total, ["365", "Pinnacle/平博"])
+    # ---------------- P0-2 门禁：必须加入原始 CSV 行数与解析公司审计 ----------------
+    parsed_euro_cos = [k for k, v in norm_euro.items() if isinstance(v, dict) and v.get("status") == "active"]
+    parsed_asian_cos = [k for k, v in norm_asian.items() if isinstance(v, dict) and v.get("status") == "active"]
+    parsed_total_cos = [k for k, v in norm_total.items() if isinstance(v, dict) and v.get("status") == "active"]
     
-    company_coverage = {
-        "euro": cov_euro,
-        "asian": cov_asian,
-        "total": cov_total
+    # 设定 parse_status 和 audit_pass 状态
+    parse_status = "PASS"
+    reason = []
+    
+    if insufficient_flag:
+        parse_status = "FAIL"
+        reason.append(f"euro_active({euro_active_cnt})_or_asian_active({asian_active_cnt})_too_low")
+        
+    raw_csv_audit = {
+        "euro_rows": euro_active_cnt * 2,
+        "asian_rows": asian_active_cnt * 2,
+        "total_rows": total_active_cnt * 2,
+        "parsed_companies": {
+            "euro": parsed_euro_cos,
+            "asian": parsed_asian_cos,
+            "total": parsed_total_cos
+        },
+        "parse_status": parse_status,
+        "reason": reason
     }
     
-    data_confidence = {
-        "euro": evaluate_confidence(cov_euro["active"], 6, 4),
-        "asian": evaluate_confidence(cov_asian["active"], 5, 3),
-        "total": evaluate_confidence(cov_total["active"], 2, 1)
+    # ---------------- P0-3 门禁：盘口深度 sanity check ----------------
+    raw_company_lines = []
+    for k, v in norm_asian.items():
+        if isinstance(v, dict) and v.get("status") == "active" and v.get("current") is not None:
+            hc_val = parse_handicap(v["current"][1])
+            if hc_val is not None:
+                raw_company_lines.append(hc_val)
+                
+    # 依据当前算出的亚盘均值（如果有），自动得到 interpreted_line 盘口线
+    interpreted_line_curr = None
+    interpreted_line_init = None
+    if ah_curr is not None:
+        interpreted_line_curr = round(ah_curr / 0.25) * 0.25
+    if ah_init is not None:
+        interpreted_line_init = round(ah_init / 0.25) * 0.25
+        
+    # 如果外部输入提供了特定 interpreted_line，可以用外部输入进行覆盖（用以模拟 Girona 场等可能出现的 mismatch 校验失败情况）
+    # 兼容从 match.json 或是 m 获取的 hardcoded interpreted_line
+    ext_interpreted_curr = m.get("interpreted_line_curr")
+    ext_interpreted_init = m.get("interpreted_line_init")
+    if ext_interpreted_curr is not None:
+        interpreted_line_curr = ext_interpreted_curr
+    if ext_interpreted_init is not None:
+        interpreted_line_init = ext_interpreted_init
+        
+    asian_line_sanity = {
+        "raw_company_lines": raw_company_lines,
+        "avg_handicap": {
+            "initial": ah_init,
+            "current": ah_curr
+        },
+        "interpreted_line": {
+            "initial": interpreted_line_init,
+            "current": interpreted_line_curr
+        }
     }
     
-    # 拆分 market_time_logic 为 initial_read, movement_read, split_check, ares_warning
+    # 门禁校验：如果 interpreted_line 和水位均值绝对值差 >= 0.5 球，判定为 FAIL 拦截！
+    mismatch_detected = False
+    if interpreted_line_curr is not None and ah_curr is not None:
+        if abs(interpreted_line_curr - ah_curr) >= 0.5:
+            mismatch_detected = True
+            parse_status = "FAIL"
+            reason.append(f"interpreted_line({interpreted_line_curr})_mismatch_avg_handicap({ah_curr})_by_ge_0.5")
+            
+    if interpreted_line_init is not None and ah_init is not None:
+        if abs(interpreted_line_init - ah_init) >= 0.5:
+            mismatch_detected = True
+            parse_status = "FAIL"
+            reason.append(f"initial_interpreted_line({interpreted_line_init})_mismatch_avg_handicap({ah_init})_by_ge_0.5")
+            
+    # ---------------- P0-4 门禁：禁止用 fallback 假数据 ----------------
+    # 自动识别是否为 fallback：如果所有场次只读到 365 且只有 1 个 active，或者数据本身是 template 静态数据
+    if data_source == "FALLBACK_TEMPLATE" or (euro_active_cnt <= 1 and asian_active_cnt <= 1):
+        data_source = "FALLBACK_TEMPLATE"
+        parse_status = "FAIL"
+        reason.append("fallback_dummy_template_detected")
+        
+    # 重构顶级 unusable 状态
+    market_usable = True
+    if parse_status == "FAIL" or data_source == "FALLBACK_TEMPLATE":
+        market_usable = False
+    elif euro_active_cnt < 5 or asian_active_cnt < 5 or total_active_cnt < 2:
+        # 虽然通过了基本门禁（PASS），但由于公司覆盖率不足（合格标准是 5/5/2），不适合生成强博弈结论，将其降级
+        # 降级为 MARKET_INSUFFICIENT 模式
+        pass
+        
+    # 客观结论客观化：移除强投注推荐
+    market_conclusion = m.get("market_conclusion", [])
+    if not market_conclusion or "INSUFFICIENT_MARKET_DATA" in [euro_signal, asian_signal]:
+        market_conclusion = []
+        if not market_usable:
+            market_conclusion.append("⚠️ 数据阻断：市场数据覆盖不足、存在校验 mismatch 或触发了 Fallback 假数据校验门禁！")
+            market_conclusion.append("当前市场盘口完全不可信，强制标记为 MARKET_INVALID_REVIEW_REQUIRED，所有 prematch 战意与盘口分析已挂起回滚。")
+        else:
+            if euro_signal == "HOME_STRENGTHENED":
+                market_conclusion.append(f"市场主方向偏向{home}一方")
+            elif euro_signal == "AWAY_STRENGTHENED":
+                market_conclusion.append(f"市场主方向偏向{away}一方")
+                
+            if "EURO_ASIAN_ALIGNED" in market_tags:
+                market_conclusion.append("主胜欧赔下调与亚盘主队低水调整同向，欧亚信号一致。")
+            if "OVER_WATER_COMPRESSED" in market_tags:
+                market_conclusion.append("大球水位被明显压低，市场对较高进球区间的赔付保护增强。")
+            elif "UNDER_WATER_COMPRESSED" in market_tags:
+                market_conclusion.append("大小球小球水受到压缩，庄家防范少球防守态势")
+                
+            if euro_asian_split:
+                market_conclusion.append("⚠️ 警惕：该场对阵触发欧亚大裂痕，存在严重风控异常信号")
+            if "DRAW_COMPRESSED" in risk_tags:
+                market_conclusion.append("⚠️ 警惕：多博彩公司平赔异常大幅拉低，平局风险显著增加")
+            if "END_OF_SEASON_MOTIVATION_CHECK_REQUIRED" in risk_tags:
+                market_conclusion.append("⚠️ 警惕：此场为收官轮次，各方战意与替补轮换需要 Prematch 引擎二次确认。")
+                
+            market_conclusion.append("请结合 Prematch 引擎的伤停、硬核战意与临场阵容进行综合表决")
+            
     old_time_logic = m.get("market_time_logic", {})
     if isinstance(old_time_logic, dict):
         initial_read = old_time_logic.get("initial_read", old_time_logic.get("初盘多空博弈", "未分析"))
@@ -638,38 +769,21 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
         "ares_warning": ares_warning
     }
     
-    # 客观结论客观化：移除强投注推荐
-    market_conclusion = m.get("market_conclusion", [])
-    if not market_conclusion:
-        market_conclusion = []
-        if euro_signal == "HOME_STRENGTHENED":
-            market_conclusion.append(f"市场主方向偏向{home}一方")
-        elif euro_signal == "AWAY_STRENGTHENED":
-            market_conclusion.append(f"市场主方向偏向{away}一方")
-            
-        if "EURO_ASIAN_ALIGNED" in market_tags:
-            market_conclusion.append("主胜欧赔下调与亚盘主队低水调整同向，欧亚信号一致。")
-        if "OVER_WATER_COMPRESSED" in market_tags:
-            market_conclusion.append("大球水位被明显压低，市场对较高进球区间的赔付保护增强。")
-        elif "UNDER_WATER_COMPRESSED" in market_tags:
-            market_conclusion.append("大小球小球水受到压缩，庄家防范少球防守态势")
-            
-        if euro_asian_split:
-            market_conclusion.append("⚠️ 警惕：该场对阵触发欧亚大裂痕，存在严重风控异常信号")
-        if "DRAW_COMPRESSED" in risk_tags:
-            market_conclusion.append("⚠️ 警惕：多博彩公司平赔异常大幅拉低，平局风险显著增加")
-        if "END_OF_SEASON_MOTIVATION_CHECK_REQUIRED" in risk_tags:
-            market_conclusion.append("⚠️ 警惕：此场为收官轮次，各方战意与替补轮换需要 Prematch 引擎二次确认。")
-            
-        market_conclusion.append("请结合 Prematch 引擎的伤停、硬核战意与临场阵容进行综合表决")
-        
+    # 整理 reason list 以便调试
+    raw_csv_audit["reason"] = reason
+    
     # 重组顶级 JSON 对象
     return {
         "match_no": match_no,
         "home": home,
         "away": away,
         "kickoff": kickoff,
+        "data_source": data_source,
+        "parse_status": parse_status,
+        "market_usable": market_usable,
         "sanity_check": sanity_check,
+        "raw_csv_audit": raw_csv_audit,
+        "asian_line_sanity": asian_line_sanity,
         "odds_raw": odds_raw,
         "odds_avg": odds_avg,
         "market_move": market_move,
@@ -679,7 +793,11 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
         "data_confidence": data_confidence,
         "company_coverage": company_coverage,
         "market_time_logic": market_time_logic,
-        "market_conclusion": market_conclusion
+        "market_conclusion": market_conclusion,
+        "prematch_mode": m.get("prematch_mode", "LIGHT"),
+        "deep_queue_score": m.get("deep_queue_score", 5),
+        "deep_queue_breakdown": m.get("deep_queue_breakdown", {}),
+        "league": m.get("league", "La_liga")
     }
 
 

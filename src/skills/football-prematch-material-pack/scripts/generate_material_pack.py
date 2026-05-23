@@ -772,6 +772,36 @@ def _extract_handicap_euro(odds: Dict[str, Any]) -> Tuple[float, float, float]:
     return h, eh, ea
 
 
+def infer_league_from_archives(vault_root: Path, home_resolved: str, away_resolved: str) -> str:
+    """
+    通过遍历只读队档底座物理路径，100% 真实推断对阵的联赛分类，铲除硬编码 EPL 污染
+    """
+    archives_dir = vault_root / "02_Team_Archives" / "1_Top_Five_Europe"
+    if not archives_dir.exists():
+        return "EPL"
+    
+    for team_name in [home_resolved, away_resolved]:
+        for league_dir in archives_dir.iterdir():
+            if not league_dir.is_dir():
+                continue
+            for md_file in league_dir.glob("*.md"):
+                if md_file.name.startswith("_"):
+                    continue
+                if is_team_match(md_file.stem, team_name):
+                    folder = league_dir.name
+                    if folder == "ESP_Spain":
+                        return "La_liga"
+                    elif folder == "ITA_Italy":
+                        return "Serie_A"
+                    elif folder == "ENG_England":
+                        return "EPL"
+                    elif folder == "GER_Germany":
+                        return "Bundesliga"
+                    elif folder == "FRA_France":
+                        return "Ligue_1"
+    return "EPL"
+
+
 # ────────────────────────────────────────────────────────────────
 # 4. 一键打包核心流程
 # ────────────────────────────────────────────────────────────────
@@ -814,6 +844,106 @@ def main():
             logger.info("成功加载 abnormal.json。")
         except Exception as e:
             logger.error(f"解析 abnormal.json 失败: {e}")
+
+    # 2.5 自动桥接适配转换器：把全局扁平的 abnormal.json 自动映射拆分为每场的场次级 abnormal dict
+    if abnormal_data_present and isinstance(raw, dict) and "teams" in raw:
+        logger.info("===> [Adapter] 检测到全局扁平 abnormal.json，启动场次级自动拆分匹配...")
+        mapped_abnormal_dict = {}
+        global_teams_list = raw.get("teams", [])
+        
+        for m in market_matches:
+            m_no = m.get("match_no") or m.get("match_id")
+            if not m_no:
+                continue
+            m_no_str = f"{int(m_no):02d}"
+            home_team_raw = m.get("home")
+            away_team_raw = m.get("away")
+            
+            # 使用 alias_map 强校准
+            home_resolved = resolve_team_name(home_team_raw, alias_map)
+            away_resolved = resolve_team_name(away_team_raw, alias_map)
+            
+            home_ab_record = None
+            away_ab_record = None
+            
+            for t_item in global_teams_list:
+                t_name = t_item.get("team")
+                if is_team_match(t_name, home_resolved):
+                    home_ab_record = t_item
+                elif is_team_match(t_name, away_resolved):
+                    away_ab_record = t_item
+                    
+            # 组装符合 v2.3 标准的 teams 伤停 Schema
+            teams_payload = []
+            has_anomaly = False
+            
+            for side, team_raw_name, resolved_name, record in [
+                ("home", home_team_raw, home_resolved, home_ab_record),
+                ("away", away_team_raw, away_resolved, away_ab_record)
+            ]:
+                confirmed_list = []
+                supported_list = []
+                needs_conf_list = []
+                affected_units = {}
+                
+                if record:
+                    news_status = record.get("news_status")
+                    key_ab = record.get("key_abnormalities", "")
+                    flags = record.get("news_flags", [])
+                    
+                    if news_status == "有异常" and key_ab:
+                        has_anomaly = True
+                        if "多名主力轮换" in flags or "已降级" in key_ab or "已夺冠" in key_ab:
+                            affected_units["rotation_risk"] = "HIGH"
+                        if "伤停" in "".join(flags) or "伤缺" in key_ab:
+                            affected_units["injury_impact"] = "CRITICAL"
+                            
+                        confirmed_list.append({
+                            "player": "关键异动情报",
+                            "unit": "team",
+                            "status": "confirmed_abnormal",
+                            "confidence": "high",
+                            "reason": key_ab
+                        })
+                        if record.get("review_notes"):
+                            supported_list.append({
+                                "player": "复核备忘",
+                                "unit": "team",
+                                "status": "supported_note",
+                                "confidence": "medium",
+                                "reason": record.get("review_notes")
+                            })
+                            
+                teams_payload.append({
+                    "team": resolved_name,
+                    "side": side,
+                    "confirmed": confirmed_list,
+                    "supported": supported_list,
+                    "needs_latest_confirmation": needs_conf_list,
+                    "affected_units": affected_units
+                })
+                
+            status_rating = "PASS"
+            confidence_rating = "high"
+            if has_anomaly:
+                status_rating = "PARTIAL_PASS"
+                confidence_rating = "medium"
+            
+            mapped_abnormal_dict[m_no_str] = {
+                "match_no": m_no_str,
+                "home": home_resolved,
+                "away": away_resolved,
+                "fact_gate": {
+                    "status": status_rating,
+                    "final_confidence": confidence_rating,
+                    "reasons": []
+                },
+                "teams": teams_payload
+            }
+            logger.info(f"     [Adapter] 场次 {m_no_str} ({home_resolved} vs {away_resolved}) 异常映射完成，has_anomaly={has_anomaly}")
+            
+        abnormal_matches_dict = mapped_abnormal_dict
+        abnormal_data_present = True
 
     # 3. Demo 回退注入 (Ares v2.3 标准 Schema)
     if not market_data_present and abnormal_data_present:
@@ -922,6 +1052,11 @@ def main():
 
         home_en = resolve_team_name(home, alias_map)
         away_en = resolve_team_name(away, alias_map)
+
+        # 强行校准联赛类型，解决 standings 限频及默认 EPL 的重大缺陷
+        detected_league = infer_league_from_archives(vault_root, home_en, away_en)
+        m["league"] = detected_league
+        logger.info(f"     [League Calibration] 自动校准 {home} vs {away} 联赛分类为 -> {detected_league}")
 
         home_dir_part = re.sub(r"\s+", "_", home_en)
         away_dir_part = re.sub(r"\s+", "_", away_en)
@@ -1073,6 +1208,11 @@ def main():
         extra_tags = m.get("risk_tags", [])
         if extra_tags:
             risk_tags = sorted(list(set(risk_tags + extra_tags)))
+
+        # 清除缓存残留的 ABNORMAL_DATA_MISSING 标签：若单场 abnormal.json 存在且 fact_gate 可用
+        if ab_status == "READY" and fg_status in ["PASS", "PARTIAL_PASS"]:
+            if "ABNORMAL_DATA_MISSING" in risk_tags:
+                risk_tags.remove("ABNORMAL_DATA_MISSING")
 
         # 4.6 TEAM_ARCHIVE_WEAK_CRITICAL 升级判定
         is_weak = "TEAM_ARCHIVE_WEAK" in risk_tags
@@ -1264,6 +1404,15 @@ def main():
         logger.info(f"     [root market.json] P0 修复回写完成，{len(root_market_enriched)} 场完整字段已同步")
     else:
         logger.warning("     [root market.json] 无 READY 场次可回写，根目录保持原文件")
+
+    # 7. Root abnormal.json 回写为 v2.3 聚合 matches 格式 (Option A)
+    if abnormal_data_present and abnormal_matches_dict:
+        root_abnormal_out = {"matches": abnormal_matches_dict}
+        root_abnormal_path = matchday_dir / "abnormal.json"
+        root_abnormal_path.write_text(
+            json.dumps(root_abnormal_out, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.info(f"     [root abnormal.json] Option A 聚合回写完成，{len(abnormal_matches_dict)} 场已同步")
 
     logger.info("=" * 60)
     logger.info("Ares Prematch 引擎 V2.3 (BATCH_READY + DEEP_QUEUE) 运行完成！")

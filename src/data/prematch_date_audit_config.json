@@ -1,0 +1,24 @@
+{
+  "date_audits": {
+    "20260523": {
+      "desc": "0523期 Understat 网站比赛时间标错审核纠偏与强召回配置",
+      "calibrations": [
+        {
+          "understat_id": "30214",
+          "match": "Bologna vs Inter",
+          "correct_date": "2026-05-23 18:45:00"
+        },
+        {
+          "understat_id": "30219",
+          "match": "AC Milan vs Cagliari",
+          "correct_date": "2026-05-23 18:45:00"
+        },
+        {
+          "understat_id": "30222",
+          "match": "Torino vs Juventus",
+          "correct_date": "2026-05-23 18:45:00"
+        }
+      ]
+    }
+  }
+}

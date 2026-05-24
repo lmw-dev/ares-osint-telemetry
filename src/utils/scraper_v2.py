@@ -10,7 +10,9 @@ async def fetch_html_via_playwright_v2(
     url: str,
     headless: bool = True,
     state_file: Optional[str] = "tmp/browser_state.json",
-    timeout_ms: int = 30000
+    timeout_ms: int = 30000,
+    wait_until: str = "domcontentloaded",
+    wait_for_selector: Optional[str] = None
 ) -> str:
     """
     [Ares Telemetry Scraper V2]
@@ -59,7 +61,7 @@ async def fetch_html_via_playwright_v2(
                 context = await browser.new_context(**context_kwargs)
         else:
             context = await browser.new_context(**context_kwargs)
-
+ 
         # 4. 新建 Page 并在页面加载前强力注入 Stealth 隐身指纹
         page = await context.new_page()
         await page.add_init_script("""
@@ -69,10 +71,17 @@ async def fetch_html_via_playwright_v2(
             window.chrome = { runtime: {} };
             Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'] });
         """)
-
-        # 5. 执行极速网页拉取（等待网络空闲）
-        logger.info(f"[ScraperV2] 开始执行高保真渲染抓取: {url}")
-        await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+ 
+        # 5. 执行网页拉取
+        logger.info(f"[ScraperV2] 开始执行高保真渲染抓取 (wait_until={wait_until}): {url}")
+        await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+        
+        if wait_for_selector:
+            logger.info(f"[ScraperV2] 等待特定 DOM 元素出现: {wait_for_selector}")
+            try:
+                await page.wait_for_selector(wait_for_selector, timeout=10000)
+            except Exception as e:
+                logger.warning(f"[ScraperV2] 等待特定元素超时: {e}，将直接读取当前内容。")
         
         # 6. 如果遇到 Cloudflare 盾或安全验证，给出高亮提示（有头模式下可用）
         content = await page.content()

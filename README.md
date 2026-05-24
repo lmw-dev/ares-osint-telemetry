@@ -22,10 +22,14 @@
 
 ## 🛠 开发与部署环境 (Setup)
 
-为保证项目作为核心节点的高可用性和依赖干净，请强制使用虚拟环境。
-推荐 Python `3.10+`（`3.9` 可运行，但会在自检中提示告警）。
+> [!IMPORTANT]
+> **强制使用虚拟环境执行**：为保证项目依赖干净与执行环境一致，在运行本项目中的任何 Python 脚本时，**必须**使用虚拟环境（venv）。
+> - **推荐方式**（免激活，直接运行）：使用 `./venv/bin/python <script.py>`
+> - **激活后运行**：执行 `source venv/bin/activate` 后再执行 `python <script.py>`
+>
+> 推荐使用 Python `3.10+`。
 
-1. **环境初始化**
+1. **环境初始化与创建虚拟环境**
 ```bash
 # 1. 创建虚拟环境
 python3 -m venv venv
@@ -39,12 +43,9 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. **运行环境自检（推荐先执行）**
+3. **运行环境自检（极力推荐）**
 ```bash
-python scripts/env_doctor.py
-```
-如果你没有激活虚拟环境，也可直接使用：
-```bash
+# 直接使用虚拟环境路径运行（最安全，推荐）
 ./venv/bin/python scripts/env_doctor.py
 ```
 
@@ -60,6 +61,7 @@ cp .env.example .env
 # 然后编辑 .env 中的 ARES_VAULT_PATH
 ```
 如果两者都配置，脚本优先使用当前 shell 已存在的环境变量，不会被 `.env` 覆盖。
+
 
 推荐在 `.env` 同步配置 LLM（用于 `osint_postmatch.py` 的可选 Reality Gap 回填）：
 ```bash

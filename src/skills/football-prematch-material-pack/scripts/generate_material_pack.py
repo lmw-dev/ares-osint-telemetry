@@ -1414,6 +1414,39 @@ def main():
         )
         logger.info(f"     [root abnormal.json] Option A 聚合回写完成，{len(abnormal_matches_dict)} 场已同步")
 
+    # ---------------- 8. 卫生成就与目录净化门禁 (Package Hygiene & Pure Obsidian Guard) ----------------
+    valid_folders = {x.get("audit_file").split("/")[0] for x in csv_rows if x.get("audit_file")}
+    logger.info(f"     [Hygiene Guard] 有效对齐场次文件夹共: {len(valid_folders)} 个")
+    
+    cleaned_count = 0
+    
+    for item in os.listdir(matchday_dir):
+        item_path = matchday_dir / item
+        if not item_path.is_dir():
+            continue
+            
+        is_garbage = False
+        if item == "__MACOSX":
+            is_garbage = True
+        elif item.startswith(("0", "1", "2")) and "_" in item:
+            if item not in valid_folders:
+                is_garbage = True
+        elif "未知主队" in item or "未知客队" in item:
+            is_garbage = True
+            
+        if is_garbage:
+            try:
+                shutil.rmtree(item_path)
+                logger.info(f"     [Hygiene Guard] 物理清除冗余/垃圾目录: {item}")
+                cleaned_count += 1
+            except Exception as e:
+                logger.warning(f"     [Hygiene Guard] 清除目录失败 {item}: {e}")
+                
+    if cleaned_count > 0:
+        logger.info(f"     [Hygiene Guard] 目录卫生净化完成，共清除垃圾目录 {cleaned_count} 个。")
+    else:
+        logger.info(f"     [Hygiene Guard] Obsidian 材料目录处于极佳卫生状态，无多余冗余项。")
+
     logger.info("=" * 60)
     logger.info("Ares Prematch 引擎 V2.3 (BATCH_READY + DEEP_QUEUE) 运行完成！")
     logger.info(f"拉链大表: {csv_path}")

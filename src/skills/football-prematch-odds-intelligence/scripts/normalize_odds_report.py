@@ -338,16 +338,21 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
     m = dict(match)
     
     # 提取比赛基本字段
-    match_no = m.get("match_no", "01")
+    # 提取比赛基本字段
+    match_no = m.get("match_no") or str(m.get("index", "01")).zfill(2)
     home = m.get("home")
     away = m.get("away")
-    kickoff = m.get("kickoff", "")
+    kickoff = m.get("kickoff") or m.get("understat_date") or m.get("football_data_date") or ""
     data_source = m.get("data_source", "REAL_MARKET_DATA")
     
     if not home or not away:
-        match_str = m.get("match", "")
+        match_str = m.get("match") or m.get("english") or m.get("chinese") or ""
         if " vs " in match_str:
             parts = match_str.split(" vs ")
+            home = parts[0].strip()
+            away = parts[1].strip()
+        elif " VS " in match_str:
+            parts = match_str.split(" VS ")
             home = parts[0].strip()
             away = parts[1].strip()
         elif "-" in match_str:
@@ -581,7 +586,25 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
     total_active_cnt = cov_total["active"]
     
     insufficient_flag = False
-    if euro_active_cnt < 3 or asian_active_cnt < 3:
+    parse_status = "PASS"
+    reason = []
+    
+    # 强力阻断门禁：无大公司原始数据而仅有平均赔率被判定为不成功，拒绝编造
+    if euro_active_cnt == 0 or asian_active_cnt == 0:
+        insufficient_flag = True
+        parse_status = "FAIL"
+        reason.append("no_raw_bookmaker_odds_detected_only_averages")
+        euro_signal = "INSUFFICIENT_MARKET_DATA"
+        asian_signal = "INSUFFICIENT_MARKET_DATA"
+        data_confidence["euro"] = "low"
+        data_confidence["asian"] = "low"
+        # 拒绝编造：将 odds_avg 清空
+        odds_avg["euro"] = {"initial": {"home": None, "draw": None, "away": None}, "current": {"home": None, "draw": None, "away": None}}
+        odds_avg["asian"] = {"initial": {"home_water": None, "handicap": None, "away_water": None}, "current": {"home_water": None, "handicap": None, "away_water": None}}
+        odds_avg["total"] = {"initial": {"over_water": None, "line": None, "under_water": None}, "current": {"over_water": None, "line": None, "under_water": None}}
+        market_tags = []
+        risk_tags = ["END_OF_SEASON_MOTIVATION_CHECK_REQUIRED"]
+    elif euro_active_cnt < 3 or asian_active_cnt < 3:
         insufficient_flag = True
         euro_signal = "INSUFFICIENT_MARKET_DATA"
         asian_signal = "INSUFFICIENT_MARKET_DATA"
@@ -637,10 +660,12 @@ def run_quant_engine(match: Dict[str, Any]) -> Dict[str, Any]:
     parsed_total_cos = [k for k, v in norm_total.items() if isinstance(v, dict) and v.get("status") == "active"]
     
     # 设定 parse_status 和 audit_pass 状态
-    parse_status = "PASS"
-    reason = []
+    if 'parse_status' not in locals() or parse_status != "FAIL":
+        parse_status = "PASS"
+    if 'reason' not in locals():
+        reason = []
     
-    if insufficient_flag:
+    if insufficient_flag and "no_raw_bookmaker_odds_detected_only_averages" not in reason:
         parse_status = "FAIL"
         reason.append(f"euro_active({euro_active_cnt})_or_asian_active({asian_active_cnt})_too_low")
         

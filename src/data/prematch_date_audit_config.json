@@ -19,6 +19,46 @@
           "correct_date": "2026-05-23 18:45:00"
         }
       ]
+    },
+    "20260524": {
+      "desc": "0524期 Understat 网站意甲比赛时间错标自适应物理卡位与纠偏配置",
+      "calibrations": [
+        {
+          "understat_id": "30221",
+          "match": "Parma Calcio 1913 vs Sassuolo",
+          "correct_date": "2026-05-24 21:00:00"
+        },
+        {
+          "understat_id": "30220",
+          "match": "Napoli vs Udinese",
+          "correct_date": "2026-05-24 23:59:00"
+        },
+        {
+          "understat_id": "30219",
+          "match": "AC Milan vs Cagliari",
+          "correct_date": "2026-05-24 23:59:00"
+        },
+        {
+          "understat_id": "30215",
+          "match": "Cremonese vs Como",
+          "correct_date": "2026-05-24 23:59:00"
+        },
+        {
+          "understat_id": "30218",
+          "match": "Lecce vs Genoa",
+          "correct_date": "2026-05-24 23:59:00"
+        },
+        {
+          "understat_id": "30222",
+          "match": "Torino vs Juventus",
+          "correct_date": "2026-05-24 23:59:00"
+        },
+        {
+          "understat_id": "30223",
+          "match": "Verona vs Roma",
+          "correct_date": "2026-05-24 23:59:00"
+        }
+      ]
     }
   }
 }

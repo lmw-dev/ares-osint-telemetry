@@ -1637,11 +1637,30 @@ class AresOsintCrawler:
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             )
         }
+        text = ""
         try:
-            resp = requests.get(url, headers=headers, timeout=20)
-            text, _enc = self._decode_html_bytes(resp.content)
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code == 200 and "table_live" in resp.text:
+                text, _enc = self._decode_html_bytes(resp.content)
         except Exception as exc:
-            logger.warning("[Date 模式] Titan Over 页抓取失败: %s", exc)
+            logger.warning("[Date 模式] Titan Over 页 Requests 获取失败，尝试 Playwright Fallback: %s", exc)
+
+        # ScraperV2 Playwright 自适应绕盾接管
+        if not text or "table_live" not in text:
+            logger.info("[Date 模式] Titan Over 页面 Requests 抓取不完整或遭遇 WAF 阻断，自动启用 ScraperV2 Playwright 自适应接管...")
+            try:
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                text = loop.run_until_complete(fetch_html_via_playwright_v2(url, wait_for_selector="table#table_live"))
+                logger.info("[Date 模式] ScraperV2 Playwright 成功绕过防线抓取回 Titan Over 页数据！")
+            except Exception as playwright_exc:
+                logger.error("[Date 模式] ScraperV2 Playwright 接管失败: %s", playwright_exc)
+
+        if not text:
+            logger.error("[Date 模式] Titan Over 页面数据彻底获取失败，无法建立 cn_match_id 索引。")
             return []
 
         rows: List[Dict[str, Any]] = []

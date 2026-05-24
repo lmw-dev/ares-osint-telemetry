@@ -59,8 +59,12 @@ Python 量化引擎将为每场比赛自动生成并补充以下核心结构化�
 - **`market_tags` / `risk_tags`**：基于 `euro_asian_handicap_theory.md` 数学阈值规则的 100% 自动打标（包含 `EURO_ASIAN_SPLIT`, `HOME_HANDICAP_WATER_SUPPORT`, `DRAW_COMPRESSED` 等）。
 - **`data_confidence` 与 `company_coverage`**：置信度与覆盖率评估。
 
+> [!IMPORTANT]
+> **绝对零幻觉与阻断铁律**：如果对于某场比赛，**未能抓取到各大博彩公司的详细原始赔率（即 `odds_raw` 中有效活跃公司 active == 0），哪怕输入中带有了外部平均赔率，也必须无条件判定为“不成功” (FAIL)**！
+> 此时 Python 引擎会强行清空 `odds_avg` 数值。**大模型绝对禁止编造任何数据或主观时间逻辑研判。必须直接在 Markdown 报告中显式写出**：“该场比赛各大公司原始赔率未采集成功，情报不足，判定为不成功，已安全回滚并挂起。”
+
 ### Phase 4: 细化研判时间逻辑 (Time-Logic Analysis)
-大模型基于 Python 量化清洗后的结构化 JSON 字段，针对每场比赛进行深度博弈分析，且必须严格拆分为以下四个结构段落：
+对于 **判定成功**（即 `market_usable == true`）的比赛，大模型基于 Python 量化清洗后的结构化 JSON 字段，针对每场比赛进行深度博弈分析，且必须严格拆分为以下四个结构段落：
 1. **`initial_read` (初盘多空博弈)**：剖析庄家开出初盘的深浅、受水倾向与博弈意图。
 2. **`movement_read` (即时资金盘面移动)**：分析随着比赛临近，各玩法赔率/水位变动的资金和风险控制走向。
 3. **`split_check` (双盘同向裂痕校验)**：核验欧赔与亚赔的指向是否完全一致；如出现欧亚大裂痕，指出背后的高危风控异常。
@@ -75,8 +79,9 @@ Python 量化引擎将为每场比赛自动生成并补充以下核心结构化�
      - `generated_at`: 生成时间（当前 local 绝对时间，格式为 YYYY-MM-DD HH:mm:ss）
      - `source_fetch_time`: 数据采集时间
      - `data_source`: 提取的数据源网址
-3. **双重持久化落地**：
+3. **双重持久化落地与不成功声明**：
    - 写入 Obsidian 归档目录：`/vaults/AresVault/03_Match_Audits/DATE-{date}-top5/` 下的 `.md` 与 `.json` 文件。
+   - 如果整轮比赛大部分场次判定不成功，必须在 Markdown 报告开头显式进行不成功挂起警告。
    - JSON 架构必须严格符合推荐的顶级嵌套格式。
 
 ---

@@ -107,7 +107,8 @@ class MatchTelemetryPipeline:
             self.cold_data_dir = vault_root / "04_RAG_Raw_Data" / "Cold_Data_Lake"
             self.hot_reports_dir = self.issue_postmatch_dir
             self.team_archives_dir = vault_root / "02_Team_Archives"
-            self.team_archives_runtime_dir = self.team_archives_dir / "_Postmatch_Runtime"
+            # 重定向运行时目录以避免向只读的 02_Team_Archives 写入
+            self.team_archives_runtime_dir = self.issue_audit_dir / "_Postmatch_Runtime"
         else:
             logger.warning("未检测到环境变量 ARES_VAULT_PATH，将降级写入项目目录。")
             self.issue_audit_dir = self.base_dir / "draft_audits" / str(self.issue)
@@ -115,7 +116,8 @@ class MatchTelemetryPipeline:
             self.cold_data_dir = self.base_dir / "raw_reports"
             self.hot_reports_dir = self.issue_postmatch_dir
             self.team_archives_dir = self.base_dir / "02_Team_Archives"
-            self.team_archives_runtime_dir = self.team_archives_dir / "_Postmatch_Runtime"
+            # 重定向运行时目录以避免向只读的 02_Team_Archives 写入
+            self.team_archives_runtime_dir = self.issue_audit_dir / "_Postmatch_Runtime"
 
         self.cold_data_dir.mkdir(parents=True, exist_ok=True)
         self.issue_audit_dir.mkdir(parents=True, exist_ok=True)
@@ -967,10 +969,15 @@ class MatchTelemetryPipeline:
         frontmatter["reality_gap"] = reality_gap
 
         updated_markdown = self._build_markdown(frontmatter, body)
-        self._write_text_safely(archive_path, updated_markdown)
+        # 拦截物理写回动作以保持物理队档绝对只读隔离 (Strict Read-Only Guard)
+        # self._write_text_safely(archive_path, updated_markdown)
+        logger.info(
+            "[Read-Only Guard] 已拦截球队档案物理写入 (Skipped writing to %s) 保持只读底座隔离",
+            archive_path
+        )
         self._dump_reality_gap_audit(team_name, gap_audit)
         logger.info(
-            "球队档案已更新 reality_gap -> %s [%s / %.2f]",
+            "球队档案已模拟更新 reality_gap -> %s [%s / %.2f]",
             archive_path,
             reality_gap["bias_type"],
             reality_gap["S_dynamic_modifier"],

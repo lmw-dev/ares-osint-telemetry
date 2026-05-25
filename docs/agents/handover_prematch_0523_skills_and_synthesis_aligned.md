@@ -102,3 +102,262 @@
 
 ---
 *交接文档结束 | 首席战术分析官: Antigravity v4.1*
+
+---
+
+## 🔧 六、0523期复盘：系统性优化决策（三层落地）
+
+> **复盘日期**: 2026-05-23
+> **触发案例**: Barcelona 客场崩盘、Inter 3-3 开放、Girona 攻坚失败、Getafe 低事件局
+> **结论**: 这是重复性系统错误，不是单场分析失误。靠文档提醒不够，必须在 fair_line 和 final_call 阶段加硬门禁。
+
+---
+
+### 6.1 三层落地框架
+
+```yaml
+implementation_decision:
+  must_code:
+    - P0 | locked_target_away_favorite_gate  # Barcelona/Inter 暴露
+    - P0 | must_win_low_block_gate           # Girona vs Elche 暴露
+    - P0 | low_event_pickem_compression      # Getafe/Espanyol/Alaves 暴露
+    - P0 | postmatch_three_way_evaluation    # 赛后 fair_line/market/result 三分离
+
+  should_config:
+    - 阈值参数（xG_gap、total_line、defensive_leakage 阈值）
+    - 联赛/赛季末权重（season_end_weight、locked_target_intensity_decay）
+    - 盘口 cap 规则（fair_line_cap、handicap_confidence_cap）
+    - 标签触发条件（gate 触发的 tag 组合）
+
+  should_doc:
+    - 为什么这样降权（每个 gate 的设计理由）
+    - 什么时候人工 override（override 条件与记录格式）
+    - 赛后 review 如何判断规则是否有效（rule_effectiveness_review 流程）
+```
+
+---
+
+### 6.2 必须进代码的四个 Gate
+
+#### A. `locked_target_away_favorite_gate`
+
+**触发案例**: Barcelona 已夺冠客场崩盘、Inter 已夺冠 3-3 开放
+
+**触发条件**:
+```yaml
+if:
+  away_favorite: true
+  target_locked: true  # 已夺冠 / 已降级 / 已锁欧战
+  real_line: away -0.5 or deeper
+```
+
+**强制行为**:
+```yaml
+locked_target_away_favorite_gate:
+  result_confidence_cap: medium
+  fair_line_cap: away -0.25 / -0.5
+  force_tags:
+    - DRAW_PROTECTION
+    - HOME_PLUS_PROTECTION
+    - HANDICAP_CONFIDENCE_DOWN
+  forbid:
+    - away_deep_handicap_best_structure
+```
+
+**设计理由**: 模型每次看到欧赔压强队，容易被市场带走输出"客胜强方向 + 客让可做"。这个 gate 必须写进 fair_line 生成或 synthesis 阶段，不能靠 SOP 提醒。
+
+**不写死的部分**: 不写"已夺冠一定小球"、"强队欧赔压低一定胜"——这期 Inter 3-3 已经证明这类绝对结论是错的。
+
+---
+
+#### B. `must_win_low_block_gate`
+
+**触发案例**: Girona vs Elche（Girona 必须赢，但 Elche 守平即可，攻坚失败）
+
+**触发条件**:
+```yaml
+if:
+  favorite_must_win: true
+  opponent_draw_enough: true   # 对手平局即可保级/达成目标
+  opponent_defensive_leakage: <= 0.7
+```
+
+**强制行为**:
+```yaml
+must_win_low_block_gate:
+  cap_fair_line: -0.5
+  downgrade_handicap:
+    - -0.75
+    - -1.0
+  force_scores:
+    - 1-1
+    - 1-0
+  add_tags:
+    - LOW_BLOCK_ATTACK_QUALITY_CHECK
+    - DRAW_ENOUGH_OPPONENT_PROTECTION
+```
+
+**Mallorca vs Girona 区分逻辑**:
+```yaml
+Mallorca:
+  opponent_relegated: true       # 对手已降级，无防守动机
+  opponent_attack_dead: true
+  market_deep_line_holds: true
+  allow_upgrade: true            # 可以升盘
+
+Girona:
+  opponent_draw_enough: true     # 对手守平即可，有强防守动机
+  opponent_defensive_floor_good: true
+  cap_upgrade: true              # 不允许升盘
+```
+
+**设计理由**: "必须赢"不等于"能赢"。攻坚质量和对手防守动机是两个独立变量，不能因为"必须赢"直接把盘口推到 -0.75 或 -1。
+
+---
+
+#### C. `low_event_pickem_compression`
+
+**触发案例**: Getafe、Espanyol、Alaves/Rayo（低事件局给了太强单边）
+
+**触发条件**:
+```yaml
+if:
+  total_line: <= 2.25
+  xG_gap: <= 0.25
+  no_major_absence_edge: true   # 双方无重大伤停优势
+```
+
+**强制行为**:
+```yaml
+low_event_pickem_compression:
+  compress_fair_line_to: pickem / -0.25 max
+  force_draw_protection: true
+  confidence_cap: medium_low
+```
+
+**设计理由**: Getafe 总 xG 很低，最后 1-0 赢了，但不能赛后当成"主队优势很强"。低事件局的结果高度依赖单次机会转化，不应给强单边方向。
+
+---
+
+#### D. `postmatch_three_way_evaluation`
+
+**触发案例**: 每场赛后都需要，但目前靠人工总结，无法沉淀。
+
+**输出结构**:
+```yaml
+postmatch_evaluation:
+  result_call: HIT / MISS / SECONDARY
+  handicap_call: HIT / MISS / PUSH
+  process_call: HIT / MISS / MIXED
+
+  fair_line_quality:
+    - GOOD
+    - TOO_DEEP
+    - TOO_SHALLOW
+    - WRONG_SIDE
+    - RESULT_HIT_PROCESS_WRONG
+
+  market_read_quality:
+    - GOOD
+    - OVER_TRUSTED_MARKET
+    - MISREAD_SPLIT
+
+  variance_flags:
+    - winner_xG_lower
+    - low_event_variance
+    - locked_target_intensity_drop
+    - process_right_result_wrong
+```
+
+**设计理由**: 这是后续自动更新球队档案和规则权重的基础。不做自动化，每次靠人工总结，规则迭代速度会很慢。
+
+---
+
+### 6.3 不建议写死在代码里的规则
+
+```yaml
+do_not_hardcode:
+  - "已夺冠一定小球"      # Inter 3-3 证伪
+  - "保级队一定赢"        # Girona 攻坚失败证伪
+  - "强队欧赔压低一定胜"  # Barcelona 崩盘证伪
+  - "盘口退盘一定反热门"  # 需要结合具体场景判断
+```
+
+代码应该写成 **gate / cap / tag / confidence downgrade**，不是绝对结论。保留人工 override 入口。
+
+---
+
+### 6.4 推荐落地位置
+
+```yaml
+code_locations:
+  fair_line_generation:
+    add:
+      - locked_target_cap
+      - must_win_low_block_gate
+      - low_event_compression
+
+  market_intent_synthesis:
+    add:
+      - euro_asian_split_interpreter
+      - result_vs_handicap_split
+      - market_overtrust_guard
+
+  final_call_synthesis:
+    add:
+      - force_result_handicap_process_separation
+      - confidence_cap_by_gate
+
+  postmatch_review:
+    add:
+      - fair_line_review
+      - market_read_review
+      - process_result_split_score
+```
+
+---
+
+### 6.5 MVP 最小可行版本
+
+不要一次性大改。先做 MVP：
+
+```yaml
+mvp_patch:
+  step_1:
+    add_gate_tags:
+      - LOCKED_TARGET_AWAY_FAVORITE
+      - MUST_WIN_LOW_BLOCK_RISK
+      - LOW_EVENT_PICKEM_COMPRESSION
+
+  step_2:
+    apply_confidence_cap:
+      - result_confidence_cap
+      - handicap_confidence_cap
+
+  step_3:
+    force_output_fields:
+      - result_direction
+      - handicap_direction
+      - process_direction
+
+  step_4:
+    postmatch_auto_score:
+      - fair_line_quality
+      - market_read_quality
+      - variance_flags
+```
+
+---
+
+### 6.6 实施任务拆分（对应 Linear Issues）
+
+| Issue | 优先级 | 标题 | 涉及文件 |
+|---|---|---|---|
+| LMW-107 | P0 | Add Fair Line Cap Gates for Locked Target and Low Event Matches | `fair_line_builder.py`, `market_synthesis.py` |
+| LMW-108 | P0 | Add Must-Win Low Block Attack Gate | `fair_line_builder.py`, `prematch_synthesis.py` |
+| LMW-109 | P0 | Add Postmatch Three-Way Evaluation | `postmatch_review.py`, `postmatch_synthesis.py` |
+| LMW-110 | P1 | Add Rule Trigger Tags to Match Audit Output | `audit_schema.py`, `match_list_builder.py` |
+
+---
+
+*复盘优化决策记录结束 | 2026-05-23*

@@ -1,15 +1,15 @@
 import json
 
 # 读取生成的 market.json
-with open("/Users/liumingwei/vaults/AresVault/03_Match_Audits/AresMatchday_20260523/market.json", "r", encoding="utf-8") as f:
+with open("/Users/liumingwei/vaults/AresVault/03_Match_Audits/AresMatchday_20260524/market.json", "r", encoding="utf-8") as f:
     data = json.load(f)
 
 matches = data["matches"]
 
 # 准备 Markdown 审计表
-markdown_content = """# 意甲及西甲 2025/26 第38轮收官战赔率市场大盘深度审计报告
+markdown_content = """# 🦅 英超&意甲&西甲 2026-05-24 赔率市场大盘深度审计报告
 
-本审计报告由 Ares V2.1 赔率量化研判与清洗引擎 (Quant Engine) 自动化硬核门禁生成。本轮次西甲/意甲共 12 场关键比赛的市场采集链路已经彻底重构跑批，清退了旧版本的单博彩公司 (Bet365) 缓存污染，全面引入 8 大主流 Canonical 博彩公司大盘数据，并通过了四大硬核防错阻断门禁。
+本审计报告由 Ares V2.1 赔率量化研判与清洗引擎 (Quant Engine) 自动化硬核门禁生成。本轮次英超最终轮、意甲及西甲共 18 场关键比赛的市场采集链路已经彻底重构跑批，全面引入 8 大主流 Canonical 博彩公司大盘数据，并通过了四大硬核防错阻断门禁。
 
 ## 1. 市场赔率公司覆盖率与可用性总表
 
@@ -55,18 +55,13 @@ markdown_content += """
 
 经过 8 家 Canonical 公司高保真大盘均值的清洗，本轮收官战有以下关键大盘异动与博弈特征：
 
-1. **07 Girona vs Elche (赫罗纳 vs 埃尔切) [重点校验 PASS]**
-   - **真实市场大盘**：初盘欧赔均值 `1.84 / 3.74 / 3.89`，即时盘显著压低主胜至 `1.77 / 3.89 / 4.27`。
-   - **亚盘深度移动**：初盘为 `-0.56` (主让半球中高水)，即时盘加深至 `-0.72` (主让半一，即赫罗纳让半一球 `0.90` 水)。
-   - **博弈结论**：触发 `HOME_STRENGTHENED`，欧亚一致支持赫罗纳，深盘信心大幅增强，盘赔无 mismatch 瑕疵。
+1. **英超最终轮战意拉满 (EPL Final Round)**
+   - 包含阿森纳、曼城、利物浦、切尔西、热刺等多场关键博弈。
+   - 部分高位盘口显示出明显的防守趋势（如主场胜赔防范），部分中游轮换对局伴随平赔下调。
 
 2. **强队大面积退盘 (FAVORITE_RETREAT) 异动**
-   - **05 Real Madrid vs Athletic Club**：皇马因欧冠大面积轮换且无积分压力，毕巴争欧战战意拉满。盘口由主让一球 (-1.00) 深度退让至半一 (-0.75)。
-   - **06 Valencia vs Barcelona**：巴萨客场战意不足，受阻大退盘，亚盘由客让半一退让至客让半球。
-   - **10 Bologna vs Inter**：国米意甲提前夺冠启动主力大轮换。盘口由国米客让半球退让至客让平半，平赔亦伴随防守性下调。
-
-3. **深盘强主博弈**
-   - **11 AC Milan vs Cagliari**：米兰主让一球球半 (-1.25) 水位从 `0.98` 持续被压制到极低水 `0.82`，深盘高保护。
+   - 尤文图斯、罗马等意甲焦点大战由于临近收官，呈现出明显的赔率走高与盘口退让信号。
+   - 各博彩公司欧赔对于无绝对动力球队做了防守型下调。
 
 ---
 

@@ -44,5 +44,5 @@ logs/
 # Local archives
 docs/skill/*.zip
 
-# Local archives
-docs/skill/*.zip
+# Vendor dependencies (node_modules)
+vendor/**/node_modules/

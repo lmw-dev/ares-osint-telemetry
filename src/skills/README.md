@@ -26,6 +26,7 @@
 | **tactical-claim-validation** | `src/skills/tactical-claim-validation/` | 战术 claims 验证（YT-04），对 claims.md 进行事实核查和战术解读评估，输出 validated/rejected/needs_review 结果，不做 Team Archive patch | `AresVault/04_RAG_Raw_Data/youtube_tactical_sources/validation/` |
 | **team-archive-patch-proposal** | `src/skills/team-archive-patch-proposal/` | Team Archive patch proposal 生成（YT-05），从 validation.md 筛选 validated+candidate_after_review claims，生成可审查的 patch proposal，不直接修改 Team Archive | `AresVault/04_RAG_Raw_Data/youtube_tactical_sources/patch_proposals/` |
 | **youtube-tactical-batch-runner** | `src/skills/youtube-tactical-batch-runner/` | YouTube Tactical Intelligence 批量端到端 runner，读取 ingestion_queue.json，对合格条目执行 YT-02 → YT-06，输出 batch run report，支持幂等性检测 | `AresVault/04_RAG_Raw_Data/youtube_tactical_sources/batch_runs/` |
+| **youtube-source-quality-dashboard** | `src/skills/youtube-source-quality-dashboard/` | YouTube 来源质量 dashboard，读取现有 pipeline artifacts，生成来源性能报告和推荐，只读不修改 | `AresVault/04_RAG_Raw_Data/youtube_tactical_sources/quality_reports/` |
 
 ---
 

@@ -22,6 +22,7 @@
 | **recurring-team-signal-collection** | `src/skills/recurring-team-signal-collection/` | 定期球队异常信号采集（weekly_baseline / matchday_live / postmatch_validation），建立 durable learning 闭环 | `draft_reports/recurring-team-signal-collection_{league}_{date}.{md,json}` |
 | **youtube-tactical-url-discovery** | `src/skills/youtube-tactical-url-discovery/` | YouTube 战术视频 URL 发现与筛选，输出候选清单供用户确认后进入 NotebookLM synthesis | `AresVault/04_RAG_Raw_Data/youtube_tactical_sources/candidates/` |
 | **youtube-transcript-ingestion** | `src/skills/youtube-transcript-ingestion/` | YouTube 字幕/转录文本提取（transcript-first 主路径，YT-02），通过 yt-dlp 字幕专项提取原始 transcript，不做 claim extraction | `AresVault/04_RAG_Raw_Data/youtube_tactical_sources/transcripts/` |
+| **transcript-to-tactical-claims** | `src/skills/transcript-to-tactical-claims/` | YouTube transcript 战术 claims 提取（YT-03），从 transcript_raw.md 中提取结构化战术 claims，不做 validation，不做 Team Archive patch | `AresVault/04_RAG_Raw_Data/youtube_tactical_sources/claims/` |
 
 ---
 

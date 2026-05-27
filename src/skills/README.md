@@ -23,6 +23,7 @@
 | **youtube-tactical-url-discovery** | `src/skills/youtube-tactical-url-discovery/` | YouTube 战术视频 URL 发现与筛选，输出候选清单供用户确认后进入 NotebookLM synthesis | `AresVault/04_RAG_Raw_Data/youtube_tactical_sources/candidates/` |
 | **youtube-transcript-ingestion** | `src/skills/youtube-transcript-ingestion/` | YouTube 字幕/转录文本提取（transcript-first 主路径，YT-02），通过 yt-dlp 字幕专项提取原始 transcript，不做 claim extraction | `AresVault/04_RAG_Raw_Data/youtube_tactical_sources/transcripts/` |
 | **transcript-to-tactical-claims** | `src/skills/transcript-to-tactical-claims/` | YouTube transcript 战术 claims 提取（YT-03），从 transcript_raw.md 中提取结构化战术 claims，不做 validation，不做 Team Archive patch | `AresVault/04_RAG_Raw_Data/youtube_tactical_sources/claims/` |
+| **tactical-claim-validation** | `src/skills/tactical-claim-validation/` | 战术 claims 验证（YT-04），对 claims.md 进行事实核查和战术解读评估，输出 validated/rejected/needs_review 结果，不做 Team Archive patch | `AresVault/04_RAG_Raw_Data/youtube_tactical_sources/validation/` |
 
 ---
 

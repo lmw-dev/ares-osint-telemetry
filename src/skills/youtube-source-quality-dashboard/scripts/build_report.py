@@ -50,7 +50,7 @@ QUALITY_REPORTS_DIR = YT_BASE / "quality_reports"
 # ── Parsers ───────────────────────────────────────────────────────────────────
 
 def parse_frontmatter(content: str) -> dict[str, Any]:
-    """Extract YAML frontmatter from markdown."""
+    """Extract YAML frontmatter from markdown, handling nested dict blocks."""
     if not content.startswith("---"):
         return {}
     end = content.find("\n---", 3)
@@ -58,26 +58,42 @@ def parse_frontmatter(content: str) -> dict[str, Any]:
         return {}
     fm_text = content[3:end].strip()
     fm: dict[str, Any] = {}
-    current_key = None
-    current_list: list | None = None
-    for line in fm_text.split("\n"):
-        if line.startswith("  - ") and current_list is not None:
-            current_list.append(line[4:].strip())
-        elif ":" in line and not line.startswith(" "):
-            if current_key and current_list is not None:
-                fm[current_key] = current_list
-                current_list = None
+    lines = fm_text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Top-level key
+        if line and not line.startswith(" ") and ":" in line:
             key, _, val = line.partition(":")
             key = key.strip()
             val = val.strip()
-            if val == "":
-                current_key = key
-                current_list = []
-            else:
+            if val:
                 fm[key] = val
-                current_key = None
-    if current_key and current_list is not None:
-        fm[current_key] = current_list
+                i += 1
+            else:
+                # Look ahead to determine if list or nested dict
+                nested: dict[str, Any] = {}
+                lst: list = []
+                i += 1
+                while i < len(lines) and lines[i].startswith("  "):
+                    sub = lines[i]
+                    if sub.startswith("  - "):
+                        lst.append(sub[4:].strip())
+                    elif ":" in sub:
+                        sk, _, sv = sub.strip().partition(":")
+                        sk = sk.strip()
+                        sv = sv.strip()
+                        try:
+                            nested[sk] = int(sv)
+                        except ValueError:
+                            nested[sk] = sv
+                    i += 1
+                if nested:
+                    fm[key] = nested
+                elif lst:
+                    fm[key] = lst
+        else:
+            i += 1
     return fm
 
 
@@ -125,25 +141,30 @@ def count_validation_in_file(path: Path) -> dict[str, Any]:
     content = path.read_text(encoding="utf-8", errors="replace")
     fm = parse_frontmatter(content)
 
+    incomplete = False
     summary = fm.get("validation_summary", {})
-    if isinstance(summary, dict):
+    if isinstance(summary, dict) and summary:
         validated = int(summary.get("validated", 0))
         rejected = int(summary.get("rejected", 0))
         needs_review = int(summary.get("needs_review", 0))
     else:
+        # Could not parse nested block — mark incomplete
         validated = rejected = needs_review = 0
+        incomplete = True
+        logger.warning("  Could not parse validation_summary in %s (got type %s)", path.name, type(summary))
 
     reason_raw = fm.get("reason_code_summary", {})
     reason_codes: dict[str, int] = {}
-    if isinstance(reason_raw, dict):
+    if isinstance(reason_raw, dict) and reason_raw:
         for k, v in reason_raw.items():
             try:
                 reason_codes[k] = int(v)
             except (ValueError, TypeError):
                 pass
 
-    # Count candidate_after_review from body
-    candidates = len(re.findall(r"`candidate_after_review`", content))
+    # Count candidate_after_review from body — count only patch item lines, not frontmatter
+    # Pattern: lines with `candidate_after_review` inside Patch Item sections
+    candidates = len(re.findall(r"\*\*Patch Recommendation\*\*:\s*`candidate_after_review`", content))
 
     return {
         "validated": validated,
@@ -155,6 +176,8 @@ def count_validation_in_file(path: Path) -> dict[str, Any]:
         "source_channel": fm.get("source_channel", "unknown"),
         "target_team": fm.get("target_team", "unknown"),
         "video_id": fm.get("video_id", "unknown"),
+        "total_claims": int(fm.get("total_claims", 0)),
+        "incomplete": incomplete,
     }
 
 
@@ -301,13 +324,18 @@ def build_metrics(vault_path: Path, min_sample: int) -> dict[str, Any]:
     # ── Validation quality ────────────────────────────────────────────────────
     all_validations: list[dict] = []
     reason_codes_total: dict[str, int] = defaultdict(int)
+    incomplete_validation_files: list[str] = []
+
     for vf in VALIDATION_DIR.glob("*_validation.md"):
         # Skip old-format files that don't follow the new schema
         content = vf.read_text(encoding="utf-8", errors="replace")
         if "validation_summary:" not in content:
+            logger.info("  Skipping old-format validation file: %s", vf.name)
             continue
         info = count_validation_in_file(vf)
         all_validations.append(info)
+        if info.get("incomplete"):
+            incomplete_validation_files.append(vf.name)
         for k, v in info["reason_codes"].items():
             reason_codes_total[k] += v
 
@@ -321,10 +349,13 @@ def build_metrics(vault_path: Path, min_sample: int) -> dict[str, Any]:
         "validated_count": total_validated,
         "rejected_count": total_rejected,
         "needs_review_count": total_needs_review,
-        "validated_rate": round(total_validated / total_val, 2) if total_val else 0,
-        "rejected_rate": round(total_rejected / total_val, 2) if total_val else 0,
-        "needs_review_rate": round(total_needs_review / total_val, 2) if total_val else 0,
+        "validated_rate": round(total_validated / total_val, 2) if total_val else "INCOMPLETE",
+        "rejected_rate": round(total_rejected / total_val, 2) if total_val else "INCOMPLETE",
+        "needs_review_rate": round(total_needs_review / total_val, 2) if total_val else "INCOMPLETE",
         "reason_code_distribution": dict(reason_codes_total),
+        "files_read": len(all_validations),
+        "incomplete_files": incomplete_validation_files,
+        "metric_status": "incomplete" if incomplete_validation_files else "complete",
     }
 
     # ── Team Archive value ────────────────────────────────────────────────────
@@ -386,6 +417,9 @@ def build_metrics(vault_path: Path, min_sample: int) -> dict[str, Any]:
             channel_stats[ch]["validated_claims"] += v["validated"]
             channel_stats[ch]["rejected_claims"] += v["rejected"]
             channel_stats[ch]["candidate_claims"] += v["candidate_after_review"]
+            # Use total_claims from validation file if claims file didn't have it
+            if channel_stats[ch]["total_claims"] == 0 and v.get("total_claims", 0) > 0:
+                channel_stats[ch]["total_claims"] = v["total_claims"]
 
     # Compute rates and recommendations
     source_performance = []
@@ -395,7 +429,10 @@ def build_metrics(vault_path: Path, min_sample: int) -> dict[str, Any]:
         avg_claims = round(s["total_claims"] / max(s["transcript_success"], 1), 1)
         val_rate = round(s["validated_claims"] / max(s["total_claims"], 1), 2)
         blocked_rate = round(s["transcript_blocked"] / videos, 2) if videos else 0
-        cand_rate = round(s["candidate_claims"] / max(s["validated_claims"], 1), 2)
+        # candidate_after_review_rate: use total_claims as denominator (stable)
+        # Only show rate if total_claims > 0
+        cand_count = s["candidate_claims"]
+        cand_rate = round(cand_count / s["total_claims"], 2) if s["total_claims"] > 0 else None
 
         # Recommendation logic
         if videos < min_sample:
@@ -421,6 +458,7 @@ def build_metrics(vault_path: Path, min_sample: int) -> dict[str, Any]:
             "transcript_success_rate": ts_rate,
             "average_claims_per_video": avg_claims,
             "validated_rate": val_rate,
+            "candidate_after_review_count": cand_count,
             "candidate_after_review_rate": cand_rate,
             "blocked_rate": blocked_rate,
             "notes": notes,
@@ -500,6 +538,11 @@ def build_markdown_report(metrics: dict[str, Any], label: str) -> str:
     for k, v in sorted(cq["claims_by_type"].items()):
         lines.append(f"| `{k}` | {v} |")
 
+    def fmt_rate(r):
+        if isinstance(r, str):
+            return r
+        return f"{r:.0%}"
+
     lines += [
         f"",
         f"---",
@@ -508,9 +551,11 @@ def build_markdown_report(metrics: dict[str, Any], label: str) -> str:
         f"",
         f"| Metric | Value |",
         f"|--------|-------|",
-        f"| Validated | {vq['validated_count']} ({vq['validated_rate']:.0%}) |",
-        f"| Rejected | {vq['rejected_count']} ({vq['rejected_rate']:.0%}) |",
-        f"| Needs Review | {vq['needs_review_count']} ({vq['needs_review_rate']:.0%}) |",
+        f"| Validated | {vq['validated_count']} ({fmt_rate(vq['validated_rate'])}) |",
+        f"| Rejected | {vq['rejected_count']} ({fmt_rate(vq['rejected_rate'])}) |",
+        f"| Needs Review | {vq['needs_review_count']} ({fmt_rate(vq['needs_review_rate'])}) |",
+        f"| Files Read | {vq.get('files_read', '?')} |",
+        f"| Metric Status | `{vq.get('metric_status', 'unknown')}` |",
         f"",
         f"**Reason Code Distribution**:",
         f"",
@@ -538,15 +583,17 @@ def build_markdown_report(metrics: dict[str, Any], label: str) -> str:
         f"",
         f"## Source Performance",
         f"",
-        f"| Channel | Tier | Videos | Transcript % | Avg Claims | Validated % | Candidate % | Blocked % | Recommendation |",
-        f"|---------|------|--------|-------------|-----------|------------|------------|----------|----------------|",
+        f"| Channel | Tier | Videos | Transcript % | Avg Claims | Validated % | Candidate Count | Candidate % | Blocked % | Recommendation |",
+        f"|---------|------|--------|-------------|-----------|------------|----------------|------------|----------|----------------|",
     ]
     for s in sp:
         rec_emoji = {"keep": "✅", "watch": "⚠️", "downgrade": "⬇️", "exclude": "❌", "needs_more_sample": "🔍"}.get(s["recommendation"], "❓")
+        cand_rate_str = f"{s['candidate_after_review_rate']:.0%}" if s.get("candidate_after_review_rate") is not None else "N/A"
         lines.append(
             f"| {s['source_channel']} | {s['source_tier']} | {s['videos_seen']} "
             f"| {s['transcript_success_rate']:.0%} | {s['average_claims_per_video']} "
-            f"| {s['validated_rate']:.0%} | {s['candidate_after_review_rate']:.0%} "
+            f"| {s['validated_rate']:.0%} | {s['candidate_after_review_count']} "
+            f"| {cand_rate_str} "
             f"| {s['blocked_rate']:.0%} | {rec_emoji} `{s['recommendation']}` |"
         )
 

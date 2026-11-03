@@ -1,0 +1,4299 @@
+{
+  "schema_version": "LMW413_SELF_CONTAINED_FIXTURE_V1",
+  "valuation_semantics": "FIXED_PRICE_RECENT_XI_COMPOSITION_PRIOR",
+  "valuation_snapshot_date": "2026-09-30",
+  "evidence_cutoff_date": "2026-10-18",
+  "evidence_cutoff_utc": "2026-10-18T00:00:00Z",
+  "generated_at": "2026-11-03T18:00:00Z",
+  "teams_count": 8,
+  "teams": [
+    {
+      "team_key": "Arsenal",
+      "team_name": "Arsenal",
+      "matches": [
+        {
+          "match_id": "5795483",
+          "fotmob_id": "5795483",
+          "gw": "GW07",
+          "match_date": "2026-10-18",
+          "kickoff_utc": "2026-10-18T15:30:00Z",
+          "side": "awayTeam",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "missing_players_count": 0,
+          "coverage_ratio": "11/11",
+          "known_sum_eur": 715000000.0,
+          "known_sum_m": 715.0,
+          "valuation_basis": "FULL_XI",
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "player_name": "David Raya",
+              "fotmob_id": 562727,
+              "valuation_eur": 30000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 262749"
+            },
+            {
+              "player_name": "Ben White",
+              "fotmob_id": 776151,
+              "valuation_eur": 30000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 335721"
+            },
+            {
+              "player_name": "Ezri Konsa",
+              "fotmob_id": 710159,
+              "valuation_eur": 40000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 413403"
+            },
+            {
+              "player_name": "Gabriel",
+              "fotmob_id": 795179,
+              "valuation_eur": 75000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 435338"
+            },
+            {
+              "player_name": "Riccardo Calafiori",
+              "fotmob_id": 1105912,
+              "valuation_eur": 55000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 502821"
+            },
+            {
+              "player_name": "Bruno Guimarães",
+              "fotmob_id": 850354,
+              "valuation_eur": 70000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 520624"
+            },
+            {
+              "player_name": "Declan Rice",
+              "fotmob_id": 654096,
+              "valuation_eur": 120000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 357662"
+            },
+            {
+              "player_name": "Bukayo Saka",
+              "fotmob_id": 961995,
+              "valuation_eur": 110000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 433177"
+            },
+            {
+              "player_name": "Martin Ødegaard",
+              "fotmob_id": 534670,
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 316264"
+            },
+            {
+              "player_name": "Eberechi Eze",
+              "fotmob_id": 818975,
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 479999"
+            },
+            {
+              "player_name": "Kai Havertz",
+              "fotmob_id": 749736,
+              "valuation_eur": 55000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 309400"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "David Raya",
+              "fotmob_id": 562727,
+              "valuation_eur": 30000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 262749"
+            },
+            {
+              "player_name": "Ben White",
+              "fotmob_id": 776151,
+              "valuation_eur": 30000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 335721"
+            },
+            {
+              "player_name": "Ezri Konsa",
+              "fotmob_id": 710159,
+              "valuation_eur": 40000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 413403"
+            },
+            {
+              "player_name": "Gabriel",
+              "fotmob_id": 795179,
+              "valuation_eur": 75000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 435338"
+            },
+            {
+              "player_name": "Riccardo Calafiori",
+              "fotmob_id": 1105912,
+              "valuation_eur": 55000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 502821"
+            },
+            {
+              "player_name": "Bruno Guimarães",
+              "fotmob_id": 850354,
+              "valuation_eur": 70000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 520624"
+            },
+            {
+              "player_name": "Declan Rice",
+              "fotmob_id": 654096,
+              "valuation_eur": 120000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 357662"
+            },
+            {
+              "player_name": "Bukayo Saka",
+              "fotmob_id": 961995,
+              "valuation_eur": 110000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 433177"
+            },
+            {
+              "player_name": "Martin Ødegaard",
+              "fotmob_id": 534670,
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 316264"
+            },
+            {
+              "player_name": "Eberechi Eze",
+              "fotmob_id": 818975,
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 479999"
+            },
+            {
+              "player_name": "Kai Havertz",
+              "fotmob_id": 749736,
+              "valuation_eur": 55000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 309400"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "HISTORICAL_RECOVERED_LINEUP",
+          "source_locator": "fotmob://match/5795483",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        },
+        {
+          "match_id": "5795485",
+          "fotmob_id": "5795485",
+          "gw": "GW08",
+          "match_date": "2026-10-24",
+          "kickoff_utc": "2026-10-24T14:00:00Z",
+          "side": "homeTeam",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "missing_players_count": 0,
+          "coverage_ratio": "11/11",
+          "known_sum_eur": 610000000.0,
+          "known_sum_m": 610.0,
+          "valuation_basis": "FULL_XI",
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "player_name": "David Raya",
+              "fotmob_id": 562727,
+              "valuation_eur": 30000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 262749"
+            },
+            {
+              "player_name": "Ben White",
+              "fotmob_id": 776151,
+              "valuation_eur": 30000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 335721"
+            },
+            {
+              "player_name": "Ezri Konsa",
+              "fotmob_id": 710159,
+              "valuation_eur": 40000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 413403"
+            },
+            {
+              "player_name": "Gabriel",
+              "fotmob_id": 795179,
+              "valuation_eur": 75000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 435338"
+            },
+            {
+              "player_name": "Myles Lewis-Skelly",
+              "fotmob_id": 1406436,
+              "valuation_eur": 45000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 890721"
+            },
+            {
+              "player_name": "Declan Rice",
+              "fotmob_id": 654096,
+              "valuation_eur": 120000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 357662"
+            },
+            {
+              "player_name": "Mikel Merino",
+              "fotmob_id": 574645,
+              "valuation_eur": 25000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 338424"
+            },
+            {
+              "player_name": "Noni Madueke",
+              "fotmob_id": 1084981,
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 503987"
+            },
+            {
+              "player_name": "Martin Ødegaard",
+              "fotmob_id": 534670,
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 316264"
+            },
+            {
+              "player_name": "Eberechi Eze",
+              "fotmob_id": 818975,
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 479999"
+            },
+            {
+              "player_name": "Viktor Gyökeres",
+              "fotmob_id": 664500,
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 325443"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "David Raya",
+              "fotmob_id": 562727,
+              "valuation_eur": 30000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 262749"
+            },
+            {
+              "player_name": "Ben White",
+              "fotmob_id": 776151,
+              "valuation_eur": 30000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 335721"
+            },
+            {
+              "player_name": "Ezri Konsa",
+              "fotmob_id": 710159,
+              "valuation_eur": 40000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 413403"
+            },
+            {
+              "player_name": "Gabriel",
+              "fotmob_id": 795179,
+              "valuation_eur": 75000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 435338"
+            },
+            {
+              "player_name": "Myles Lewis-Skelly",
+              "fotmob_id": 1406436,
+              "valuation_eur": 45000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 890721"
+            },
+            {
+              "player_name": "Declan Rice",
+              "fotmob_id": 654096,
+              "valuation_eur": 120000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 357662"
+            },
+            {
+              "player_name": "Mikel Merino",
+              "fotmob_id": 574645,
+              "valuation_eur": 25000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 338424"
+            },
+            {
+              "player_name": "Noni Madueke",
+              "fotmob_id": 1084981,
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 503987"
+            },
+            {
+              "player_name": "Martin Ødegaard",
+              "fotmob_id": 534670,
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 316264"
+            },
+            {
+              "player_name": "Eberechi Eze",
+              "fotmob_id": 818975,
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 479999"
+            },
+            {
+              "player_name": "Viktor Gyökeres",
+              "fotmob_id": 664500,
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 325443"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "FOTMOB_RAW_AND_TM_SNAPSHOT",
+          "source_locator": "fotmob://match/5795485",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        },
+        {
+          "gw": "GW09",
+          "fixture_id": "3003935",
+          "fotmob_id": "5795501",
+          "match_id": "5795501",
+          "match_date": "2026-11-01",
+          "kickoff_utc": "2026-11-01T16:30:00.000Z",
+          "side": "awayTeam",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "known_sum_eur": 670000000,
+          "known_sum_m": 670.0,
+          "coverage_ratio": "11/11",
+          "valuation_basis": "FULL_XI",
+          "missing_players_count": 0,
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "player_name": "David Raya",
+              "fotmob_id": 562727,
+              "valuation_eur": 30000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "262749"
+            },
+            {
+              "player_name": "Jurriën Timber",
+              "fotmob_id": 942381,
+              "valuation_eur": 70000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "420243"
+            },
+            {
+              "player_name": "Ezri Konsa",
+              "fotmob_id": 710159,
+              "valuation_eur": 40000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "413403"
+            },
+            {
+              "player_name": "Gabriel",
+              "fotmob_id": 795179,
+              "valuation_eur": 75000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "435338"
+            },
+            {
+              "player_name": "Riccardo Calafiori",
+              "fotmob_id": 1105912,
+              "valuation_eur": 55000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "502821"
+            },
+            {
+              "player_name": "Bruno Guimarães",
+              "fotmob_id": 850354,
+              "valuation_eur": 70000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "520624"
+            },
+            {
+              "player_name": "Declan Rice",
+              "fotmob_id": 654096,
+              "valuation_eur": 120000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "357662"
+            },
+            {
+              "player_name": "Noni Madueke",
+              "fotmob_id": 1084981,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "503987"
+            },
+            {
+              "player_name": "Martin Ødegaard",
+              "fotmob_id": 534670,
+              "valuation_eur": 65000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "316264"
+            },
+            {
+              "player_name": "Christos Tzolis",
+              "fotmob_id": 1157237,
+              "valuation_eur": 40000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "451677"
+            },
+            {
+              "player_name": "Kai Havertz",
+              "fotmob_id": 749736,
+              "valuation_eur": 55000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "309400"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "David Raya",
+              "fotmob_id": 562727,
+              "valuation_eur": 30000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "262749"
+            },
+            {
+              "player_name": "Jurriën Timber",
+              "fotmob_id": 942381,
+              "valuation_eur": 70000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "420243"
+            },
+            {
+              "player_name": "Ezri Konsa",
+              "fotmob_id": 710159,
+              "valuation_eur": 40000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "413403"
+            },
+            {
+              "player_name": "Gabriel",
+              "fotmob_id": 795179,
+              "valuation_eur": 75000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "435338"
+            },
+            {
+              "player_name": "Riccardo Calafiori",
+              "fotmob_id": 1105912,
+              "valuation_eur": 55000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "502821"
+            },
+            {
+              "player_name": "Bruno Guimarães",
+              "fotmob_id": 850354,
+              "valuation_eur": 70000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "520624"
+            },
+            {
+              "player_name": "Declan Rice",
+              "fotmob_id": 654096,
+              "valuation_eur": 120000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "357662"
+            },
+            {
+              "player_name": "Noni Madueke",
+              "fotmob_id": 1084981,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "503987"
+            },
+            {
+              "player_name": "Martin Ødegaard",
+              "fotmob_id": 534670,
+              "valuation_eur": 65000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "316264"
+            },
+            {
+              "player_name": "Christos Tzolis",
+              "fotmob_id": 1157237,
+              "valuation_eur": 40000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "451677"
+            },
+            {
+              "player_name": "Kai Havertz",
+              "fotmob_id": 749736,
+              "valuation_eur": 55000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "309400"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "FOTMOB_RAW_AND_TM_SNAPSHOT",
+          "source_locator": "fotmob://match/5795501",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        }
+      ],
+      "valid_match_count": 3,
+      "complete_match_count": 3,
+      "caution_match_count": 1,
+      "last3_status": "READY",
+      "primary_metric": 665000000.0,
+      "secondary_metric": "€665.00M",
+      "completeness_quality": "FULL_XI_CONFIRMED",
+      "staleness": "FRESH",
+      "lineage_rollup": {
+        "producer": {
+          "script_sha256": "df84010caf3be268ffafae95147d703b8927e16ce3d3ee7afb5671ea8f2f596d",
+          "producer_id": "ares_w43_rolling_producer_v3_r3",
+          "generated_at": "2026-10-27T11:10:40Z"
+        },
+        "schema_sha256": "4982565023afdb94b4cc02722a8d1088f0fa0989ca9d3de2f4daa86dffd1b50a",
+        "frozen_receipt": {
+          "receipt_id": "RCPT-SQUAD-ASSET-PRIOR-V1-W43-CANDIDATE-R3",
+          "frozen_at": "2026-10-27T11:10:40Z",
+          "schema_sha256": "4982565023afdb94b4cc02722a8d1088f0fa0989ca9d3de2f4daa86dffd1b50a",
+          "producer_script_sha256": "df84010caf3be268ffafae95147d703b8927e16ce3d3ee7afb5671ea8f2f596d",
+          "dataset_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+          "dataset_provider": "Transfermarkt",
+          "dataset_version": "UNKNOWN",
+          "dataset_commit": "UNKNOWN"
+        },
+        "historical_epochs": [
+          {
+            "epoch_id": "LMW407_R17_BASELINE",
+            "description": "LMW-407 Accepted Baseline (10-05 closure)",
+            "producer_script_sha256": "9e266ed4b8650bea98f760c0f205a4ef712d2cb2a80bfd6f3554b03eb1b71095",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "manifest_sha256": "26ebd5fea1f88db09c0848153b25b15b13b96d3eccc45d7d17b24b5337557ca4",
+            "receipt_sha256": "7bc98896c42fe31e6a7c788aa751a71259519d03567f2aa01b30a69a1acff36d"
+          },
+          {
+            "epoch_id": "W40_ROLLING_BASELINE",
+            "description": "W40 Rolling Window Accepted Baseline",
+            "producer_script_sha256": "52e181f2005245eb55348e8693769351ae5213d48017aa59274ee9b26e2a2153",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "manifest_sha256": "UNKNOWN",
+            "receipt_sha256": "51ff7692544f7700a6f9fd2775c7656476b271f9a558c967dbea655498e907d5"
+          }
+        ],
+        "staleness_authority": "NOT_AUTHORIZED",
+        "staleness_source_cadence": "",
+        "staleness_threshold_days": null
+      },
+      "category": "FULL_XI_EXACT"
+    },
+    {
+      "team_key": "Man City",
+      "team_name": "Man City",
+      "matches": [
+        {
+          "match_id": "5795481",
+          "fotmob_id": "5795481",
+          "gw": "GW07",
+          "match_date": "2026-10-17",
+          "kickoff_utc": "2026-10-17T14:00:00Z",
+          "side": "homeTeam",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "missing_players_count": 0,
+          "coverage_ratio": "11/11",
+          "known_sum_eur": 750000000.0,
+          "known_sum_m": 750.0,
+          "valuation_basis": "FULL_XI",
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "player_name": "Gianluigi Donnarumma",
+              "fotmob_id": 618878,
+              "valuation_eur": 45000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 315858"
+            },
+            {
+              "player_name": "Matheus Nunes",
+              "fotmob_id": 955529,
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 601883"
+            },
+            {
+              "player_name": "Rúben Dias",
+              "fotmob_id": 614006,
+              "valuation_eur": 55000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 258004"
+            },
+            {
+              "player_name": "Marc Guéhi",
+              "fotmob_id": 844425,
+              "valuation_eur": 70000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 392757"
+            },
+            {
+              "player_name": "Nico O'Reilly",
+              "fotmob_id": 1300526,
+              "valuation_eur": 70000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 743413"
+            },
+            {
+              "player_name": "Mateo Kovačić",
+              "fotmob_id": 239219,
+              "valuation_eur": 10000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 51471"
+            },
+            {
+              "player_name": "Ayyoub Bouaddi",
+              "fotmob_id": 1561552,
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 1097139"
+            },
+            {
+              "player_name": "Iliman Ndiaye",
+              "fotmob_id": 965764,
+              "valuation_eur": 55000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 623570"
+            },
+            {
+              "player_name": "Phil Foden",
+              "fotmob_id": 815006,
+              "valuation_eur": 70000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 406635"
+            },
+            {
+              "player_name": "Jérémy Doku",
+              "fotmob_id": 942368,
+              "valuation_eur": 75000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 486049"
+            },
+            {
+              "player_name": "Erling Haaland",
+              "fotmob_id": 737066,
+              "valuation_eur": 200000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 418560"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "Gianluigi Donnarumma",
+              "fotmob_id": 618878,
+              "valuation_eur": 45000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 315858"
+            },
+            {
+              "player_name": "Matheus Nunes",
+              "fotmob_id": 955529,
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 601883"
+            },
+            {
+              "player_name": "Rúben Dias",
+              "fotmob_id": 614006,
+              "valuation_eur": 55000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 258004"
+            },
+            {
+              "player_name": "Marc Guéhi",
+              "fotmob_id": 844425,
+              "valuation_eur": 70000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 392757"
+            },
+            {
+              "player_name": "Nico O'Reilly",
+              "fotmob_id": 1300526,
+              "valuation_eur": 70000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 743413"
+            },
+            {
+              "player_name": "Mateo Kovačić",
+              "fotmob_id": 239219,
+              "valuation_eur": 10000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 51471"
+            },
+            {
+              "player_name": "Ayyoub Bouaddi",
+              "fotmob_id": 1561552,
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 1097139"
+            },
+            {
+              "player_name": "Iliman Ndiaye",
+              "fotmob_id": 965764,
+              "valuation_eur": 55000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 623570"
+            },
+            {
+              "player_name": "Phil Foden",
+              "fotmob_id": 815006,
+              "valuation_eur": 70000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 406635"
+            },
+            {
+              "player_name": "Jérémy Doku",
+              "fotmob_id": 942368,
+              "valuation_eur": 75000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 486049"
+            },
+            {
+              "player_name": "Erling Haaland",
+              "fotmob_id": 737066,
+              "valuation_eur": 200000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 418560"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "HISTORICAL_RECOVERED_LINEUP",
+          "source_locator": "fotmob://match/5795481",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        },
+        {
+          "match_id": "5795486",
+          "fotmob_id": "5795486",
+          "gw": "GW08",
+          "match_date": "2026-10-24",
+          "kickoff_utc": "2026-10-24T11:30:00Z",
+          "side": "awayTeam",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "missing_players_count": 0,
+          "coverage_ratio": "11/11",
+          "known_sum_eur": 875000000.0,
+          "known_sum_m": 875.0,
+          "valuation_basis": "FULL_XI",
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "player_name": "Gianluigi Donnarumma",
+              "fotmob_id": 618878,
+              "valuation_eur": 45000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 315858"
+            },
+            {
+              "player_name": "Abdukodir Khusanov",
+              "fotmob_id": 1362998,
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 763079"
+            },
+            {
+              "player_name": "Marc Guéhi",
+              "fotmob_id": 844425,
+              "valuation_eur": 70000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 392757"
+            },
+            {
+              "player_name": "Rúben Dias",
+              "fotmob_id": 614006,
+              "valuation_eur": 55000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 258004"
+            },
+            {
+              "player_name": "Joško Gvardiol",
+              "fotmob_id": 1070712,
+              "valuation_eur": 70000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 475959"
+            },
+            {
+              "player_name": "Elliot Anderson",
+              "fotmob_id": 1089691,
+              "valuation_eur": 75000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 567576"
+            },
+            {
+              "player_name": "Enzo Fernández",
+              "fotmob_id": 1137705,
+              "valuation_eur": 90000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 648195"
+            },
+            {
+              "player_name": "Iliman Ndiaye",
+              "fotmob_id": 965764,
+              "valuation_eur": 55000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 623570"
+            },
+            {
+              "player_name": "Rayan Cherki",
+              "fotmob_id": 1104053,
+              "valuation_eur": 90000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 607223"
+            },
+            {
+              "player_name": "Jérémy Doku",
+              "fotmob_id": 942368,
+              "valuation_eur": 75000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 486049"
+            },
+            {
+              "player_name": "Erling Haaland",
+              "fotmob_id": 737066,
+              "valuation_eur": 200000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 418560"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "Gianluigi Donnarumma",
+              "fotmob_id": 618878,
+              "valuation_eur": 45000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 315858"
+            },
+            {
+              "player_name": "Abdukodir Khusanov",
+              "fotmob_id": 1362998,
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 763079"
+            },
+            {
+              "player_name": "Marc Guéhi",
+              "fotmob_id": 844425,
+              "valuation_eur": 70000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 392757"
+            },
+            {
+              "player_name": "Rúben Dias",
+              "fotmob_id": 614006,
+              "valuation_eur": 55000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 258004"
+            },
+            {
+              "player_name": "Joško Gvardiol",
+              "fotmob_id": 1070712,
+              "valuation_eur": 70000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 475959"
+            },
+            {
+              "player_name": "Elliot Anderson",
+              "fotmob_id": 1089691,
+              "valuation_eur": 75000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 567576"
+            },
+            {
+              "player_name": "Enzo Fernández",
+              "fotmob_id": 1137705,
+              "valuation_eur": 90000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 648195"
+            },
+            {
+              "player_name": "Iliman Ndiaye",
+              "fotmob_id": 965764,
+              "valuation_eur": 55000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "ALL_FACTORS_VERIFIED: TM 623570"
+            },
+            {
+              "player_name": "Rayan Cherki",
+              "fotmob_id": 1104053,
+              "valuation_eur": 90000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 607223"
+            },
+            {
+              "player_name": "Jérémy Doku",
+              "fotmob_id": 942368,
+              "valuation_eur": 75000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 486049"
+            },
+            {
+              "player_name": "Erling Haaland",
+              "fotmob_id": 737066,
+              "valuation_eur": 200000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 418560"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "FOTMOB_RAW_AND_TM_SNAPSHOT",
+          "source_locator": "fotmob://match/5795486",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        },
+        {
+          "gw": "GW09",
+          "fixture_id": "3003936",
+          "fotmob_id": "5795502",
+          "match_id": "5795502",
+          "match_date": "2026-10-31",
+          "kickoff_utc": "2026-10-31T15:00:00.000Z",
+          "side": "homeTeam",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "known_sum_eur": 815000000,
+          "known_sum_m": 815.0,
+          "coverage_ratio": "11/11",
+          "valuation_basis": "FULL_XI",
+          "missing_players_count": 0,
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "player_name": "Gianluigi Donnarumma",
+              "fotmob_id": 618878,
+              "valuation_eur": 45000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "315858"
+            },
+            {
+              "player_name": "Matheus Nunes",
+              "fotmob_id": 955529,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "601883"
+            },
+            {
+              "player_name": "Abdukodir Khusanov",
+              "fotmob_id": 1362998,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "763079"
+            },
+            {
+              "player_name": "Rúben Dias",
+              "fotmob_id": 614006,
+              "valuation_eur": 55000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "258004"
+            },
+            {
+              "player_name": "Joško Gvardiol",
+              "fotmob_id": 1070712,
+              "valuation_eur": 70000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "475959"
+            },
+            {
+              "player_name": "Ayyoub Bouaddi",
+              "fotmob_id": 1561552,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "1097139"
+            },
+            {
+              "player_name": "Elliot Anderson",
+              "fotmob_id": 1089691,
+              "valuation_eur": 75000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "567576"
+            },
+            {
+              "player_name": "Iliman Ndiaye",
+              "fotmob_id": 965764,
+              "valuation_eur": 55000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "623570"
+            },
+            {
+              "player_name": "Enzo Fernández",
+              "fotmob_id": 1137705,
+              "valuation_eur": 90000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "648195"
+            },
+            {
+              "player_name": "Jérémy Doku",
+              "fotmob_id": 942368,
+              "valuation_eur": 75000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "486049"
+            },
+            {
+              "player_name": "Erling Haaland",
+              "fotmob_id": 737066,
+              "valuation_eur": 200000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "418560"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "Gianluigi Donnarumma",
+              "fotmob_id": 618878,
+              "valuation_eur": 45000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "315858"
+            },
+            {
+              "player_name": "Matheus Nunes",
+              "fotmob_id": 955529,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "601883"
+            },
+            {
+              "player_name": "Abdukodir Khusanov",
+              "fotmob_id": 1362998,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "763079"
+            },
+            {
+              "player_name": "Rúben Dias",
+              "fotmob_id": 614006,
+              "valuation_eur": 55000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "258004"
+            },
+            {
+              "player_name": "Joško Gvardiol",
+              "fotmob_id": 1070712,
+              "valuation_eur": 70000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "475959"
+            },
+            {
+              "player_name": "Ayyoub Bouaddi",
+              "fotmob_id": 1561552,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "1097139"
+            },
+            {
+              "player_name": "Elliot Anderson",
+              "fotmob_id": 1089691,
+              "valuation_eur": 75000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "567576"
+            },
+            {
+              "player_name": "Iliman Ndiaye",
+              "fotmob_id": 965764,
+              "valuation_eur": 55000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "623570"
+            },
+            {
+              "player_name": "Enzo Fernández",
+              "fotmob_id": 1137705,
+              "valuation_eur": 90000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "648195"
+            },
+            {
+              "player_name": "Jérémy Doku",
+              "fotmob_id": 942368,
+              "valuation_eur": 75000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "486049"
+            },
+            {
+              "player_name": "Erling Haaland",
+              "fotmob_id": 737066,
+              "valuation_eur": 200000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "418560"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "FOTMOB_RAW_AND_TM_SNAPSHOT",
+          "source_locator": "fotmob://match/5795502",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        }
+      ],
+      "valid_match_count": 3,
+      "complete_match_count": 3,
+      "caution_match_count": 0,
+      "last3_status": "READY",
+      "primary_metric": 813333333.33,
+      "secondary_metric": "€813.33M",
+      "completeness_quality": "FULL_XI_CONFIRMED",
+      "staleness": "FRESH",
+      "lineage_rollup": {
+        "producer": {
+          "script_sha256": "df84010caf3be268ffafae95147d703b8927e16ce3d3ee7afb5671ea8f2f596d",
+          "producer_id": "ares_w43_rolling_producer_v3_r3",
+          "generated_at": "2026-10-27T11:10:40Z"
+        },
+        "schema_sha256": "4982565023afdb94b4cc02722a8d1088f0fa0989ca9d3de2f4daa86dffd1b50a",
+        "frozen_receipt": {
+          "receipt_id": "RCPT-SQUAD-ASSET-PRIOR-V1-W43-CANDIDATE-R3",
+          "frozen_at": "2026-10-27T11:10:40Z",
+          "schema_sha256": "4982565023afdb94b4cc02722a8d1088f0fa0989ca9d3de2f4daa86dffd1b50a",
+          "producer_script_sha256": "df84010caf3be268ffafae95147d703b8927e16ce3d3ee7afb5671ea8f2f596d",
+          "dataset_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+          "dataset_provider": "Transfermarkt",
+          "dataset_version": "UNKNOWN",
+          "dataset_commit": "UNKNOWN"
+        },
+        "historical_epochs": [
+          {
+            "epoch_id": "LMW407_R17_BASELINE",
+            "description": "LMW-407 Accepted Baseline (10-05 closure)",
+            "producer_script_sha256": "9e266ed4b8650bea98f760c0f205a4ef712d2cb2a80bfd6f3554b03eb1b71095",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "manifest_sha256": "26ebd5fea1f88db09c0848153b25b15b13b96d3eccc45d7d17b24b5337557ca4",
+            "receipt_sha256": "7bc98896c42fe31e6a7c788aa751a71259519d03567f2aa01b30a69a1acff36d"
+          },
+          {
+            "epoch_id": "W40_ROLLING_BASELINE",
+            "description": "W40 Rolling Window Accepted Baseline",
+            "producer_script_sha256": "52e181f2005245eb55348e8693769351ae5213d48017aa59274ee9b26e2a2153",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "manifest_sha256": "UNKNOWN",
+            "receipt_sha256": "51ff7692544f7700a6f9fd2775c7656476b271f9a558c967dbea655498e907d5"
+          }
+        ],
+        "staleness_authority": "NOT_AUTHORIZED",
+        "staleness_source_cadence": "",
+        "staleness_threshold_days": null
+      },
+      "category": "FULL_XI_EXACT"
+    },
+    {
+      "team_key": "Inter",
+      "team_name": "Inter",
+      "matches": [
+        {
+          "match_id": "5749714",
+          "fotmob_id": "5749714",
+          "gw": "GW08",
+          "match_date": "2026-10-25",
+          "kickoff_utc": "2026-10-25T11:30:00.000Z",
+          "side": "UNKNOWN",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "missing_players_count": 0,
+          "coverage_ratio": "11/11",
+          "known_sum_eur": 342000000.0,
+          "known_sum_m": 342.0,
+          "valuation_basis": "FULL_XI",
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "player_name": "Ivan Provedel",
+              "fotmob_id": 364822,
+              "shirt_number": "49",
+              "tm_player_id": "197929",
+              "valuation_eur": 3000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Ivan Provedel (拉齐奥->国米, 1994年出生, 意大利门将)",
+              "country": "Italy",
+              "position": "Goalkeeper"
+            },
+            {
+              "player_name": "Yann Aurel Bisseck",
+              "fotmob_id": 889535,
+              "shirt_number": "31",
+              "tm_player_id": "441986",
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Yann Bisseck (国米本队46, FotMob多中间名Aurel, 2000年出生, 德国后卫)",
+              "country": "Germany",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Manuel Akanji",
+              "fotmob_id": 521318,
+              "shirt_number": "25",
+              "tm_player_id": "284730",
+              "valuation_eur": 17000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Manuel Akanji (曼城->国米, 1995年出生, 瑞士后卫)",
+              "country": "Switzerland",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Alessandro Bastoni",
+              "fotmob_id": 805451,
+              "shirt_number": "95",
+              "tm_player_id": "315853",
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 315853",
+              "country": "Italy",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Andy Diouf",
+              "fotmob_id": 1254297,
+              "shirt_number": "17",
+              "tm_player_id": "711976",
+              "valuation_eur": 20000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Andy Diouf (朗斯->国米, 2003年出生, 法国中场)",
+              "country": "France",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Nicolò Barella",
+              "fotmob_id": 541820,
+              "shirt_number": "23",
+              "tm_player_id": "255942",
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 255942",
+              "country": "Italy",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Hakan Çalhanoglu",
+              "fotmob_id": 304733,
+              "shirt_number": "20",
+              "tm_player_id": "126414",
+              "valuation_eur": 16000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 126414",
+              "country": "Türkiye",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Henrikh Mkhitaryan",
+              "fotmob_id": 73167,
+              "shirt_number": "22",
+              "tm_player_id": "55735",
+              "valuation_eur": 3000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 55735",
+              "country": "Armenia",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Carlos Augusto",
+              "fotmob_id": 940829,
+              "shirt_number": "30",
+              "tm_player_id": "585982",
+              "valuation_eur": 23000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 585982",
+              "country": "Brazil",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Marcus Thuram",
+              "fotmob_id": 621562,
+              "shirt_number": "9",
+              "tm_player_id": "318528",
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 318528",
+              "country": "France",
+              "position": "Attack"
+            },
+            {
+              "player_name": "Francesco Pio Esposito",
+              "fotmob_id": 1367618,
+              "shirt_number": "94",
+              "tm_player_id": "930781",
+              "valuation_eur": 45000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Pio Esposito (国米本队46, FotMob全名Francesco Pio Esposito, 2005年出生, 意大利前锋)",
+              "country": "Italy",
+              "position": "Attack"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "Ivan Provedel",
+              "fotmob_id": 364822,
+              "shirt_number": "49",
+              "tm_player_id": "197929",
+              "valuation_eur": 3000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Ivan Provedel (拉齐奥->国米, 1994年出生, 意大利门将)",
+              "country": "Italy",
+              "position": "Goalkeeper"
+            },
+            {
+              "player_name": "Yann Aurel Bisseck",
+              "fotmob_id": 889535,
+              "shirt_number": "31",
+              "tm_player_id": "441986",
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Yann Bisseck (国米本队46, FotMob多中间名Aurel, 2000年出生, 德国后卫)",
+              "country": "Germany",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Manuel Akanji",
+              "fotmob_id": 521318,
+              "shirt_number": "25",
+              "tm_player_id": "284730",
+              "valuation_eur": 17000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Manuel Akanji (曼城->国米, 1995年出生, 瑞士后卫)",
+              "country": "Switzerland",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Alessandro Bastoni",
+              "fotmob_id": 805451,
+              "shirt_number": "95",
+              "tm_player_id": "315853",
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 315853",
+              "country": "Italy",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Andy Diouf",
+              "fotmob_id": 1254297,
+              "shirt_number": "17",
+              "tm_player_id": "711976",
+              "valuation_eur": 20000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Andy Diouf (朗斯->国米, 2003年出生, 法国中场)",
+              "country": "France",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Nicolò Barella",
+              "fotmob_id": 541820,
+              "shirt_number": "23",
+              "tm_player_id": "255942",
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 255942",
+              "country": "Italy",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Hakan Çalhanoglu",
+              "fotmob_id": 304733,
+              "shirt_number": "20",
+              "tm_player_id": "126414",
+              "valuation_eur": 16000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 126414",
+              "country": "Türkiye",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Henrikh Mkhitaryan",
+              "fotmob_id": 73167,
+              "shirt_number": "22",
+              "tm_player_id": "55735",
+              "valuation_eur": 3000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 55735",
+              "country": "Armenia",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Carlos Augusto",
+              "fotmob_id": 940829,
+              "shirt_number": "30",
+              "tm_player_id": "585982",
+              "valuation_eur": 23000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 585982",
+              "country": "Brazil",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Marcus Thuram",
+              "fotmob_id": 621562,
+              "shirt_number": "9",
+              "tm_player_id": "318528",
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 318528",
+              "country": "France",
+              "position": "Attack"
+            },
+            {
+              "player_name": "Francesco Pio Esposito",
+              "fotmob_id": 1367618,
+              "shirt_number": "94",
+              "tm_player_id": "930781",
+              "valuation_eur": 45000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Pio Esposito (国米本队46, FotMob全名Francesco Pio Esposito, 2005年出生, 意大利前锋)",
+              "country": "Italy",
+              "position": "Attack"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "FOTMOB_RAW_AND_TM_SNAPSHOT",
+          "source_locator": "fotmob://match/5749714",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        },
+        {
+          "gw": "GW09",
+          "fixture_id": "2993844",
+          "fotmob_id": "5749729",
+          "match_id": "5749729",
+          "match_date": "2026-10-28",
+          "kickoff_utc": "2026-10-28T17:30:00.000Z",
+          "side": "awayTeam",
+          "total_starters": 11,
+          "known_cnt": 10,
+          "missing_players_count": 1,
+          "coverage_ratio": "10/11",
+          "known_sum_eur": 346000000.0,
+          "known_sum_m": 346.0,
+          "valuation_basis": "PARTIAL_LOWER_BOUND",
+          "missing_players": [
+            {
+              "player_name": "Aleksandar Stanković",
+              "fotmob_id": 1410437,
+              "shirt_number": "5",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            }
+          ],
+          "resolved_players": [
+            {
+              "player_name": "Ivan Provedel",
+              "fotmob_id": 364822,
+              "shirt_number": "49",
+              "tm_player_id": "197929",
+              "valuation_eur": 3000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Ivan Provedel (拉齐奥->国米, 1994年出生, 意大利门将)",
+              "country": "Italy",
+              "position": "Goalkeeper"
+            },
+            {
+              "player_name": "Yann Aurel Bisseck",
+              "fotmob_id": 889535,
+              "shirt_number": "31",
+              "tm_player_id": "441986",
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Yann Bisseck (国米本队46, FotMob多中间名Aurel, 2000年出生, 德国后卫)",
+              "country": "Germany",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Alessandro Bastoni",
+              "fotmob_id": 805451,
+              "shirt_number": "95",
+              "tm_player_id": "315853",
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 315853",
+              "country": "Italy",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Carlos Augusto",
+              "fotmob_id": 940829,
+              "shirt_number": "30",
+              "tm_player_id": "585982",
+              "valuation_eur": 23000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 585982",
+              "country": "Brazil",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Andy Diouf",
+              "fotmob_id": 1254297,
+              "shirt_number": "17",
+              "tm_player_id": "711976",
+              "valuation_eur": 20000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Andy Diouf (朗斯->国米, 2003年出生, 法国中场)",
+              "country": "France",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Petar Sučić",
+              "fotmob_id": 1382000,
+              "shirt_number": "8",
+              "tm_player_id": "668207",
+              "valuation_eur": 40000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 668207",
+              "country": "Croatia",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Aleksandar Stanković",
+              "fotmob_id": 1410437,
+              "shirt_number": "5",
+              "tm_player_id": null,
+              "valuation_eur": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "audit_note": "Player not found in TM snapshot or ambiguous name",
+              "country": "Serbia",
+              "position": 2
+            },
+            {
+              "player_name": "Piotr Zieliński",
+              "fotmob_id": 362212,
+              "shirt_number": "7",
+              "tm_player_id": "181136",
+              "valuation_eur": 10000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 181136",
+              "country": "Poland",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Federico Dimarco",
+              "fotmob_id": 605224,
+              "shirt_number": "32",
+              "tm_player_id": "198116",
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 198116",
+              "country": "Italy",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Ange-Yoan Bonny",
+              "fotmob_id": 1199383,
+              "shirt_number": "14",
+              "tm_player_id": "827734",
+              "valuation_eur": 35000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 827734",
+              "country": "Cote d'Ivoire",
+              "position": "Attack"
+            },
+            {
+              "player_name": "Marcus Thuram",
+              "fotmob_id": 621562,
+              "shirt_number": "9",
+              "tm_player_id": "318528",
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 318528",
+              "country": "France",
+              "position": "Attack"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "Ivan Provedel",
+              "fotmob_id": 364822,
+              "shirt_number": "49",
+              "tm_player_id": "197929",
+              "valuation_eur": 3000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Ivan Provedel (拉齐奥->国米, 1994年出生, 意大利门将)",
+              "country": "Italy",
+              "position": "Goalkeeper"
+            },
+            {
+              "player_name": "Yann Aurel Bisseck",
+              "fotmob_id": 889535,
+              "shirt_number": "31",
+              "tm_player_id": "441986",
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Yann Bisseck (国米本队46, FotMob多中间名Aurel, 2000年出生, 德国后卫)",
+              "country": "Germany",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Alessandro Bastoni",
+              "fotmob_id": 805451,
+              "shirt_number": "95",
+              "tm_player_id": "315853",
+              "valuation_eur": 65000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 315853",
+              "country": "Italy",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Carlos Augusto",
+              "fotmob_id": 940829,
+              "shirt_number": "30",
+              "tm_player_id": "585982",
+              "valuation_eur": 23000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 585982",
+              "country": "Brazil",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Andy Diouf",
+              "fotmob_id": 1254297,
+              "shirt_number": "17",
+              "tm_player_id": "711976",
+              "valuation_eur": 20000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R1_ROSTER_AUDITED: Andy Diouf (朗斯->国米, 2003年出生, 法国中场)",
+              "country": "France",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Petar Sučić",
+              "fotmob_id": 1382000,
+              "shirt_number": "8",
+              "tm_player_id": "668207",
+              "valuation_eur": 40000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 668207",
+              "country": "Croatia",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Aleksandar Stanković",
+              "fotmob_id": 1410437,
+              "shirt_number": "5",
+              "tm_player_id": null,
+              "valuation_eur": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "audit_note": "Player not found in TM snapshot or ambiguous name",
+              "country": "Serbia",
+              "position": 2
+            },
+            {
+              "player_name": "Piotr Zieliński",
+              "fotmob_id": 362212,
+              "shirt_number": "7",
+              "tm_player_id": "181136",
+              "valuation_eur": 10000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 181136",
+              "country": "Poland",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Federico Dimarco",
+              "fotmob_id": 605224,
+              "shirt_number": "32",
+              "tm_player_id": "198116",
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 198116",
+              "country": "Italy",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Ange-Yoan Bonny",
+              "fotmob_id": 1199383,
+              "shirt_number": "14",
+              "tm_player_id": "827734",
+              "valuation_eur": 35000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 827734",
+              "country": "Cote d'Ivoire",
+              "position": "Attack"
+            },
+            {
+              "player_name": "Marcus Thuram",
+              "fotmob_id": 621562,
+              "shirt_number": "9",
+              "tm_player_id": "318528",
+              "valuation_eur": 50000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 318528",
+              "country": "France",
+              "position": "Attack"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "FOTMOB_RAW_AND_TM_SNAPSHOT",
+          "source_locator": "fotmob://match/5749729",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        },
+        {
+          "gw": "GW10",
+          "fixture_id": "2993845",
+          "fotmob_id": "5749730",
+          "match_id": "5749730",
+          "match_date": "2026-10-31",
+          "kickoff_utc": "2026-10-31T19:45:00.000Z",
+          "side": "awayTeam",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "known_sum_eur": 371000000,
+          "known_sum_m": 371.0,
+          "coverage_ratio": "11/11",
+          "valuation_basis": "FULL_XI",
+          "missing_players_count": 0,
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "player_name": "Josep Martínez",
+              "fotmob_id": 772168,
+              "valuation_eur": 10000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "388516"
+            },
+            {
+              "player_name": "Yann Aurel Bisseck",
+              "fotmob_id": 889535,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_0_REGISTRY_FID",
+              "tm_player_id": "441986"
+            },
+            {
+              "player_name": "Manuel Akanji",
+              "fotmob_id": 521318,
+              "valuation_eur": 17000000,
+              "resolution_method": "LEVEL_0_REGISTRY_FID",
+              "tm_player_id": "284730"
+            },
+            {
+              "player_name": "Alessandro Bastoni",
+              "fotmob_id": 805451,
+              "valuation_eur": 65000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "315853"
+            },
+            {
+              "player_name": "Djed Spence",
+              "fotmob_id": 894803,
+              "valuation_eur": 30000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "483348"
+            },
+            {
+              "player_name": "Nicolò Barella",
+              "fotmob_id": 541820,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "255942"
+            },
+            {
+              "player_name": "Hakan Çalhanoglu",
+              "fotmob_id": 304733,
+              "valuation_eur": 16000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "126414"
+            },
+            {
+              "player_name": "Carlos Augusto",
+              "fotmob_id": 940829,
+              "valuation_eur": 23000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "585982"
+            },
+            {
+              "player_name": "Andy Diouf",
+              "fotmob_id": 1254297,
+              "valuation_eur": 20000000,
+              "resolution_method": "LEVEL_0_REGISTRY_FID",
+              "tm_player_id": "711976"
+            },
+            {
+              "player_name": "Petar Sučić",
+              "fotmob_id": 1382000,
+              "valuation_eur": 40000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "668207"
+            },
+            {
+              "player_name": "Marcus Thuram",
+              "fotmob_id": 621562,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "318528"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "Josep Martínez",
+              "fotmob_id": 772168,
+              "valuation_eur": 10000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "388516"
+            },
+            {
+              "player_name": "Yann Aurel Bisseck",
+              "fotmob_id": 889535,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_0_REGISTRY_FID",
+              "tm_player_id": "441986"
+            },
+            {
+              "player_name": "Manuel Akanji",
+              "fotmob_id": 521318,
+              "valuation_eur": 17000000,
+              "resolution_method": "LEVEL_0_REGISTRY_FID",
+              "tm_player_id": "284730"
+            },
+            {
+              "player_name": "Alessandro Bastoni",
+              "fotmob_id": 805451,
+              "valuation_eur": 65000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "315853"
+            },
+            {
+              "player_name": "Djed Spence",
+              "fotmob_id": 894803,
+              "valuation_eur": 30000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "483348"
+            },
+            {
+              "player_name": "Nicolò Barella",
+              "fotmob_id": 541820,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "255942"
+            },
+            {
+              "player_name": "Hakan Çalhanoglu",
+              "fotmob_id": 304733,
+              "valuation_eur": 16000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "126414"
+            },
+            {
+              "player_name": "Carlos Augusto",
+              "fotmob_id": 940829,
+              "valuation_eur": 23000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "585982"
+            },
+            {
+              "player_name": "Andy Diouf",
+              "fotmob_id": 1254297,
+              "valuation_eur": 20000000,
+              "resolution_method": "LEVEL_0_REGISTRY_FID",
+              "tm_player_id": "711976"
+            },
+            {
+              "player_name": "Petar Sučić",
+              "fotmob_id": 1382000,
+              "valuation_eur": 40000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "668207"
+            },
+            {
+              "player_name": "Marcus Thuram",
+              "fotmob_id": 621562,
+              "valuation_eur": 50000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "318528"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "FOTMOB_RAW_AND_TM_SNAPSHOT",
+          "source_locator": "fotmob://match/5749730",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        }
+      ],
+      "valid_match_count": 3,
+      "complete_match_count": 2,
+      "caution_match_count": 0,
+      "last3_status": "READY",
+      "primary_metric": 353000000.0,
+      "secondary_metric": "€353.00M",
+      "completeness_quality": "COMPLETE",
+      "staleness": "FRESH",
+      "lineage_rollup": {
+        "producer": {
+          "producer_id": "ares_w44_seriea_gw09_valuation_r2_2_final",
+          "generated_at": "2026-10-28T03:55:46Z"
+        }
+      },
+      "category": "HIGH_COVERAGE_LOWER_BOUND"
+    },
+    {
+      "team_key": "Roma",
+      "team_name": "Roma",
+      "matches": [
+        {
+          "match_id": "5749717",
+          "fotmob_id": "5749717",
+          "gw": "GW08",
+          "match_date": "2026-10-24",
+          "kickoff_utc": "2026-10-24T16:00:00.000Z",
+          "side": "UNKNOWN",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "missing_players_count": 0,
+          "coverage_ratio": "11/11",
+          "known_sum_eur": 226500000.0,
+          "known_sum_m": 226.5,
+          "valuation_basis": "FULL_XI",
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "player_name": "Pierluigi Gollini",
+              "fotmob_id": 553849,
+              "shirt_number": "95",
+              "tm_player_id": "244192",
+              "valuation_eur": 800000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 244192",
+              "country": "Italy",
+              "position": "Goalkeeper"
+            },
+            {
+              "player_name": "Gianluca Mancini",
+              "fotmob_id": 588687,
+              "shirt_number": "23",
+              "tm_player_id": "256448",
+              "valuation_eur": 15000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 256448",
+              "country": "Italy",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Evan N'Dicka",
+              "fotmob_id": 787242,
+              "shirt_number": "5",
+              "tm_player_id": "371149",
+              "valuation_eur": 35000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 371149",
+              "country": "Cote d'Ivoire",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Mario Hermoso",
+              "fotmob_id": 671203,
+              "shirt_number": "22",
+              "tm_player_id": "281769",
+              "valuation_eur": 7000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 281769",
+              "country": "Spain",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Devyne Rensch",
+              "fotmob_id": 1180321,
+              "shirt_number": "2",
+              "tm_player_id": "557407",
+              "valuation_eur": 8500000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 557407",
+              "country": "Netherlands",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Marten de Roon",
+              "fotmob_id": 198559,
+              "shirt_number": "15",
+              "tm_player_id": "133179",
+              "valuation_eur": 3200000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R2_2_MULTI_FACTOR_VERIFIED: ALL_FACTORS_VERIFIED: Country=Netherlands, Age=35, Pos=Midfield/Defensive Midfield, Val=€3.20M",
+              "country": "Netherlands",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Bryan Cristante",
+              "fotmob_id": 299799,
+              "shirt_number": "4",
+              "tm_player_id": "199248",
+              "valuation_eur": 7000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 199248",
+              "country": "Italy",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Wesley",
+              "fotmob_id": 1320176,
+              "shirt_number": "43",
+              "tm_player_id": "964580",
+              "valuation_eur": 40000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 964580",
+              "country": "Brazil",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Matias Soulé",
+              "fotmob_id": 1280082,
+              "shirt_number": "18",
+              "tm_player_id": "668951",
+              "valuation_eur": 35000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 668951",
+              "country": "Argentina",
+              "position": "Attack"
+            },
+            {
+              "player_name": "Niccolò Pisilli",
+              "fotmob_id": 1451196,
+              "shirt_number": "61",
+              "tm_player_id": "813137",
+              "valuation_eur": 30000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 813137",
+              "country": "Italy",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Donyell Malen",
+              "fotmob_id": 660301,
+              "shirt_number": "14",
+              "tm_player_id": "326029",
+              "valuation_eur": 45000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 326029",
+              "country": "Netherlands",
+              "position": "Attack"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "Pierluigi Gollini",
+              "fotmob_id": 553849,
+              "shirt_number": "95",
+              "tm_player_id": "244192",
+              "valuation_eur": 800000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 244192",
+              "country": "Italy",
+              "position": "Goalkeeper"
+            },
+            {
+              "player_name": "Gianluca Mancini",
+              "fotmob_id": 588687,
+              "shirt_number": "23",
+              "tm_player_id": "256448",
+              "valuation_eur": 15000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 256448",
+              "country": "Italy",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Evan N'Dicka",
+              "fotmob_id": 787242,
+              "shirt_number": "5",
+              "tm_player_id": "371149",
+              "valuation_eur": 35000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 371149",
+              "country": "Cote d'Ivoire",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Mario Hermoso",
+              "fotmob_id": 671203,
+              "shirt_number": "22",
+              "tm_player_id": "281769",
+              "valuation_eur": 7000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 281769",
+              "country": "Spain",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Devyne Rensch",
+              "fotmob_id": 1180321,
+              "shirt_number": "2",
+              "tm_player_id": "557407",
+              "valuation_eur": 8500000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 557407",
+              "country": "Netherlands",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Marten de Roon",
+              "fotmob_id": 198559,
+              "shirt_number": "15",
+              "tm_player_id": "133179",
+              "valuation_eur": 3200000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R2_2_MULTI_FACTOR_VERIFIED: ALL_FACTORS_VERIFIED: Country=Netherlands, Age=35, Pos=Midfield/Defensive Midfield, Val=€3.20M",
+              "country": "Netherlands",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Bryan Cristante",
+              "fotmob_id": 299799,
+              "shirt_number": "4",
+              "tm_player_id": "199248",
+              "valuation_eur": 7000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 199248",
+              "country": "Italy",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Wesley",
+              "fotmob_id": 1320176,
+              "shirt_number": "43",
+              "tm_player_id": "964580",
+              "valuation_eur": 40000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 964580",
+              "country": "Brazil",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Matias Soulé",
+              "fotmob_id": 1280082,
+              "shirt_number": "18",
+              "tm_player_id": "668951",
+              "valuation_eur": 35000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 668951",
+              "country": "Argentina",
+              "position": "Attack"
+            },
+            {
+              "player_name": "Niccolò Pisilli",
+              "fotmob_id": 1451196,
+              "shirt_number": "61",
+              "tm_player_id": "813137",
+              "valuation_eur": 30000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 813137",
+              "country": "Italy",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Donyell Malen",
+              "fotmob_id": 660301,
+              "shirt_number": "14",
+              "tm_player_id": "326029",
+              "valuation_eur": 45000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 326029",
+              "country": "Netherlands",
+              "position": "Attack"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "FOTMOB_RAW_AND_TM_SNAPSHOT",
+          "source_locator": "fotmob://match/5749717",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        },
+        {
+          "gw": "GW09",
+          "fixture_id": "2993836",
+          "fotmob_id": "5749721",
+          "match_id": "5749721",
+          "match_date": "2026-10-27",
+          "kickoff_utc": "2026-10-27T19:45:00.000Z",
+          "side": "homeTeam",
+          "total_starters": 11,
+          "known_cnt": 10,
+          "missing_players_count": 1,
+          "coverage_ratio": "10/11",
+          "known_sum_eur": 198000000.0,
+          "known_sum_m": 198.0,
+          "valuation_basis": "PARTIAL_LOWER_BOUND",
+          "missing_players": [
+            {
+              "player_name": "Emanuele Lulli",
+              "fotmob_id": 1800491,
+              "shirt_number": "77",
+              "reason": "TM market value is null or zero in snapshot"
+            }
+          ],
+          "resolved_players": [
+            {
+              "player_name": "Pierluigi Gollini",
+              "fotmob_id": 553849,
+              "shirt_number": "95",
+              "tm_player_id": "244192",
+              "valuation_eur": 800000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 244192",
+              "country": "Italy",
+              "position": "Goalkeeper"
+            },
+            {
+              "player_name": "Gianluca Mancini",
+              "fotmob_id": 588687,
+              "shirt_number": "23",
+              "tm_player_id": "256448",
+              "valuation_eur": 15000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 256448",
+              "country": "Italy",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Evan N'Dicka",
+              "fotmob_id": 787242,
+              "shirt_number": "5",
+              "tm_player_id": "371149",
+              "valuation_eur": 35000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 371149",
+              "country": "Cote d'Ivoire",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Konstantinos Koulierakis",
+              "fotmob_id": 1337884,
+              "shirt_number": "3",
+              "tm_player_id": "669380",
+              "valuation_eur": 25000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R2_2_MULTI_FACTOR_VERIFIED: ALL_FACTORS_VERIFIED: Country=Greece, Age=22, Pos=Defender/Centre-Back, Val=€25.00M",
+              "country": "Greece",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Emanuele Lulli",
+              "fotmob_id": 1800491,
+              "shirt_number": "77",
+              "tm_player_id": "1175298",
+              "valuation_eur": null,
+              "status": "FOUND_IN_TM_BUT_NO_VALUATION",
+              "audit_note": "TM market value is null or zero in snapshot",
+              "country": "Italy",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Bryan Cristante",
+              "fotmob_id": 299799,
+              "shirt_number": "4",
+              "tm_player_id": "199248",
+              "valuation_eur": 7000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 199248",
+              "country": "Italy",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Marten de Roon",
+              "fotmob_id": 198559,
+              "shirt_number": "15",
+              "tm_player_id": "133179",
+              "valuation_eur": 3200000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R2_2_MULTI_FACTOR_VERIFIED: ALL_FACTORS_VERIFIED: Country=Netherlands, Age=35, Pos=Midfield/Defensive Midfield, Val=€3.20M",
+              "country": "Netherlands",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Niccolò Pisilli",
+              "fotmob_id": 1451196,
+              "shirt_number": "61",
+              "tm_player_id": "813137",
+              "valuation_eur": 30000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 813137",
+              "country": "Italy",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Nahuel Molina",
+              "fotmob_id": 726345,
+              "shirt_number": "20",
+              "tm_player_id": "424042",
+              "valuation_eur": 15000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R2_2_MULTI_FACTOR_VERIFIED: ALL_FACTORS_VERIFIED: Country=Argentina, Age=28, Pos=Defender/Right-Back, Val=€15.00M",
+              "country": "Argentina",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Matias Soulé",
+              "fotmob_id": 1280082,
+              "shirt_number": "18",
+              "tm_player_id": "668951",
+              "valuation_eur": 35000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 668951",
+              "country": "Argentina",
+              "position": "Attack"
+            },
+            {
+              "player_name": "Santiago Castro",
+              "fotmob_id": 1282008,
+              "shirt_number": "9",
+              "tm_player_id": "849520",
+              "valuation_eur": 32000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R2_2_MULTI_FACTOR_VERIFIED: ALL_FACTORS_VERIFIED: Country=Argentina, Age=22, Pos=Attack/Centre-Forward, Val=€32.00M",
+              "country": "Argentina",
+              "position": "Attack"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "Pierluigi Gollini",
+              "fotmob_id": 553849,
+              "shirt_number": "95",
+              "tm_player_id": "244192",
+              "valuation_eur": 800000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 244192",
+              "country": "Italy",
+              "position": "Goalkeeper"
+            },
+            {
+              "player_name": "Gianluca Mancini",
+              "fotmob_id": 588687,
+              "shirt_number": "23",
+              "tm_player_id": "256448",
+              "valuation_eur": 15000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 256448",
+              "country": "Italy",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Evan N'Dicka",
+              "fotmob_id": 787242,
+              "shirt_number": "5",
+              "tm_player_id": "371149",
+              "valuation_eur": 35000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 371149",
+              "country": "Cote d'Ivoire",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Konstantinos Koulierakis",
+              "fotmob_id": 1337884,
+              "shirt_number": "3",
+              "tm_player_id": "669380",
+              "valuation_eur": 25000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R2_2_MULTI_FACTOR_VERIFIED: ALL_FACTORS_VERIFIED: Country=Greece, Age=22, Pos=Defender/Centre-Back, Val=€25.00M",
+              "country": "Greece",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Emanuele Lulli",
+              "fotmob_id": 1800491,
+              "shirt_number": "77",
+              "tm_player_id": "1175298",
+              "valuation_eur": null,
+              "status": "FOUND_IN_TM_BUT_NO_VALUATION",
+              "audit_note": "TM market value is null or zero in snapshot",
+              "country": "Italy",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Bryan Cristante",
+              "fotmob_id": 299799,
+              "shirt_number": "4",
+              "tm_player_id": "199248",
+              "valuation_eur": 7000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 199248",
+              "country": "Italy",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Marten de Roon",
+              "fotmob_id": 198559,
+              "shirt_number": "15",
+              "tm_player_id": "133179",
+              "valuation_eur": 3200000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R2_2_MULTI_FACTOR_VERIFIED: ALL_FACTORS_VERIFIED: Country=Netherlands, Age=35, Pos=Midfield/Defensive Midfield, Val=€3.20M",
+              "country": "Netherlands",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Niccolò Pisilli",
+              "fotmob_id": 1451196,
+              "shirt_number": "61",
+              "tm_player_id": "813137",
+              "valuation_eur": 30000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 813137",
+              "country": "Italy",
+              "position": "Midfield"
+            },
+            {
+              "player_name": "Nahuel Molina",
+              "fotmob_id": 726345,
+              "shirt_number": "20",
+              "tm_player_id": "424042",
+              "valuation_eur": 15000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R2_2_MULTI_FACTOR_VERIFIED: ALL_FACTORS_VERIFIED: Country=Argentina, Age=28, Pos=Defender/Right-Back, Val=€15.00M",
+              "country": "Argentina",
+              "position": "Defender"
+            },
+            {
+              "player_name": "Matias Soulé",
+              "fotmob_id": 1280082,
+              "shirt_number": "18",
+              "tm_player_id": "668951",
+              "valuation_eur": 35000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 668951",
+              "country": "Argentina",
+              "position": "Attack"
+            },
+            {
+              "player_name": "Santiago Castro",
+              "fotmob_id": 1282008,
+              "shirt_number": "9",
+              "tm_player_id": "849520",
+              "valuation_eur": 32000000,
+              "status": "IDENTITY_VERIFIED",
+              "audit_note": "R2_2_MULTI_FACTOR_VERIFIED: ALL_FACTORS_VERIFIED: Country=Argentina, Age=22, Pos=Attack/Centre-Forward, Val=€32.00M",
+              "country": "Argentina",
+              "position": "Attack"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "FOTMOB_RAW_AND_TM_SNAPSHOT",
+          "source_locator": "fotmob://match/5749721",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        },
+        {
+          "gw": "GW10",
+          "fixture_id": "2993854",
+          "fotmob_id": "5749739",
+          "match_id": "5749739",
+          "match_date": "2026-10-31",
+          "kickoff_utc": "2026-10-31T17:00:00.000Z",
+          "side": "awayTeam",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "known_sum_eur": 244000000,
+          "known_sum_m": 244.0,
+          "coverage_ratio": "11/11",
+          "valuation_basis": "FULL_XI",
+          "missing_players_count": 0,
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "player_name": "Pierluigi Gollini",
+              "fotmob_id": 553849,
+              "valuation_eur": 800000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "244192"
+            },
+            {
+              "player_name": "Daniele Ghilardi",
+              "fotmob_id": 1386006,
+              "valuation_eur": 18000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "701819"
+            },
+            {
+              "player_name": "Evan N'Dicka",
+              "fotmob_id": 787242,
+              "valuation_eur": 35000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "371149"
+            },
+            {
+              "player_name": "Mario Hermoso",
+              "fotmob_id": 671203,
+              "valuation_eur": 7000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "281769"
+            },
+            {
+              "player_name": "Nahuel Molina",
+              "fotmob_id": 726345,
+              "valuation_eur": 15000000,
+              "resolution_method": "LEVEL_0_REGISTRY_FID",
+              "tm_player_id": "424042"
+            },
+            {
+              "player_name": "Bryan Cristante",
+              "fotmob_id": 299799,
+              "valuation_eur": 7000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "199248"
+            },
+            {
+              "player_name": "Marten de Roon",
+              "fotmob_id": 198559,
+              "valuation_eur": 3200000,
+              "resolution_method": "LEVEL_0_REGISTRY_FID",
+              "tm_player_id": "133179"
+            },
+            {
+              "player_name": "Wesley",
+              "fotmob_id": 1320176,
+              "valuation_eur": 40000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "964580"
+            },
+            {
+              "player_name": "Matias Soulé",
+              "fotmob_id": 1280082,
+              "valuation_eur": 35000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "668951"
+            },
+            {
+              "player_name": "Rodrigo Mora",
+              "fotmob_id": 1525065,
+              "valuation_eur": 38000000,
+              "resolution_method": "LEVEL_0_REGISTRY_FID",
+              "tm_player_id": "957653"
+            },
+            {
+              "player_name": "Donyell Malen",
+              "fotmob_id": 660301,
+              "valuation_eur": 45000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "326029"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "Pierluigi Gollini",
+              "fotmob_id": 553849,
+              "valuation_eur": 800000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "244192"
+            },
+            {
+              "player_name": "Daniele Ghilardi",
+              "fotmob_id": 1386006,
+              "valuation_eur": 18000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "701819"
+            },
+            {
+              "player_name": "Evan N'Dicka",
+              "fotmob_id": 787242,
+              "valuation_eur": 35000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "371149"
+            },
+            {
+              "player_name": "Mario Hermoso",
+              "fotmob_id": 671203,
+              "valuation_eur": 7000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "281769"
+            },
+            {
+              "player_name": "Nahuel Molina",
+              "fotmob_id": 726345,
+              "valuation_eur": 15000000,
+              "resolution_method": "LEVEL_0_REGISTRY_FID",
+              "tm_player_id": "424042"
+            },
+            {
+              "player_name": "Bryan Cristante",
+              "fotmob_id": 299799,
+              "valuation_eur": 7000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "199248"
+            },
+            {
+              "player_name": "Marten de Roon",
+              "fotmob_id": 198559,
+              "valuation_eur": 3200000,
+              "resolution_method": "LEVEL_0_REGISTRY_FID",
+              "tm_player_id": "133179"
+            },
+            {
+              "player_name": "Wesley",
+              "fotmob_id": 1320176,
+              "valuation_eur": 40000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "964580"
+            },
+            {
+              "player_name": "Matias Soulé",
+              "fotmob_id": 1280082,
+              "valuation_eur": 35000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "668951"
+            },
+            {
+              "player_name": "Rodrigo Mora",
+              "fotmob_id": 1525065,
+              "valuation_eur": 38000000,
+              "resolution_method": "LEVEL_0_REGISTRY_FID",
+              "tm_player_id": "957653"
+            },
+            {
+              "player_name": "Donyell Malen",
+              "fotmob_id": 660301,
+              "valuation_eur": 45000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "326029"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "FOTMOB_RAW_AND_TM_SNAPSHOT",
+          "source_locator": "fotmob://match/5749739",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        }
+      ],
+      "valid_match_count": 3,
+      "complete_match_count": 2,
+      "caution_match_count": 1,
+      "last3_status": "READY",
+      "primary_metric": 222833333.33,
+      "secondary_metric": "€222.83M",
+      "completeness_quality": "CAUTION_DERIVED",
+      "staleness": "FRESH",
+      "lineage_rollup": {
+        "producer": {
+          "producer_id": "ares_w44_seriea_gw09_valuation_r2_2_final",
+          "generated_at": "2026-10-28T03:55:46Z"
+        }
+      },
+      "category": "HIGH_COVERAGE_LOWER_BOUND"
+    },
+    {
+      "team_key": "Bayern Munich",
+      "team_name": "Bayern Munich",
+      "matches": [
+        {
+          "match_id": "5881189",
+          "fotmob_id": "5881189",
+          "gw": "GW06",
+          "match_date": "2026-10-17",
+          "kickoff_utc": "2026-10-17T16:30:00Z",
+          "side": "home",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "missing_players_count": 0,
+          "coverage_ratio": "11/11",
+          "known_sum_eur": 625000000.0,
+          "known_sum_m": 625.0,
+          "valuation_basis": "FULL_XI",
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "fotmob_id": 1285872,
+              "name": "Jonas Urbig",
+              "tm_id": "607720",
+              "tm_name": "Jonas Urbig",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 18000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 607720"
+            },
+            {
+              "fotmob_id": 526827,
+              "name": "Konrad Laimer",
+              "tm_id": "223967",
+              "tm_name": "Konrad Laimer",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 32000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 223967"
+            },
+            {
+              "fotmob_id": 658554,
+              "name": "Dayot Upamecano",
+              "tm_id": "344695",
+              "tm_name": "Dayot Upamecano",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 70000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 344695"
+            },
+            {
+              "fotmob_id": 828159,
+              "name": "Min-Jae Kim",
+              "tm_id": "503482",
+              "tm_name": "Min-jae Kim",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 20000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 503482"
+            },
+            {
+              "fotmob_id": 1395447,
+              "name": "Nathaniel Brown",
+              "tm_id": "691892",
+              "tm_name": "Nathaniel Brown",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 40000000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 691892"
+            },
+            {
+              "fotmob_id": 460632,
+              "name": "Joshua Kimmich",
+              "tm_id": "161056",
+              "tm_name": "Joshua Kimmich",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 35000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 161056"
+            },
+            {
+              "fotmob_id": 1473580,
+              "name": "Aleksandar Pavlović",
+              "tm_id": "792380",
+              "tm_name": "Aleksandar Pavlovic",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 90000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 792380"
+            },
+            {
+              "fotmob_id": 1029063,
+              "name": "Michael Olise",
+              "tm_id": "566723",
+              "tm_name": "Michael Olise",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 150000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 566723"
+            },
+            {
+              "fotmob_id": 1180288,
+              "name": "Ismael Saibari",
+              "tm_id": "702869",
+              "tm_name": "Ismael Saibari",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 40000000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 702869"
+            },
+            {
+              "fotmob_id": 860914,
+              "name": "Luis Díaz",
+              "tm_id": "480692",
+              "tm_name": "Luis Díaz",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 70000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 480692"
+            },
+            {
+              "fotmob_id": 194165,
+              "name": "Harry Kane",
+              "tm_id": "132098",
+              "tm_name": "Harry Kane",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 60000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 132098"
+            }
+          ],
+          "starters": [
+            {
+              "fotmob_id": 1285872,
+              "name": "Jonas Urbig",
+              "tm_id": "607720",
+              "tm_name": "Jonas Urbig",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 18000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 607720"
+            },
+            {
+              "fotmob_id": 526827,
+              "name": "Konrad Laimer",
+              "tm_id": "223967",
+              "tm_name": "Konrad Laimer",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 32000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 223967"
+            },
+            {
+              "fotmob_id": 658554,
+              "name": "Dayot Upamecano",
+              "tm_id": "344695",
+              "tm_name": "Dayot Upamecano",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 70000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 344695"
+            },
+            {
+              "fotmob_id": 828159,
+              "name": "Min-Jae Kim",
+              "tm_id": "503482",
+              "tm_name": "Min-jae Kim",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 20000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 503482"
+            },
+            {
+              "fotmob_id": 1395447,
+              "name": "Nathaniel Brown",
+              "tm_id": "691892",
+              "tm_name": "Nathaniel Brown",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 40000000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 691892"
+            },
+            {
+              "fotmob_id": 460632,
+              "name": "Joshua Kimmich",
+              "tm_id": "161056",
+              "tm_name": "Joshua Kimmich",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 35000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 161056"
+            },
+            {
+              "fotmob_id": 1473580,
+              "name": "Aleksandar Pavlović",
+              "tm_id": "792380",
+              "tm_name": "Aleksandar Pavlovic",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 90000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 792380"
+            },
+            {
+              "fotmob_id": 1029063,
+              "name": "Michael Olise",
+              "tm_id": "566723",
+              "tm_name": "Michael Olise",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 150000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 566723"
+            },
+            {
+              "fotmob_id": 1180288,
+              "name": "Ismael Saibari",
+              "tm_id": "702869",
+              "tm_name": "Ismael Saibari",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 40000000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 702869"
+            },
+            {
+              "fotmob_id": 860914,
+              "name": "Luis Díaz",
+              "tm_id": "480692",
+              "tm_name": "Luis Díaz",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 70000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 480692"
+            },
+            {
+              "fotmob_id": 194165,
+              "name": "Harry Kane",
+              "tm_id": "132098",
+              "tm_name": "Harry Kane",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 60000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 132098"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "HISTORICAL_RECOVERED_LINEUP",
+          "source_locator": "fotmob://match/5881189",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        },
+        {
+          "match_id": "5881200",
+          "fotmob_id": "5881200",
+          "gw": "GW07",
+          "match_date": "2026-10-25",
+          "kickoff_utc": "2026-10-25T16:30:00Z",
+          "side": "away",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "missing_players_count": 0,
+          "coverage_ratio": "11/11",
+          "known_sum_eur": 556000000.0,
+          "known_sum_m": 556.0,
+          "valuation_basis": "FULL_XI",
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "fotmob_id": 1285872,
+              "name": "Jonas Urbig",
+              "tm_id": "607720",
+              "tm_name": "Jonas Urbig",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 18000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 607720"
+            },
+            {
+              "fotmob_id": 950824,
+              "name": "Josip Stanišić",
+              "tm_id": "483046",
+              "tm_name": "Josip Stanisic",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 40000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 483046"
+            },
+            {
+              "fotmob_id": 658554,
+              "name": "Dayot Upamecano",
+              "tm_id": "344695",
+              "tm_name": "Dayot Upamecano",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 70000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 344695"
+            },
+            {
+              "fotmob_id": 469700,
+              "name": "Jonathan Tah",
+              "tm_id": "196357",
+              "tm_name": "Jonathan Tah",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 28000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 196357"
+            },
+            {
+              "fotmob_id": 1395447,
+              "name": "Nathaniel Brown",
+              "tm_id": "691892",
+              "tm_name": "Nathaniel Brown",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 40000000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 691892"
+            },
+            {
+              "fotmob_id": 526827,
+              "name": "Konrad Laimer",
+              "tm_id": "223967",
+              "tm_name": "Konrad Laimer",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 32000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 223967"
+            },
+            {
+              "fotmob_id": 1286183,
+              "name": "Tom Bischof",
+              "tm_id": "822959",
+              "tm_name": "Tom Bischof",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 40000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 822959"
+            },
+            {
+              "fotmob_id": 1029063,
+              "name": "Michael Olise",
+              "tm_id": "566723",
+              "tm_name": "Michael Olise",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 150000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 566723"
+            },
+            {
+              "fotmob_id": 1737700,
+              "name": "Lennart Karl",
+              "tm_id": "1075147",
+              "tm_name": "Lennart Karl",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 60000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 1075147"
+            },
+            {
+              "fotmob_id": 385437,
+              "name": "Serge Gnabry",
+              "tm_id": "159471",
+              "tm_name": "Serge Gnabry",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 18000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 159471"
+            },
+            {
+              "fotmob_id": 194165,
+              "name": "Harry Kane",
+              "tm_id": "132098",
+              "tm_name": "Harry Kane",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 60000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 132098"
+            }
+          ],
+          "starters": [
+            {
+              "fotmob_id": 1285872,
+              "name": "Jonas Urbig",
+              "tm_id": "607720",
+              "tm_name": "Jonas Urbig",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 18000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 607720"
+            },
+            {
+              "fotmob_id": 950824,
+              "name": "Josip Stanišić",
+              "tm_id": "483046",
+              "tm_name": "Josip Stanisic",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 40000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 483046"
+            },
+            {
+              "fotmob_id": 658554,
+              "name": "Dayot Upamecano",
+              "tm_id": "344695",
+              "tm_name": "Dayot Upamecano",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 70000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 344695"
+            },
+            {
+              "fotmob_id": 469700,
+              "name": "Jonathan Tah",
+              "tm_id": "196357",
+              "tm_name": "Jonathan Tah",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 28000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 196357"
+            },
+            {
+              "fotmob_id": 1395447,
+              "name": "Nathaniel Brown",
+              "tm_id": "691892",
+              "tm_name": "Nathaniel Brown",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 40000000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 691892"
+            },
+            {
+              "fotmob_id": 526827,
+              "name": "Konrad Laimer",
+              "tm_id": "223967",
+              "tm_name": "Konrad Laimer",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 32000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 223967"
+            },
+            {
+              "fotmob_id": 1286183,
+              "name": "Tom Bischof",
+              "tm_id": "822959",
+              "tm_name": "Tom Bischof",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 40000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 822959"
+            },
+            {
+              "fotmob_id": 1029063,
+              "name": "Michael Olise",
+              "tm_id": "566723",
+              "tm_name": "Michael Olise",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 150000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 566723"
+            },
+            {
+              "fotmob_id": 1737700,
+              "name": "Lennart Karl",
+              "tm_id": "1075147",
+              "tm_name": "Lennart Karl",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 60000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 1075147"
+            },
+            {
+              "fotmob_id": 385437,
+              "name": "Serge Gnabry",
+              "tm_id": "159471",
+              "tm_name": "Serge Gnabry",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 18000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 159471"
+            },
+            {
+              "fotmob_id": 194165,
+              "name": "Harry Kane",
+              "tm_id": "132098",
+              "tm_name": "Harry Kane",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 60000000,
+              "reason": "CLUB_EXACT_AND_FACTORS_VERIFIED: TM 132098"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "HISTORICAL_RECOVERED_LINEUP",
+          "source_locator": "fotmob://match/5881200",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        },
+        {
+          "gw": "GW08",
+          "fixture_id": "3018851",
+          "fotmob_id": "5881208",
+          "match_id": "5881208",
+          "match_date": "2026-10-31",
+          "kickoff_utc": "2026-10-31T17:30:00.000Z",
+          "side": "homeTeam",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "known_sum_eur": 573000000,
+          "known_sum_m": 573.0,
+          "coverage_ratio": "11/11",
+          "valuation_basis": "FULL_XI",
+          "missing_players_count": 0,
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "player_name": "Jonas Urbig",
+              "fotmob_id": 1285872,
+              "valuation_eur": 18000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "607720"
+            },
+            {
+              "player_name": "Konrad Laimer",
+              "fotmob_id": 526827,
+              "valuation_eur": 32000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "223967"
+            },
+            {
+              "player_name": "Dayot Upamecano",
+              "fotmob_id": 658554,
+              "valuation_eur": 70000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "344695"
+            },
+            {
+              "player_name": "Min-Jae Kim",
+              "fotmob_id": 828159,
+              "valuation_eur": 20000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "503482"
+            },
+            {
+              "player_name": "Alphonso Davies",
+              "fotmob_id": 751202,
+              "valuation_eur": 40000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "424204"
+            },
+            {
+              "player_name": "Joshua Kimmich",
+              "fotmob_id": 460632,
+              "valuation_eur": 35000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "161056"
+            },
+            {
+              "player_name": "Aleksandar Pavlović",
+              "fotmob_id": 1473580,
+              "valuation_eur": 90000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "792380"
+            },
+            {
+              "player_name": "Michael Olise",
+              "fotmob_id": 1029063,
+              "valuation_eur": 150000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "566723"
+            },
+            {
+              "player_name": "Ismael Saibari",
+              "fotmob_id": 1180288,
+              "valuation_eur": 40000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "702869"
+            },
+            {
+              "player_name": "Serge Gnabry",
+              "fotmob_id": 385437,
+              "valuation_eur": 18000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "159471"
+            },
+            {
+              "player_name": "Harry Kane",
+              "fotmob_id": 194165,
+              "valuation_eur": 60000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "132098"
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "Jonas Urbig",
+              "fotmob_id": 1285872,
+              "valuation_eur": 18000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "607720"
+            },
+            {
+              "player_name": "Konrad Laimer",
+              "fotmob_id": 526827,
+              "valuation_eur": 32000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "223967"
+            },
+            {
+              "player_name": "Dayot Upamecano",
+              "fotmob_id": 658554,
+              "valuation_eur": 70000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "344695"
+            },
+            {
+              "player_name": "Min-Jae Kim",
+              "fotmob_id": 828159,
+              "valuation_eur": 20000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "503482"
+            },
+            {
+              "player_name": "Alphonso Davies",
+              "fotmob_id": 751202,
+              "valuation_eur": 40000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "424204"
+            },
+            {
+              "player_name": "Joshua Kimmich",
+              "fotmob_id": 460632,
+              "valuation_eur": 35000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "161056"
+            },
+            {
+              "player_name": "Aleksandar Pavlović",
+              "fotmob_id": 1473580,
+              "valuation_eur": 90000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "792380"
+            },
+            {
+              "player_name": "Michael Olise",
+              "fotmob_id": 1029063,
+              "valuation_eur": 150000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "566723"
+            },
+            {
+              "player_name": "Ismael Saibari",
+              "fotmob_id": 1180288,
+              "valuation_eur": 40000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "702869"
+            },
+            {
+              "player_name": "Serge Gnabry",
+              "fotmob_id": 385437,
+              "valuation_eur": 18000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "159471"
+            },
+            {
+              "player_name": "Harry Kane",
+              "fotmob_id": 194165,
+              "valuation_eur": 60000000,
+              "resolution_method": "LEVEL_1_CLUB_EXACT",
+              "tm_player_id": "132098"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "FOTMOB_RAW_AND_TM_SNAPSHOT",
+          "source_locator": "fotmob://match/5881208",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        }
+      ],
+      "valid_match_count": 3,
+      "complete_match_count": 3,
+      "caution_match_count": 2,
+      "last3_status": "READY",
+      "primary_metric": 584666666.67,
+      "secondary_metric": "€584.67M",
+      "completeness_quality": "CAUTION_DERIVED",
+      "staleness": "FRESH",
+      "lineage_rollup": {
+        "producer": {
+          "script_sha256": "df84010caf3be268ffafae95147d703b8927e16ce3d3ee7afb5671ea8f2f596d",
+          "producer_id": "ares_w43_rolling_producer_v3_r3",
+          "generated_at": "2026-10-27T11:10:40Z"
+        },
+        "schema_sha256": "4982565023afdb94b4cc02722a8d1088f0fa0989ca9d3de2f4daa86dffd1b50a",
+        "frozen_receipt": {
+          "receipt_id": "RCPT-SQUAD-ASSET-PRIOR-V1-W43-CANDIDATE-R3",
+          "frozen_at": "2026-10-27T11:10:40Z",
+          "schema_sha256": "4982565023afdb94b4cc02722a8d1088f0fa0989ca9d3de2f4daa86dffd1b50a",
+          "producer_script_sha256": "df84010caf3be268ffafae95147d703b8927e16ce3d3ee7afb5671ea8f2f596d",
+          "dataset_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+          "dataset_provider": "Transfermarkt",
+          "dataset_version": "UNKNOWN",
+          "dataset_commit": "UNKNOWN"
+        },
+        "historical_epochs": [
+          {
+            "epoch_id": "LMW407_R17_BASELINE",
+            "description": "LMW-407 Accepted Baseline (10-05 closure)",
+            "producer_script_sha256": "9e266ed4b8650bea98f760c0f205a4ef712d2cb2a80bfd6f3554b03eb1b71095",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "manifest_sha256": "26ebd5fea1f88db09c0848153b25b15b13b96d3eccc45d7d17b24b5337557ca4",
+            "receipt_sha256": "7bc98896c42fe31e6a7c788aa751a71259519d03567f2aa01b30a69a1acff36d"
+          },
+          {
+            "epoch_id": "W40_ROLLING_BASELINE",
+            "description": "W40 Rolling Window Accepted Baseline",
+            "producer_script_sha256": "52e181f2005245eb55348e8693769351ae5213d48017aa59274ee9b26e2a2153",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "manifest_sha256": "UNKNOWN",
+            "receipt_sha256": "51ff7692544f7700a6f9fd2775c7656476b271f9a558c967dbea655498e907d5"
+          }
+        ],
+        "staleness_authority": "NOT_AUTHORIZED",
+        "staleness_source_cadence": "",
+        "staleness_threshold_days": null
+      },
+      "category": "FULL_XI_EXACT"
+    },
+    {
+      "team_key": "SC Paderborn",
+      "team_name": "SC Paderborn",
+      "matches": [
+        {
+          "match_id": "5881196",
+          "fotmob_id": "5881196",
+          "gw": "GW06",
+          "match_date": "2026-10-17",
+          "kickoff_utc": "2026-10-17T13:30:00Z",
+          "side": "away",
+          "total_starters": 11,
+          "known_cnt": 5,
+          "missing_players_count": 6,
+          "coverage_ratio": "5/11",
+          "known_sum_eur": 6300000.0,
+          "known_sum_m": 6.3,
+          "valuation_basis": "PARTIAL_LOWER_BOUND",
+          "missing_players": [
+            {
+              "fotmob_id": 1520469,
+              "name": "Jano ter Horst",
+              "status": "IDENTITY_UNRESOLVED",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1415373,
+              "name": "Tjark Scheller",
+              "status": "IDENTITY_UNRESOLVED",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1515976,
+              "name": "Mattes Hansen",
+              "status": "IDENTITY_UNRESOLVED",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1426060,
+              "name": "Laurin Curda",
+              "status": "IDENTITY_UNRESOLVED",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1362492,
+              "name": "Santiago Castañeda",
+              "status": "IDENTITY_UNRESOLVED",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1321553,
+              "name": "Stefano Marino",
+              "status": "IDENTITY_UNRESOLVED",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            }
+          ],
+          "resolved_players": [
+            {
+              "fotmob_id": 1257826,
+              "name": "Nahuel Noll",
+              "tm_id": "600942",
+              "tm_name": "Nahuel Noll",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 500000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 600942"
+            },
+            {
+              "fotmob_id": 1520469,
+              "name": "Jano ter Horst",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1415373,
+              "name": "Tjark Scheller",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1515976,
+              "name": "Mattes Hansen",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1426060,
+              "name": "Laurin Curda",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1362492,
+              "name": "Santiago Castañeda",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 784225,
+              "name": "Raphael Obermair",
+              "tm_id": "330699",
+              "tm_name": "Raphael Obermair",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 800000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 330699"
+            },
+            {
+              "fotmob_id": 1367587,
+              "name": "Laurin Ulrich",
+              "tm_id": "717465",
+              "tm_name": "Laurin Ulrich",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 500000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 717465"
+            },
+            {
+              "fotmob_id": 1276453,
+              "name": "Gabriel Vidović",
+              "tm_id": "604327",
+              "tm_name": "Gabriel Vidovic",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 3000000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 604327"
+            },
+            {
+              "fotmob_id": 706500,
+              "name": "Steffen Tigges",
+              "tm_id": "296879",
+              "tm_name": "Steffen Tigges",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 1500000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 296879"
+            },
+            {
+              "fotmob_id": 1321553,
+              "name": "Stefano Marino",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            }
+          ],
+          "starters": [
+            {
+              "fotmob_id": 1257826,
+              "name": "Nahuel Noll",
+              "tm_id": "600942",
+              "tm_name": "Nahuel Noll",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 500000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 600942"
+            },
+            {
+              "fotmob_id": 1520469,
+              "name": "Jano ter Horst",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1415373,
+              "name": "Tjark Scheller",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1515976,
+              "name": "Mattes Hansen",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1426060,
+              "name": "Laurin Curda",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1362492,
+              "name": "Santiago Castañeda",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 784225,
+              "name": "Raphael Obermair",
+              "tm_id": "330699",
+              "tm_name": "Raphael Obermair",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 800000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 330699"
+            },
+            {
+              "fotmob_id": 1367587,
+              "name": "Laurin Ulrich",
+              "tm_id": "717465",
+              "tm_name": "Laurin Ulrich",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 500000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 717465"
+            },
+            {
+              "fotmob_id": 1276453,
+              "name": "Gabriel Vidović",
+              "tm_id": "604327",
+              "tm_name": "Gabriel Vidovic",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 3000000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 604327"
+            },
+            {
+              "fotmob_id": 706500,
+              "name": "Steffen Tigges",
+              "tm_id": "296879",
+              "tm_name": "Steffen Tigges",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 1500000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 296879"
+            },
+            {
+              "fotmob_id": 1321553,
+              "name": "Stefano Marino",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "HISTORICAL_RECOVERED_LINEUP",
+          "source_locator": "fotmob://match/5881196",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        },
+        {
+          "match_id": "5881203",
+          "fotmob_id": "5881203",
+          "gw": "GW07",
+          "match_date": "2026-10-24",
+          "kickoff_utc": "2026-10-24T13:30:00Z",
+          "side": "home",
+          "total_starters": 11,
+          "known_cnt": 5,
+          "missing_players_count": 6,
+          "coverage_ratio": "5/11",
+          "known_sum_eur": 6300000.0,
+          "known_sum_m": 6.3,
+          "valuation_basis": "PARTIAL_LOWER_BOUND",
+          "missing_players": [
+            {
+              "fotmob_id": 1520469,
+              "name": "Jano ter Horst",
+              "status": "IDENTITY_UNRESOLVED",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1415373,
+              "name": "Tjark Scheller",
+              "status": "IDENTITY_UNRESOLVED",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1515976,
+              "name": "Mattes Hansen",
+              "status": "IDENTITY_UNRESOLVED",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1426060,
+              "name": "Laurin Curda",
+              "status": "IDENTITY_UNRESOLVED",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1362492,
+              "name": "Santiago Castañeda",
+              "status": "IDENTITY_UNRESOLVED",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1321553,
+              "name": "Stefano Marino",
+              "status": "IDENTITY_UNRESOLVED",
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            }
+          ],
+          "resolved_players": [
+            {
+              "fotmob_id": 1257826,
+              "name": "Nahuel Noll",
+              "tm_id": "600942",
+              "tm_name": "Nahuel Noll",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 500000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 600942"
+            },
+            {
+              "fotmob_id": 1520469,
+              "name": "Jano ter Horst",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1415373,
+              "name": "Tjark Scheller",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1515976,
+              "name": "Mattes Hansen",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1426060,
+              "name": "Laurin Curda",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1367587,
+              "name": "Laurin Ulrich",
+              "tm_id": "717465",
+              "tm_name": "Laurin Ulrich",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 500000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 717465"
+            },
+            {
+              "fotmob_id": 1362492,
+              "name": "Santiago Castañeda",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1276453,
+              "name": "Gabriel Vidović",
+              "tm_id": "604327",
+              "tm_name": "Gabriel Vidovic",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 3000000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 604327"
+            },
+            {
+              "fotmob_id": 784225,
+              "name": "Raphael Obermair",
+              "tm_id": "330699",
+              "tm_name": "Raphael Obermair",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 800000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 330699"
+            },
+            {
+              "fotmob_id": 1321553,
+              "name": "Stefano Marino",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 706500,
+              "name": "Steffen Tigges",
+              "tm_id": "296879",
+              "tm_name": "Steffen Tigges",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 1500000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 296879"
+            }
+          ],
+          "starters": [
+            {
+              "fotmob_id": 1257826,
+              "name": "Nahuel Noll",
+              "tm_id": "600942",
+              "tm_name": "Nahuel Noll",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 500000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 600942"
+            },
+            {
+              "fotmob_id": 1520469,
+              "name": "Jano ter Horst",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1415373,
+              "name": "Tjark Scheller",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1515976,
+              "name": "Mattes Hansen",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1426060,
+              "name": "Laurin Curda",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1367587,
+              "name": "Laurin Ulrich",
+              "tm_id": "717465",
+              "tm_name": "Laurin Ulrich",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 500000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 717465"
+            },
+            {
+              "fotmob_id": 1362492,
+              "name": "Santiago Castañeda",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 1276453,
+              "name": "Gabriel Vidović",
+              "tm_id": "604327",
+              "tm_name": "Gabriel Vidovic",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 3000000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 604327"
+            },
+            {
+              "fotmob_id": 784225,
+              "name": "Raphael Obermair",
+              "tm_id": "330699",
+              "tm_name": "Raphael Obermair",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 800000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 330699"
+            },
+            {
+              "fotmob_id": 1321553,
+              "name": "Stefano Marino",
+              "tm_id": null,
+              "status": "IDENTITY_UNRESOLVED",
+              "market_value_eur": null,
+              "reason": "Player not found in TM snapshot or ambiguous name"
+            },
+            {
+              "fotmob_id": 706500,
+              "name": "Steffen Tigges",
+              "tm_id": "296879",
+              "tm_name": "Steffen Tigges",
+              "status": "IDENTITY_VERIFIED",
+              "market_value_eur": 1500000,
+              "reason": "ALL_FACTORS_VERIFIED: TM 296879"
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "HISTORICAL_RECOVERED_LINEUP",
+          "source_locator": "fotmob://match/5881203",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        },
+        {
+          "gw": "GW08",
+          "fixture_id": "3018852",
+          "fotmob_id": "5881209",
+          "match_id": "5881209",
+          "match_date": "2026-10-31",
+          "kickoff_utc": "2026-10-31T14:30:00.000Z",
+          "side": "awayTeam",
+          "total_starters": 11,
+          "known_cnt": 11,
+          "known_sum_eur": 21587211,
+          "known_sum_m": 21.59,
+          "coverage_ratio": "11/11",
+          "valuation_basis": "FULL_XI",
+          "missing_players_count": 0,
+          "missing_players": [],
+          "resolved_players": [
+            {
+              "player_name": "Nahuel Noll",
+              "fotmob_id": 1257826,
+              "valuation_eur": 500000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "600942"
+            },
+            {
+              "player_name": "Jano ter Horst",
+              "fotmob_id": 1520469,
+              "valuation_eur": 1157798,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            },
+            {
+              "player_name": "Tjark Scheller",
+              "fotmob_id": 1415373,
+              "valuation_eur": 1774228,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            },
+            {
+              "player_name": "Mattes Hansen",
+              "fotmob_id": 1515976,
+              "valuation_eur": 1900418,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            },
+            {
+              "player_name": "Santiago Castañeda",
+              "fotmob_id": 1362492,
+              "valuation_eur": 5106207,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            },
+            {
+              "player_name": "Laurin Curda",
+              "fotmob_id": 1426060,
+              "valuation_eur": 2747781,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            },
+            {
+              "player_name": "Tom Baack",
+              "fotmob_id": 658444,
+              "valuation_eur": 310913,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            },
+            {
+              "player_name": "Gabriel Vidović",
+              "fotmob_id": 1276453,
+              "valuation_eur": 3000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "604327"
+            },
+            {
+              "player_name": "Raphael Obermair",
+              "fotmob_id": 784225,
+              "valuation_eur": 800000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "330699"
+            },
+            {
+              "player_name": "Marvin Pieringer",
+              "fotmob_id": 956913,
+              "valuation_eur": 3000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "471055"
+            },
+            {
+              "player_name": "Stefano Marino",
+              "fotmob_id": 1321553,
+              "valuation_eur": 1289866,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            }
+          ],
+          "starters": [
+            {
+              "player_name": "Nahuel Noll",
+              "fotmob_id": 1257826,
+              "valuation_eur": 500000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "600942"
+            },
+            {
+              "player_name": "Jano ter Horst",
+              "fotmob_id": 1520469,
+              "valuation_eur": 1157798,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            },
+            {
+              "player_name": "Tjark Scheller",
+              "fotmob_id": 1415373,
+              "valuation_eur": 1774228,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            },
+            {
+              "player_name": "Mattes Hansen",
+              "fotmob_id": 1515976,
+              "valuation_eur": 1900418,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            },
+            {
+              "player_name": "Santiago Castañeda",
+              "fotmob_id": 1362492,
+              "valuation_eur": 5106207,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            },
+            {
+              "player_name": "Laurin Curda",
+              "fotmob_id": 1426060,
+              "valuation_eur": 2747781,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            },
+            {
+              "player_name": "Tom Baack",
+              "fotmob_id": 658444,
+              "valuation_eur": 310913,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            },
+            {
+              "player_name": "Gabriel Vidović",
+              "fotmob_id": 1276453,
+              "valuation_eur": 3000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "604327"
+            },
+            {
+              "player_name": "Raphael Obermair",
+              "fotmob_id": 784225,
+              "valuation_eur": 800000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "330699"
+            },
+            {
+              "player_name": "Marvin Pieringer",
+              "fotmob_id": 956913,
+              "valuation_eur": 3000000,
+              "resolution_method": "LEVEL_2_GLOBAL_EXACT",
+              "tm_player_id": "471055"
+            },
+            {
+              "player_name": "Stefano Marino",
+              "fotmob_id": 1321553,
+              "valuation_eur": 1289866,
+              "resolution_method": "LEVEL_3_FOTMOB_RAW_VALUATION",
+              "tm_player_id": null
+            }
+          ],
+          "detail_status": "FULL_STARTERS_DETAILS_VERIFIED",
+          "evidence_source": "FOTMOB_RAW_AND_TM_SNAPSHOT",
+          "source_locator": "fotmob://match/5881209",
+          "verification_notes": "逐人身份与估值已通过 TM 2026-09-30 快照与实证注册表核验"
+        }
+      ],
+      "valid_match_count": 3,
+      "complete_match_count": 1,
+      "caution_match_count": 0,
+      "last3_status": "CAUTION_ACCEPTABLE",
+      "primary_metric": 11395737.0,
+      "secondary_metric": "€11.40M",
+      "completeness_quality": "N/A",
+      "staleness": "FRESH",
+      "lineage_rollup": {
+        "producer": {
+          "script_sha256": "df84010caf3be268ffafae95147d703b8927e16ce3d3ee7afb5671ea8f2f596d",
+          "producer_id": "ares_w43_rolling_producer_v3_r3",
+          "generated_at": "2026-10-27T11:10:40Z"
+        },
+        "schema_sha256": "4982565023afdb94b4cc02722a8d1088f0fa0989ca9d3de2f4daa86dffd1b50a",
+        "frozen_receipt": {
+          "receipt_id": "RCPT-SQUAD-ASSET-PRIOR-V1-W43-CANDIDATE-R3",
+          "frozen_at": "2026-10-27T11:10:40Z",
+          "schema_sha256": "4982565023afdb94b4cc02722a8d1088f0fa0989ca9d3de2f4daa86dffd1b50a",
+          "producer_script_sha256": "df84010caf3be268ffafae95147d703b8927e16ce3d3ee7afb5671ea8f2f596d",
+          "dataset_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+          "dataset_provider": "Transfermarkt",
+          "dataset_version": "UNKNOWN",
+          "dataset_commit": "UNKNOWN"
+        },
+        "historical_epochs": [
+          {
+            "epoch_id": "LMW407_R17_BASELINE",
+            "description": "LMW-407 Accepted Baseline (10-05 closure)",
+            "producer_script_sha256": "9e266ed4b8650bea98f760c0f205a4ef712d2cb2a80bfd6f3554b03eb1b71095",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "manifest_sha256": "26ebd5fea1f88db09c0848153b25b15b13b96d3eccc45d7d17b24b5337557ca4",
+            "receipt_sha256": "7bc98896c42fe31e6a7c788aa751a71259519d03567f2aa01b30a69a1acff36d"
+          },
+          {
+            "epoch_id": "W40_ROLLING_BASELINE",
+            "description": "W40 Rolling Window Accepted Baseline",
+            "producer_script_sha256": "52e181f2005245eb55348e8693769351ae5213d48017aa59274ee9b26e2a2153",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "manifest_sha256": "UNKNOWN",
+            "receipt_sha256": "51ff7692544f7700a6f9fd2775c7656476b271f9a558c967dbea655498e907d5"
+          }
+        ],
+        "staleness_authority": "NOT_AUTHORIZED",
+        "staleness_source_cadence": "",
+        "staleness_threshold_days": null
+      },
+      "category": "PARTIAL_LOWER_BOUND"
+    },
+    {
+      "team_key": "Chelsea",
+      "team_name": "Chelsea",
+      "matches": [
+        {
+          "match_id": "5795456",
+          "match_date": "2026-09-18",
+          "source_locator": "fotmob://match/5795456",
+          "retrieved_at": "2026-09-30T12:00:00Z",
+          "lineup_provider": "FOTMOB",
+          "valued_starter_count": 10,
+          "match_status": "CAUTION_ACCEPTABLE",
+          "known_value_sum_eur": 432200000,
+          "full_xi_value_eur": null,
+          "aggregation_input_eur": 432200000,
+          "unknown_starters": 1,
+          "unknown_reason_counts": {
+            "ambiguous": 1,
+            "not_found": 0
+          },
+          "valuation_snapshot_date": "UNKNOWN",
+          "lineage": {
+            "lineup_provider": "FOTMOB",
+            "match_id": "5795456",
+            "source_locator": "fotmob://match/5795456",
+            "retrieved_at": "2026-09-30T12:00:00Z",
+            "valuation_dataset_provider": "Transfermarkt",
+            "valuation_dataset_version": "UNKNOWN",
+            "valuation_dataset_commit": "UNKNOWN",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "verified_snapshot_max_valuation_date": "UNKNOWN",
+            "producer_script_sha256": "9e266ed4b8650bea98f760c0f205a4ef712d2cb2a80bfd6f3554b03eb1b71095"
+          }
+        },
+        {
+          "match_id": "5795467",
+          "match_date": "2026-10-10",
+          "source_locator": "fotmob://match/5795467",
+          "retrieved_at": "2026-10-12T23:34:47Z",
+          "lineup_provider": "FOTMOB",
+          "valued_starter_count": 6,
+          "match_status": "UNKNOWN",
+          "known_value_sum_eur": 415000000,
+          "full_xi_value_eur": null,
+          "aggregation_input_eur": null,
+          "unknown_starters": 5,
+          "unknown_reason_counts": {
+            "ambiguous": 1,
+            "not_found": 4
+          },
+          "valuation_snapshot_date": "2026-09-30",
+          "lineage": {
+            "lineup_provider": "FOTMOB",
+            "match_id": "5795467",
+            "source_locator": "fotmob://match/5795467",
+            "retrieved_at": "2026-10-12T23:34:47Z",
+            "valuation_dataset_provider": "Transfermarkt",
+            "valuation_dataset_version": "UNKNOWN",
+            "valuation_dataset_commit": "UNKNOWN",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "verified_snapshot_max_valuation_date": "2026-09-30",
+            "producer_script_sha256": "52e181f2005245eb55348e8693769351ae5213d48017aa59274ee9b26e2a2153"
+          }
+        },
+        {
+          "match_id": "5795478",
+          "match_date": "2026-10-17",
+          "source_locator": "fotmob://match/5795478",
+          "retrieved_at": "UNKNOWN",
+          "lineup_provider": "FOTMOB",
+          "valued_starter_count": 11,
+          "match_status": "COMPLETE",
+          "known_value_sum_eur": 608200000,
+          "full_xi_value_eur": 608200000,
+          "aggregation_input_eur": 608200000,
+          "unknown_starters": 0,
+          "unknown_reason_counts": {
+            "ambiguous": 1,
+            "not_found": 0
+          },
+          "valuation_snapshot_date": "2026-09-30",
+          "lineage": {
+            "lineup_provider": "FOTMOB",
+            "match_id": "5795478",
+            "source_locator": "fotmob://match/5795478",
+            "retrieved_at": "UNKNOWN",
+            "valuation_dataset_provider": "Transfermarkt",
+            "valuation_dataset_version": "UNKNOWN",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "verified_snapshot_max_valuation_date": "2026-09-30"
+          }
+        }
+      ],
+      "valid_match_count": 2,
+      "complete_match_count": 1,
+      "caution_match_count": 1,
+      "last3_status": "CAUTION",
+      "primary_metric": null,
+      "secondary_metric": {
+        "metric_name": "mean_2",
+        "value_eur": 520200000.0,
+        "n_matches_used": 2,
+        "completeness": "CAUTION_DERIVED",
+        "semantic_basis": "PARTIAL_LOWER_BOUND",
+        "derived_from_match_ids": [
+          "5795456",
+          "5795478"
+        ]
+      },
+      "completeness_quality": "CAUTION_DERIVED",
+      "staleness": "NOT_AUTHORIZED",
+      "valuation_semantics": "FIXED_PRICE_RECENT_XI_COMPOSITION_PRIOR"
+    },
+    {
+      "team_key": "Everton",
+      "team_name": "Everton",
+      "matches": [
+        {
+          "match_id": "5795458",
+          "match_date": "2026-09-19",
+          "source_locator": "fotmob://match/5795458",
+          "retrieved_at": "2026-09-30T12:00:00Z",
+          "lineup_provider": "FOTMOB",
+          "valued_starter_count": 11,
+          "match_status": "COMPLETE",
+          "known_value_sum_eur": 265000000,
+          "full_xi_value_eur": 265000000,
+          "aggregation_input_eur": 265000000,
+          "unknown_starters": 0,
+          "unknown_reason_counts": {
+            "ambiguous": 0,
+            "not_found": 0
+          },
+          "valuation_snapshot_date": "UNKNOWN",
+          "lineage": {
+            "lineup_provider": "FOTMOB",
+            "match_id": "5795458",
+            "source_locator": "fotmob://match/5795458",
+            "retrieved_at": "2026-09-30T12:00:00Z",
+            "valuation_dataset_provider": "Transfermarkt",
+            "valuation_dataset_version": "UNKNOWN",
+            "valuation_dataset_commit": "UNKNOWN",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "verified_snapshot_max_valuation_date": "UNKNOWN",
+            "producer_script_sha256": "9e266ed4b8650bea98f760c0f205a4ef712d2cb2a80bfd6f3554b03eb1b71095"
+          }
+        },
+        {
+          "match_id": "5795470",
+          "match_date": "2026-10-11",
+          "source_locator": "fotmob://match/5795470",
+          "retrieved_at": "2026-10-12T23:34:52Z",
+          "lineup_provider": "FOTMOB",
+          "valued_starter_count": 9,
+          "match_status": "UNKNOWN",
+          "known_value_sum_eur": 203000000,
+          "full_xi_value_eur": null,
+          "aggregation_input_eur": null,
+          "unknown_starters": 2,
+          "unknown_reason_counts": {
+            "ambiguous": 0,
+            "not_found": 2
+          },
+          "valuation_snapshot_date": "2026-09-30",
+          "lineage": {
+            "lineup_provider": "FOTMOB",
+            "match_id": "5795470",
+            "source_locator": "fotmob://match/5795470",
+            "retrieved_at": "2026-10-12T23:34:52Z",
+            "valuation_dataset_provider": "Transfermarkt",
+            "valuation_dataset_version": "UNKNOWN",
+            "valuation_dataset_commit": "UNKNOWN",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "verified_snapshot_max_valuation_date": "2026-09-30",
+            "producer_script_sha256": "52e181f2005245eb55348e8693769351ae5213d48017aa59274ee9b26e2a2153"
+          }
+        },
+        {
+          "match_id": "5795478",
+          "match_date": "2026-10-17",
+          "source_locator": "fotmob://match/5795478",
+          "retrieved_at": "UNKNOWN",
+          "lineup_provider": "FOTMOB",
+          "valued_starter_count": 11,
+          "match_status": "COMPLETE",
+          "known_value_sum_eur": 251000000,
+          "full_xi_value_eur": 251000000,
+          "aggregation_input_eur": 251000000,
+          "unknown_starters": 0,
+          "unknown_reason_counts": {
+            "ambiguous": 0,
+            "not_found": 0
+          },
+          "valuation_snapshot_date": "2026-09-30",
+          "lineage": {
+            "lineup_provider": "FOTMOB",
+            "match_id": "5795478",
+            "source_locator": "fotmob://match/5795478",
+            "retrieved_at": "UNKNOWN",
+            "valuation_dataset_provider": "Transfermarkt",
+            "valuation_dataset_version": "UNKNOWN",
+            "source_artifact_sha256": "d22e407981d5b51a79bf8ff59835729f3526f7dc3495a6d8ed2f852ed2e86403",
+            "verified_snapshot_max_valuation_date": "2026-09-30"
+          }
+        }
+      ],
+      "valid_match_count": 2,
+      "complete_match_count": 2,
+      "caution_match_count": 0,
+      "last3_status": "CAUTION",
+      "primary_metric": null,
+      "secondary_metric": {
+        "metric_name": "mean_2",
+        "value_eur": 258000000.0,
+        "n_matches_used": 2,
+        "completeness": "ALL_COMPLETE",
+        "semantic_basis": "FULL_XI",
+        "derived_from_match_ids": [
+          "5795458",
+          "5795478"
+        ]
+      },
+      "completeness_quality": "ALL_COMPLETE",
+      "staleness": "NOT_AUTHORIZED",
+      "valuation_semantics": "FIXED_PRICE_RECENT_XI_COMPOSITION_PRIOR"
+    }
+  ]
+}

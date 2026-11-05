@@ -205,6 +205,95 @@ def odds_runner() -> SkillRunner:
     return SkillRunner(SKILL_ODDS)
 
 
+def run_league_odds_collector(league: str, season: str, round_num: int, output_dir: str | Path | None = None, output_root: str | Path | None = None, denominator: str | Path | None = None) -> int:
+    """
+    一键运行全量联赛赔率采集器。
+    自动解析轮次 ScheduleID、排除已赛场次、抓取 1X2/AH/OU 原始原件并生成结构化 JSON。
+    支持 output_root 与 denominator 绑定。
+    """
+    import subprocess
+    import sys
+    script_path = get_skill_path(SKILL_ODDS) / "scripts" / "collect_league_odds.py"
+    target_out = output_root or output_dir
+    cmd = [
+        sys.executable,
+        str(script_path),
+        "--league", league.lower(),
+        "--season", season,
+        "--round", str(round_num)
+    ]
+    if output_root:
+        cmd.extend(["--output-root", str(output_root)])
+    elif output_dir:
+        cmd.extend(["--output_dir", str(output_dir)])
+        
+    if denominator:
+        cmd.extend(["--denominator", str(denominator)])
+        
+    return subprocess.run(cmd).returncode
+
+
+def run_team_news_collector(output_dir: str | Path | None = None, output_root: str | Path | None = None, league: str = "epl", denominator: str | Path | None = None) -> int:
+    """
+    一键运行官方球队伤停采集与降级保护执行器。
+    扫描俱乐部官方新闻或执行安全降级保护，落地 T1 原始文件或 _blocked.json。
+    """
+    import subprocess
+    import sys
+    script_path = get_skill_path(SKILL_TEAM_NEWS) / "scripts" / "collect_official_team_news.py"
+    cmd = [
+        sys.executable,
+        str(script_path),
+        "--league", league.lower()
+    ]
+    if output_root:
+        cmd.extend(["--output-root", str(output_root)])
+    elif output_dir:
+        cmd.extend(["--output_dir", str(output_dir)])
+        
+    if denominator:
+        cmd.extend(["--denominator", str(denominator)])
+        
+    return subprocess.run(cmd).returncode
+
+
+def run_market_evidence_adapter(output_root: str | Path, checkpoint: str = "BASELINE") -> int:
+    """
+    一键运行 Market Evidence Adapter。
+    将采集到的 Titan007 原始数据标准化映射为 market_evidence.json 与 MARKET_INPUT_GATE.json，
+    严格按照 Governance 规范判定 PRODUCTION_MARKET_GATE。
+    """
+    import subprocess
+    import sys
+    script_path = get_skill_path(SKILL_ODDS) / "scripts" / "market_evidence_adapter.py"
+    cmd = [
+        sys.executable,
+        str(script_path),
+        "--output-root", str(output_root),
+        "--checkpoint", checkpoint
+    ]
+    return subprocess.run(cmd).returncode
+
+
+def run_h2h_market_collector(schedule_id: str | int, output_dir: str | Path, bookmakers: list[str] | None = None) -> int:
+    """
+    一键运行历史对赛往绩与核心机构初终盘走势采集器。
+    抓取分析页 v_data，提取历史交锋明细与指定机构（威廉希尔、澳门等）初终盘及升降走势。
+    """
+    import subprocess
+    import sys
+    script_path = get_skill_path(SKILL_ODDS) / "scripts" / "collect_h2h_market_history.py"
+    cmd = [
+        sys.executable,
+        str(script_path),
+        "--schedule_id", str(schedule_id),
+        "--output_dir", str(output_dir)
+    ]
+    if bookmakers:
+        cmd.extend(["--bookmakers"] + bookmakers)
+    return subprocess.run(cmd).returncode
+
+
 # ────────────────────────────────────────────────────────────────
 # 调试入口
 # ────────────────────────────────────────────────────────────────

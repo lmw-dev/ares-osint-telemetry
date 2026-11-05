@@ -30,6 +30,37 @@
 
 ---
 
+## 🚀 全自动原生数据采集器 (Code-Native Data Pipelines)
+
+为解决大模型现场搜索容易遭遇 **动态 JS 壳、Google Search 重定向（grounding-redirect）、反爬 403 拦截及实体幻觉** 的痛点，我们已将经过协议逆向与实战检验的完整采集链路，沉淀为 **原生 Python 采集执行器**，深度集成在 Skill 中：
+
+### 1. 市场赔率全量采集器 (`collect_league_odds.py`)
+- **脚本路径**：`src/skills/football-prematch-odds-intelligence/scripts/collect_league_odds.py`
+- **核心能力**：
+  - **赛程自动对齐**：传入 `--league epl --round N`，自动从球探联赛底层赛历（`s36.js`）解析本轮所有比赛的主客队及 `schedule_id`；
+  - **已赛场次严格隔离**：自动识别 `state == -1`（已完赛），直接排除在 Prematch 采集之外，绝不使用赛后数据污染赛前；
+  - **三大盘口全量并发**：
+    - **1X2 欧赔**（`1x2d.titan007.com/{id}.js`）：平均每场抓取 **≥ 140 家独立博彩公司**初盘、即时盘、概率、返还率、凯利指数及**精确到秒的变盘时间戳**；
+    - **亚让 AH**（`vip.titan007.com/AsianOdds_n.aspx?id={id}&l=0`）：提取各大机构主盘与多盘口（盘2、盘3）水位与让球数；
+    - **大小球 OU**（`vip.titan007.com/OverDown_n.aspx?id={id}&l=0`）：提取进球数界限与大小球水位；
+  - **证据链闭环**：27 份原始原件落盘至 `raw/market/titan007/` 并自动登记 SHA-256 清单，结构化数据输出至 `parsed/*_odds.json`。
+
+### 2. 官方伤停采集与降级保护器 (`collect_official_team_news.py`)
+- **脚本路径**：`src/skills/football-team-news-flags/scripts/collect_official_team_news.py`
+- **核心能力**：
+  - **Raw-Evidence-First 铁律**：按优先级扫描对阵双方俱乐部官网的赛前发布会速记与官方伤病专栏；
+  - **命中静态正文**：落地 `.txt` 原始正文与 `_meta.json`，判定 `VERIFIED` 并提取带有原文引言的确证 Flag；
+  - **遇阻断或空壳（JS Shell / 403 / 404）**：自动落盘标准 `_blocked.json`，记录阻断技术事实，**强制降级为 `PENDING_NOT_PUBLISHED`，正向 flags 坚决清空为空数组 `[]`**，确保绝对零幻觉。
+
+### 3. 历史交锋与核心机构初终盘采集器 (`collect_h2h_market_history.py`)
+- **脚本路径**：`src/skills/football-prematch-odds-intelligence/scripts/collect_h2h_market_history.py`
+- **核心能力**：
+  - **交锋全景深度挖掘**：自动从分析页（`analysis/{id}cn.htm`）解析 `v_data`，提取 15+ 场历史交锋详情（日期、赛事、赛前联赛排名、全场/半场比分、角球比、让球盘输赢、大小球输赢）；
+  - **历史赔率数据库穿透**：根据交锋历史赛事 ScheduleID，自动化拉取 `1x2d.titan007.com/{mid}.js`；
+  - **指定机构走势提炼**：输出威廉希尔（William Hill）、澳门（Macauslot）等核心机构的**开盘（初盘）和终盘（即时盘）数据与升降走势**，自动对比历史爆冷或正路博弈信号，输出结构化 JSON 并落盘原始原件。
+
+---
+
 ## ⚡️ 在 Antigravity 对话框中一键唤醒与使用
 
 如果您在 Antigravity 的 `@` 下拉菜单中暂时看不到技能（可能是由于插件更新、索引重置导致），您可以通过**“文件即技能（File-as-a-Skill）”**机制，在对话中直接发送以下 **黄金提问模板**。
@@ -64,7 +95,16 @@ AI 助手读取到该路径后，会隐式使用 `view_file` 工具的 `IsSkillF
 - matches: [巴塞罗那 vs 皇家马德里]
 ```
 
-### 3. 唤醒 `football-physical-profile`（期望数据画像智能提炼）
+### 3. 极简一键调用（直接使用原生采集流水线，推荐 🌟）
+
+> 💡 **无需复杂参数，直接在对话框中告诉 AI 轮次即可：**
+
+```text
+获取英超第 2 轮比赛数据
+```
+*(系统将自动触发 `collect_league_odds.py` 与 `collect_official_team_news.py`，全自动完成：解析 ScheduleID -> 剔除已赛场次 -> 抓取 140+ 机构欧亚大小球原件 -> 扫描官方伤停原件/记录阻断 -> 结构化打包交付)*
+
+### 4. 唤醒 `football-physical-profile`（期望数据画像智能提炼）
 
 > 💡 **复制以下指令至 Antigravity 聊天框：**
 

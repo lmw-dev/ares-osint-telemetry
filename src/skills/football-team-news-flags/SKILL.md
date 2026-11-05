@@ -37,6 +37,8 @@ outputs:
 3. 使用 **`news_status: 暂无明显异常`** 当无可验证的合格信号时。此时 `news_flags` 置空数组，仅写一句简洁校准语，不填充低价值新闻。
 4. **收集与判定分离。** 先附带来源收集候选事实，再规范化标志、排除弱信号，最后输出成品。
 5. **零幻觉铁律。** 绝对禁止编造任何不在搜索结果或来源中的事实。宁缺毋滥。
+6. **原始证据优先（Raw-Evidence-First）。** 搜索摘要（search summary）、聚合跳转链接（`vertexaisearch.cloud.google.com/...`、`grounding-api-redirect/...`）**严禁直接作为证据**。必须通过 `read_url_content` 抓取目标原文页面，获得可保存的正文内容，才能对该条事实进行 Tier 评级和入旗判定。搜索摘要只能作为"发现线索"，驱动下一步真实 URL 抓取。
+7. **降级保护（Downgrade Guard）。** 若 `read_url_content` 返回空页、JS Shell、403/429/登录墙，或内容不含目标球队/球员任何信息，则该条候选事实必须降级为 `UNVERIFIED`，不得进入 `news_flags`；整队 `news_status` 降为 `PENDING_NOT_PUBLISHED`（无可用证据时）或 `暂无明显异常`（搜索确认无异常时）。
 
 ---
 
@@ -54,6 +56,78 @@ outputs:
 | `临场阵容确认后有重大变化` | 官方首发公布后核心球员突然缺席/替补，仅可在官方首发后使用 |
 
 > 详细触发/排除规则见 `references/flag_taxonomy_and_review.md`
+
+---
+
+## 原始证据存档铁律（Raw Evidence Archive Rules）
+
+> [!IMPORTANT]
+> 本节为 Ares 证据链接入要求。违反任何一条，相应 flag 必须撤销并降级为 `UNVERIFIED`。
+
+### 必须执行的操作（每条正向 flag 均适用）
+
+1. **先抓后判**：`search_web` 只用于发现候选 URL。必须对每条候选来源调用 `read_url_content(url)` 获取真实页面正文，才能进行 Tier 评级和入旗判断。
+2. **原文存档**：用 `write_to_file` 将 `read_url_content` 返回的正文保存至 `raw/team_news/<Team>/`，文件名格式为 `<YYYYMMDD_HHMMSS>_<source_slug>.md`。
+3. **元数据记录**：每个原始文件旁须写入对应的 `_meta.json`，包含：
+   ```json
+   {
+     "source_name": "",
+     "source_url": "",
+     "captured_utc": "",
+     "http_accessible": true,
+     "content_length_bytes": 0,
+     "contains_target_team": true,
+     "contains_target_player_or_event": true,
+     "raw_file": "raw/team_news/<Team>/filename.md",
+     "tier_claimed": "T1|T2|T3",
+     "supports_flags": []
+   }
+   ```
+4. **阻断记录**：若 `read_url_content` 失败（超时、403、JS Shell、空内容、无关内容），写入 `_blocked.json`，字段 `block_reason` 必填，并将该条来源判定为 `SOURCE_UNAVAILABLE`，不得用于入旗。
+5. **官方采集器支持**：可直接运行内置执行器：
+   ```bash
+   python3 src/skills/football-team-news-flags/scripts/collect_official_team_news.py --output_dir <交付包目录>
+   ```
+   自动对英超 20 强官方新闻目录进行预检与抓取，自动落盘 T1 原件与 `_blocked.json`。
+
+### 严禁行为
+
+| 行为 | 严重程度 |
+|---|---|
+| 将 `vertexaisearch.cloud.google.com/grounding-api-redirect/...` 写入 `sources[].url` 并标注 T1/T2 | 🚫 致命错误 |
+| 搜索摘要中提到的信息未经 `read_url_content` 验证直接标注 `confirmed` | 🚫 致命错误 |
+| `read_url_content` 返回失败仍保留该来源并入旗 | 🚫 致命错误 |
+| 将已入旗的事实标注 `confidence: high` 但 `sources` 中无原始文件路径 | ⚠️ 降级为 medium |
+| 搜索摘要聚合内容写入 `key_abnormalities` 并标注为发布会引言 | 🚫 致命错误 |
+
+### 合规的 `sources` 条目示例
+
+```json
+{
+  "title": "Arteta confirms Saliba out vs Aston Villa - BBC Sport",
+  "url": "https://www.bbc.com/sport/football/articles/xxxx",
+  "publisher": "BBC Sport",
+  "published_at": "2026-08-28",
+  "evidence_type": "press_conference",
+  "tier": "T2",
+  "captured_utc": "2026-08-29T04:15:22Z",
+  "raw_file": "raw/team_news/Arsenal/20260829_041522_bbc_arteta_presser.md",
+  "meta_file": "raw/team_news/Arsenal/20260829_041522_bbc_arteta_presser_meta.json",
+  "content_verified": true,
+  "supports_flags": ["核心球员伤停"]
+}
+```
+
+### 不合规的 `sources` 条目（必须拒绝）
+
+```json
+{
+  "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/...",
+  "tier": "T1",
+  "evidence_type": "press_conference"
+}
+```
+> ❌ 此条目不合规：grounding-api-redirect URL 是搜索摘要跳转，不是原始来源，不得标注 Tier。
 
 ---
 

@@ -18,11 +18,13 @@ __pycache__/
 .coverage*
 htmlcov/
 
-# Data Outputs
+# Data Outputs & Pipeline Staging
+data/
+staging/
+outputs/
 raw_reports/
 draft_reports/
-3_Resources/3.x_Match_Reports/
-data/youtube_monitor/
+3_Resources/
 tmp/
 dist/
 build/
@@ -41,8 +43,21 @@ build/
 logs/
 *.log
 
-# Local archives
+# Local archives & packages
+*.zip
+*.zip.sha256
+*.sha256
 docs/skill/*.zip
+
+# Temporary build & staging workspaces
+*_workspace/
+*_staging/
+staging_*/
+isolated_*/
+scratch/
 
 # Vendor dependencies (node_modules)
 vendor/**/node_modules/
+
+# Ares runtime pipeline cache & cold storage
+runtime_cache/

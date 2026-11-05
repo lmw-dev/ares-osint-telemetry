@@ -1,12 +1,13 @@
 ---
 name: football-prematch-odds-intelligence
-version: "2.1"
+version: "2.2.0"
 source: ares-osint-telemetry native
 description: >
   赛前公司级欧赔、亚盘、大小球赔率市场情报收集与时间逻辑深度研判。
-  V2.1 升级版：模型无关的 Agent Workflow 架构。当前活跃大模型（Gemini/Claude等）扮演分析引擎直接执行全流程，
+  V2.2.0 升级版：模型无关的 Agent Workflow 架构。当前活跃大模型（Gemini/Claude等）扮演分析引擎直接执行全流程，
   使用 search_web / read_url_content 抓取实时赔率数据。
   全面对齐 Ares P0/P1/P2 规范，输出防错 sanity_check、均值 odds_avg、自动化 market_move/market_tags 标签组，
+  集成 Titan007 分析页 H2H 对赛往绩工业级抽取器 (含主客互换方向校准、友谊赛隔离与数据源闭环)，
   并剥离一切强主观投注预测，仅输出纯正的博弈市场客观信号。
 inputs:
   - league: 联赛名称（英超/西甲/意甲/德甲/法甲）
@@ -17,7 +18,7 @@ outputs:
   - JSON 数据 → 同目录 .json 文件
 ---
 
-# Football Prematch Odds Intelligence V2.1
+# Football Prematch Odds Intelligence V2.2.0
 
 ## 执行模式说明
 
@@ -40,15 +41,37 @@ outputs:
 
 ## 5 阶段 Agent 运行流程 (5-Phase Workflow)
 
-### Phase 1: 比赛锁定与范围校准
-1. **解析输入参数**：明确联赛名称（如“英超”）、赛季（如“2025/2026”）、当前轮次/日期。
-2. **提取对阵列表**：若未提供 `matches`，利用 `search_web` 搜索本轮的完整五大联赛对阵。
+### Phase 1: 比赛锁定与赛程对齐 (Automated Fixture Mapping)
+1. **解析输入参数**：明确联赛名称（如“英超”/`epl`）、赛季（如“2026-2027”）、当前轮次（如第 2 轮）。
+2. **赛程与赛事 ID 提取**：
+   - 优先通过内置采集脚本从官方接口 `https://zq.titan007.com/jsData/matchResult/{season}/s{sclass_id}.js` 中解析 `jh['R_' + round]` 数组；
+   - 自动获取本轮全部比赛的 `schedule_id`、主队、客队、开球时间；
+   - **已赛场次过滤**：若比赛状态为 `-1`（已完赛），强制排除在 Prematch 范围之外，严禁赛后数据混入。
 
-### Phase 2: 赔率多点联网检索 (Multi-Source Scrape)
-针对每场比赛，构建特定的搜索词，利用 `search_web` 检索赔率汇总站并使用 `read_url_content` 提取数据。
-- 检索主要以 500.com 赔率指数、捷报比分、OddsPortal 为主，拉取威廉、澳门、立博、365、易胜博、伟德、Pinnacle/平博、Betfair/交易所类 的初盘与即时数据。
-- 提取数据时，必须注意：**不要混淆主客方向！**
-- 记录采集绝对时间（禁止脑补、禁止写“实时获取”字样），填入 `source_fetch_time`。
+### Phase 2: 全量赔率自动化采集与原件落盘 (Automated Scrape & Raw Archive)
+直接调用内置采集执行器：
+```bash
+python3 src/skills/football-prematch-odds-intelligence/scripts/collect_league_odds.py \
+  --league epl --season 2026-2027 --round 2 --output_dir <交付包目录>
+```
+脚本将自动并发拉取本轮全部未开赛赛事的真实底层数据：
+- **1X2 欧赔**：`https://1x2d.titan007.com/{id}.js`（收录 140+ 家机构初盘、即时盘、概率、返还率、凯利指数及秒级变盘时间）；
+- **亚让 AH**：`https://vip.titan007.com/AsianOdds_n.aspx?id={id}&l=0`（初即主客水位与让球盘口）；
+- **进球大小 OU**：`https://vip.titan007.com/OverDown_n.aspx?id={id}&l=0`（初即进球数与大小球水位）；
+- **对赛往绩 H2H**：`https://zq.titan007.com/analysis/{id}cn.htm`（内置结构化抽取器生成 `{id}_h2h.json`，含 `last_10`、`last_5_years`、`same_venue` 三维视图，正式比赛与友谊赛严格隔离统计，无主观预测）；
+- **原始原件落盘**：存入 `raw/market/titan007/` 并自动计算 SHA-256 哈希更新至 `market_evidence_manifest.json`；
+- **结构化输出**：自动生成 `parsed/` 目录下的逐场标准 JSON 数据（含 `{id}_h2h.json` 与 `{id}_{match}_odds.json`）。
+
+### Phase 2.5: 历史对赛往绩与机构初终盘轨迹回溯 (H2H Market Trajectory)
+对于重点场次，支持调用内置脚本一键回溯历史交锋与机构博弈轨迹：
+```bash
+python3 src/skills/football-prematch-odds-intelligence/scripts/collect_h2h_market_history.py \
+  --schedule_id <赛事ID> --output_dir <交付包目录> --bookmakers "William Hill" "Macauslot"
+```
+脚本将自动完成：
+1. **解析分析页 `v_data`**：提取全部历史交锋记录（日期、年份校正、赛事、赛前联赛排名、全场/半场比分、角球比、盘路输赢、大小球输赢）；
+2. **批量拉取历史赔率**：请求各交锋场次的 `1x2d.titan007.com/{mid}.js`；
+3. **关键机构走势提炼**：输出威廉希尔（ID: 115）、澳门（ID: 80）等主流公司的开盘（初盘）和终盘（即时盘）胜平负数值、返还率与升降走势（如升水诱盘/降水防范），并结构化保存至 `parsed/{schedule_id}_h2h_odds_trajectory.json`。
 
 ### Phase 3: 调用 Python 引擎进行精密清洗与打标 (Quant Engine Execution)
 大模型将提取到的原始数据写入临时 JSON 文件，并使用 shell 调用 `/src/skills/football-prematch-odds-intelligence/scripts/normalize_odds_report.py` 运行。

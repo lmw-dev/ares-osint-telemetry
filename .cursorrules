@@ -19,15 +19,25 @@
   - 赛前预检：`$ARES_VAULT_PATH/03_Match_Audits/{issue}/Audit-{issue}.md`
   - 赛后遥测：`$ARES_VAULT_PATH/03_Match_Audits/{issue}/04_Postmatch_Telemetry/`
   - 球队底座：`$ARES_VAULT_PATH/02_Team_Archives/`
-  - 智能 Skills 输出：`/vaults/AresVault/03_Match_Audits/DATE-{date}-top5/`
+  - 智能 Skills 输出：`$ARES_VAULT_PATH/03_Match_Audits/DATE-{date}-top5/`
 - 所有生成的 Markdown 文件必须具备严格、规范的 YAML Frontmatter。
 
-## 4. 智能 Skills 协同机制 (Model-as-Engine)
-- **内置两大 V2.0 技能**：
-  - `football-team-news-flags`：赛前关键新闻异常标志扫描。
-  - `football-prematch-odds-intelligence`：赛前赔率/盘口时间逻辑分析。
-- **执行规范**：当用户要求加载并执行这两大 Skill 时，作为 AI 助手的你即是 **执行引擎**。应当使用自身的 `search_web` 和 `read_url_content` 工具抓取最新的赛前情报，进行“零幻觉”的多源交叉核验，并最终将报告格式化写入 AresVault。
+## 4. 双中枢协同与工程执行体系 (Dual-Hub Architecture)
+- **MacBook agy (唯一执行引擎)**：本地 Antigravity CLI (agy) 统一调度 `scripts/` 内部确定性脚本完成客观证据采集、赔率解析、Shotmap/xG 仲裁、数学推演与 DAG 封包。严禁大模型作为 AI 助手自行使用 `search_web` 或 `read_url_content` 代替正式证据采集与确定性 Gate。
+- **ChatGPT (独立终审决策中枢)**：独立负责 Deep Prematch / Postmatch 深度研判、反证推断与最终出单裁决 (DECISION)。执行引擎绝无最终业务裁决权。
+- **实体血统零漂移 (Zero Identity Drift)**：所有场次必须严格继承 Phase 1 已经确证的 `00-fixture-binding.json`，严禁在公网重新检索赛程或推测 Match ID。
+- **门禁与安全红线 (Gate Invariants)**：
+  - 严禁绕过 Manifest、SHA-256、来源鉴伪与 UTC 时间链；
+  - 生产知识库 `02_Team_Archives/` 实行写保护（`TEAM_ARCHIVE_WRITE = 0`），未经授权严禁擅自修改生产球队档案、严禁擅自执行 ROUND_FREEZE 或关闭 Linear Issue。
 
 ## 5. Ares 量化核心价值观
 - **Truth > Completeness (真相比完整更重要)**：宁可输出“暂无明显异常”，也绝不为了凑数而编造、幻觉或采信未经证实的低强度小道消息。
 - **收集与判定分离**：先通过搜刮/搜索聚拢事实依据并保留原始来源，再根据规则卡门槛，最后进行异常入旗判定。
+
+## 6. Ares 足球情报全生命周期执行标准 (SOP Guardrail)
+- **强制前置阅读契约 (Pre-flight Contract)**：在每次新 Session 启动、凡是涉及五大联赛的**赛前客观底座（Phase 1）**、**赛前临场阵容终极刷新（Phase 2）**或**赛后事实与过程采集（Phase 3）**任务时，Agent **必须优先查阅并严格遵守** `docs/sop/ARES_INTELLIGENCE_LIFECYCLE_SOP.md` 与 `docs/sop/ARES_INTELLIGENCE_END_TO_END_ARCHITECTURE_SPEC.md`。
+- **不可侵犯的核心红线**：
+  1. **实体零漂移 (Zero Identity Drift)**：严禁公网重新推测或错误拼接已存在赛事的 FotMob Match ID；Phase 2 与 Phase 3 必须 100% 只读继承 Phase 1 固化的 `00-fixture-binding.json`；
+  2. **时间生命周期锁 (Lifecycle Lock)**：未进入赛前 120 分钟黄金窗口严禁抓取临场首发；未终场完赛严禁触发赛后采集；
+  3. **分母严格断言 (Strict Denominator)**：英超 10、西甲 10、意甲 10、德甲 9、法甲 9，任何单场缺失立即触发阻断，严禁猜测；
+  4. **统一脚本单点调度**：统一调用 `scripts/run_prematch_round.py` 与 `scripts/run_final_refresh.py`，杜绝零散手写临时抓取脚本破坏交付工程标准。

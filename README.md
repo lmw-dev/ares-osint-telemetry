@@ -19,6 +19,10 @@
 
 - `src/data/osint_postmatch.py` : 赛后物理数据遥测与方差 (Variance) 标记。
 - `src/data/osint_crawler.py` : 足彩期号三段式扫描器，实现从中国体彩（500.com）到海外数据库（Understat）的双向映射。
+- `src/skills/football-prematch-odds-intelligence/scripts/collect_league_odds.py` : 赛前全量盘口采集器，支持指定联赛与轮次自动对齐 ScheduleID，并发抓取 140+ 家博彩机构 1X2 欧赔、亚让 (AH) 与大小球 (OU) 原始原件。
+- `src/skills/football-prematch-odds-intelligence/scripts/collect_h2h_market_history.py` : 历史交锋与核心机构初终盘采集器，支持解析分析页 v_data，提取历史全维度交锋数据及威廉希尔、澳门等核心机构初终盘变盘轨迹。
+- `src/skills/football-team-news-flags/scripts/collect_official_team_news.py` : 官方伤停采掘与降级保护器，扫描俱乐部官网 T1 赛前速记，落地原件或 `_blocked.json`，确保零幻觉。
+- `src/skills/skill_runner.py` : Skills 统一调用与调度执行器，支持一键唤醒完整赛前 OSINT 采集流水线。
 
 ## 🛠 开发与部署环境 (Setup)
 

@@ -452,72 +452,185 @@ class TestStage6ControlledIntegration(unittest.TestCase):
             self.assertIn("Stage 6 Archive Promotion Readiness**: `BLOCKED`", rtext)
 
     # -------------------------------------------------------------------------
-    # 5. 生产文件与指针零修改保护 (动态字节/SHA对比，零硬编码周期)
+    # 5. 生产文件与指针零修改保护 (临时目录固定 W40/W44 夹具与真实候选生成前后快照对比)
     # -------------------------------------------------------------------------
     def test_05_production_archives_and_pointer_untouched(self):
-        """[Check 5] 生产知识库与 current 指针维持 0 写入，运行前后物理字节/SHA 100% 严格对比"""
-        import re
-        from src.engine.squad_value_prior_adapter import CURRENT_POINTER_FILE, PRIORS_DIR
-        self.assertTrue(CURRENT_POINTER_FILE.exists(), f"Pointer file must exist at {CURRENT_POINTER_FILE}")
-        
-        # 1. 运行前物理快照与 SHA
-        bytes_before = CURRENT_POINTER_FILE.read_bytes()
-        sha_before = hashlib.sha256(bytes_before).hexdigest()
-        
-        # 2. 验证指针语义自洽性与发布来源 (无任何周期与哈希硬编码)
-        pdata = json.loads(bytes_before.decode("utf-8"))
-        active_cycle = pdata.get("current_active_cycle", "")
-        self.assertTrue(bool(re.match(r"^W\d{2}$", active_cycle)), f"Invalid cycle format: {active_cycle}")
-        self.assertEqual(pdata.get("teams_count"), 96)
-        
-        # 3. 验证指针指向的权威 Canonical JSON 物理存在且哈希自洽
-        canonical_rel = pdata.get("canonical_json_path", "")
-        self.assertTrue(canonical_rel.startswith(f"team_recent_xi_value.{active_cycle}"))
-        canonical_path = PRIORS_DIR / canonical_rel
-        self.assertTrue(canonical_path.exists(), f"Canonical asset must exist: {canonical_path}")
-        canonical_sha = hashlib.sha256(canonical_path.read_bytes()).hexdigest()
-        self.assertEqual(canonical_sha, pdata.get("canonical_json_sha256"))
-        
-        # 4. 运行后再次物理回读，断言 0 写入 (Zero Mutation)
-        bytes_after = CURRENT_POINTER_FILE.read_bytes()
-        sha_after = hashlib.sha256(bytes_after).hexdigest()
-        self.assertEqual(bytes_before, bytes_after, "Pointer file must not be modified during test execution")
-        self.assertEqual(sha_before, sha_after, "Pointer SHA must be strictly identical before and after")
+        """[Check 5] 临时目录固定夹具与受控候选生成前后快照：指针与既有资产逐字节不变断言 (Zero Mutation)"""
+        from src.engine.postmatch_valuation_integrator import run_round_postmatch_valuation_pipeline
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_root = Path(td)
+            mock_vault = tmp_root / "mock_AresVault"
+            mock_priors = mock_vault / "02_Team_Archives/priors"
+            mock_priors.mkdir(parents=True, exist_ok=True)
+            mock_staging = tmp_root / "staging"
+            mock_staging.mkdir(parents=True, exist_ok=True)
+            mock_postmatch = tmp_root / "postmatch"
+            mock_postmatch.mkdir(parents=True, exist_ok=True)
+
+            # 1. 初始化隔离 priors 目录中的固定 W44 资产与指针夹具
+            w44_teams = self._create_mock_96_teams()
+            w44_asset = {
+                "schema_name": "SQUAD_ASSET_PRIOR_V1",
+                "archive_cycle": "W44",
+                "cycle_name": "W44",
+                "teams": w44_teams,
+                "published_at_utc": "2026-10-31T11:20:00Z"
+            }
+            w44_asset_file = mock_priors / "team_recent_xi_value.W44.json"
+            w44_bytes = json.dumps(w44_asset, indent=2, ensure_ascii=False).encode("utf-8")
+            w44_asset_file.write_bytes(w44_bytes)
+            w44_sha = hashlib.sha256(w44_bytes).hexdigest()
+
+            mock_pointer = {
+                "current_active_cycle": "W44",
+                "active_cycle": "W44",
+                "canonical_json_path": "team_recent_xi_value.W44.json",
+                "canonical_asset_relative_path": "team_recent_xi_value.W44.json",
+                "canonical_json_sha256": w44_sha,
+                "canonical_asset_sha256": w44_sha,
+                "teams_count": 96,
+                "readiness": "READY_FOR_NEXT_POSTMATCH_CYCLE",
+                "published_at_utc": "2026-10-31T11:20:00Z"
+            }
+            pointer_file = mock_priors / "team_recent_xi_value.current.json"
+            pointer_bytes = json.dumps(mock_pointer, indent=2, ensure_ascii=False).encode("utf-8")
+            pointer_file.write_bytes(pointer_bytes)
+
+            # 2. 受控操作执行前分别取物理快照与 SHA
+            ptr_bytes_before = pointer_file.read_bytes()
+            ptr_sha_before = hashlib.sha256(ptr_bytes_before).hexdigest()
+            asset_bytes_before = w44_asset_file.read_bytes()
+            asset_sha_before = hashlib.sha256(asset_bytes_before).hexdigest()
+
+            # 3. 构造真实的受控单场比赛并执行受控候选生成流水线
+            f1_dir = mock_postmatch / "10001"
+            f1_dir.mkdir(parents=True, exist_ok=True)
+            raw_match_payload = {
+                "general": {
+                    "matchId": 10001,
+                    "matchTimeUTC": "2026-10-18T14:00:00Z",
+                    "homeTeam": {"name": "Team_0"},
+                    "awayTeam": {"name": "Team_1"}
+                },
+                "content": {
+                    "lineup": {
+                        "lineup": [
+                            {"teamId": 9825, "teamName": "Team_0", "starters": [{"name": f"P{i}", "marketValue": 10_000_000} for i in range(11)]},
+                            {"teamId": 8455, "teamName": "Team_1", "starters": [{"name": f"Q{i}", "marketValue": 8_000_000} for i in range(11)]}
+                        ]
+                    }
+                }
+            }
+            (f1_dir / "00-fotmob-raw.json").write_text(json.dumps(raw_match_payload), encoding="utf-8")
+
+            fixtures = [{"fixture_id": "10001", "home_team": "Team_0", "away_team": "Team_1"}]
+
+            pipe_res = run_round_postmatch_valuation_pipeline(
+                league="EPL",
+                season="2026-2027",
+                round_id="GW99_CONTROLLED",
+                fixtures=fixtures,
+                postmatch_base_dir=mock_postmatch,
+                staging_output_dir=mock_staging,
+                canonical_priors_path=w44_asset_file,
+                is_production_authorized=False
+            )
+
+            # 断言受控生成确实在 staging 产出了单场产物，证实真实写操作在隔离区生效
+            staging_single = mock_staging / "single_matches/10001/06-lineup-valuation.json"
+            self.assertTrue(staging_single.exists(), "Controlled pipeline must generate staging candidate file")
+
+            # 4. 真实受控候选生成操作后，分别取快照进行物理回读与断言
+            ptr_bytes_after = pointer_file.read_bytes()
+            ptr_sha_after = hashlib.sha256(ptr_bytes_after).hexdigest()
+            asset_bytes_after = w44_asset_file.read_bytes()
+            asset_sha_after = hashlib.sha256(asset_bytes_after).hexdigest()
+
+            self.assertEqual(ptr_bytes_before, ptr_bytes_after, "Pointer file must not be modified during candidate generation")
+            self.assertEqual(ptr_sha_before, ptr_sha_after, "Pointer SHA must remain strictly identical")
+            self.assertEqual(asset_bytes_before, asset_bytes_after, "Canonical asset must not be modified during candidate generation")
+            self.assertEqual(asset_sha_before, asset_sha_after, "Canonical asset SHA must remain strictly identical")
 
     def test_05b_cycle_agnostic_pointer_validation(self):
-        """[Check 5B] 周期自适应验证：验证当合法周期发生切换时 (如 W40/W43/W44/W45)，校验逻辑自适应通过，无需修改测试代码"""
-        import re
-        from src.engine.squad_value_prior_adapter import PRIORS_DIR
-        
-        available_cycles = []
-        for cf in sorted(PRIORS_DIR.glob("team_recent_xi_value.W*.json")):
-            m = re.search(r"\.(W\d{2})\.json$", cf.name)
-            if m:
-                available_cycles.append((m.group(1), cf))
-        
-        self.assertTrue(len(available_cycles) >= 1, "At least one canonical cycle must exist in priors dir")
-        
-        # 对每个已存在的合法周期资产，验证其自洽性
-        for cycle_name, cfile in available_cycles:
-            cbytes = cfile.read_bytes()
-            csha = hashlib.sha256(cbytes).hexdigest()
-            cdata = json.loads(cbytes.decode("utf-8"))
-            self.assertTrue(bool(re.match(r"^W\d{2}$", cycle_name)))
-            self.assertEqual(len(cdata.get("teams", [])), 96, f"Cycle {cycle_name} must have 96 teams")
-            
-            # 模拟指针切换为该周期，验证自适应验证逻辑
-            simulated_pointer = {
-                "current_active_cycle": cycle_name,
-                "canonical_json_path": cfile.name,
-                "canonical_json_sha256": csha,
-                "teams_count": len(cdata.get("teams", [])),
+        """[Check 5B] 周期自适应与 SHA 校验：临时目录固定 W40/W44 指针与资产夹具全覆盖"""
+        from src.engine.postmatch_valuation_integrator import load_active_production_priors
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_root = Path(td)
+            mock_vault = tmp_root / "mock_AresVault"
+            mock_priors = mock_vault / "02_Team_Archives/priors"
+            mock_priors.mkdir(parents=True, exist_ok=True)
+            pointer_file = mock_priors / "team_recent_xi_value.current.json"
+
+            # 1. 构造固定 W40 资产夹具 (96 队)
+            w40_teams = self._create_mock_96_teams()
+            w40_asset = {
+                "schema_name": "SQUAD_ASSET_PRIOR_V1",
+                "archive_cycle": "W40",
+                "cycle_name": "W40",
+                "teams": w40_teams
+            }
+            w40_file = mock_priors / "team_recent_xi_value.W40.json"
+            w40_bytes = json.dumps(w40_asset, indent=2, ensure_ascii=False).encode("utf-8")
+            w40_file.write_bytes(w40_bytes)
+            w40_sha = hashlib.sha256(w40_bytes).hexdigest()
+
+            # 2. 构造固定 W44 资产夹具 (96 队)
+            w44_teams = self._create_mock_96_teams()
+            w44_asset = {
+                "schema_name": "SQUAD_ASSET_PRIOR_V1",
+                "archive_cycle": "W44",
+                "cycle_name": "W44",
+                "teams": w44_teams
+            }
+            w44_file = mock_priors / "team_recent_xi_value.W44.json"
+            w44_bytes = json.dumps(w44_asset, indent=2, ensure_ascii=False).encode("utf-8")
+            w44_file.write_bytes(w44_bytes)
+            w44_sha = hashlib.sha256(w44_bytes).hexdigest()
+
+            # 3. 验证指针切换至 W40 周期自适应读取
+            ptr_w40 = {
+                "current_active_cycle": "W40",
+                "active_cycle": "W40",
+                "canonical_json_path": "team_recent_xi_value.W40.json",
+                "canonical_asset_relative_path": "team_recent_xi_value.W40.json",
+                "canonical_json_sha256": w40_sha,
+                "canonical_asset_sha256": w40_sha,
+                "teams_count": 96,
                 "readiness": "READY_FOR_NEXT_POSTMATCH_CYCLE"
             }
-            # 自适应断言：无论周期名如何切换，只要格式匹配且哈希一致，即可自适应通过
-            self.assertTrue(bool(re.match(r"^W\d{2}$", simulated_pointer["current_active_cycle"])))
-            target_asset = PRIORS_DIR / simulated_pointer["canonical_json_path"]
-            self.assertTrue(target_asset.exists())
-            self.assertEqual(simulated_pointer["canonical_json_sha256"], hashlib.sha256(target_asset.read_bytes()).hexdigest())
+            pointer_file.write_text(json.dumps(ptr_w40, indent=2), encoding="utf-8")
+            doc_w40, path_w40, cycle_w40 = load_active_production_priors(vault_root=mock_vault)
+            self.assertEqual(cycle_w40, "W40")
+            self.assertEqual(path_w40.resolve(), w40_file.resolve())
+            self.assertEqual(len(doc_w40["teams"]), 96)
+
+            # 4. 验证指针切换至 W44 周期自适应读取
+            ptr_w44 = {
+                "current_active_cycle": "W44",
+                "active_cycle": "W44",
+                "canonical_json_path": "team_recent_xi_value.W44.json",
+                "canonical_asset_relative_path": "team_recent_xi_value.W44.json",
+                "canonical_json_sha256": w44_sha,
+                "canonical_asset_sha256": w44_sha,
+                "teams_count": 96,
+                "readiness": "READY_FOR_NEXT_POSTMATCH_CYCLE"
+            }
+            pointer_file.write_text(json.dumps(ptr_w44, indent=2), encoding="utf-8")
+            doc_w44, path_w44, cycle_w44 = load_active_production_priors(vault_root=mock_vault)
+            self.assertEqual(cycle_w44, "W44")
+            self.assertEqual(path_w44.resolve(), w44_file.resolve())
+            self.assertEqual(len(doc_w44["teams"]), 96)
+
+            # 5. 验证 SHA 校验防线: 人为篡改指针记录的 SHA，必须触发严格拒绝 (ValueError)
+            corrupted_ptr = dict(ptr_w44)
+            corrupted_ptr["canonical_asset_sha256"] = "a" * 64
+            corrupted_ptr["canonical_json_sha256"] = "a" * 64
+            pointer_file.write_text(json.dumps(corrupted_ptr, indent=2), encoding="utf-8")
+            with self.assertRaises(ValueError) as ctx_sha:
+                load_active_production_priors(vault_root=mock_vault)
+            self.assertIn("CRITICAL: Pointer SHA mismatch", str(ctx_sha.exception))
 
     # -------------------------------------------------------------------------
     # 6. Stage 6 真正 Fail-Closed 写入入口验证 (4 大场景物理断言)
